@@ -412,6 +412,29 @@ players and levels as each version writes them.
     without a map colour (glass, torches, rails, buttons, flower pots…) are seen through, as on a game
     map; Bedrock names (normal_stone_slab, magma…) go through their Java name; the hand-made table is
     left for the names of older versions. On that world every block has its colour.
+78. **"Edit the source world" lacked the newest biomes.** The painter for the converted world offered
+    the dappled forest, the one for the source world did not, on the same Bedrock 26.52 world. The
+    source world's version was misread on both editions. Bedrock 26.x stores its version as 1.26.x
+    (`lastOpenedWithVersion` [1, 26, 52, 3, 0]), which compares as older than 26.20 and 26.50: the
+    world got the biomes of 1.21.50. Java worlds took their version from a DataVersion table that
+    ended at 1.21.4. `worldbridge/gameversion.py` now reads and writes versions as each game stores
+    them: 1.26.x is 26.x (as PyMCTranslate already does), and a Java DataVersion gives the newest
+    release PyMCTranslate knows with that DataVersion or lower. Every read of a world's version goes
+    through it: the biome lists, the source world's game, the conversion's choice of terrain height,
+    and the version shown in world management (26.52.3, not 1.26.52.3.0).
+79. **Bedrock 26.x worlds written as a version far newer than the game.** The same quirk on the
+    writing side: a conversion to Bedrock 26.50 wrote `lastOpenedWithVersion` and
+    `MinimumCompatibleClientVersion` as [26, 50, 0, 0, 0], where the game writes [1, 26, 50, 0, 0]
+    and compares the numbers to decide whether it can open the world. Written now as the game does;
+    checked against the level.dat of a world saved by Bedrock 26.52.
+80. **Block items with the wrong block version for Bedrock.** The `Block` of a block item (and a
+    flower pot's plant) carried the target game's version (26.50 as 0x1A320000, 1.21.110 as
+    1.21.110.0). Bedrock writes the version of its block states, which changes far less often: every
+    block of the Bedrock 26.52 world, in chunks and in inventories, says 1.21.60.33. It now comes from
+    PyMCTranslate's table of each Bedrock version, the same one Amulet writes in chunk palettes.
+
+`tests/test_game_versions.py` covers them with worlds converted to Java 26.3 and Bedrock 26.50 and the
+version numbers of the Bedrock 26.52 world.
 
 Looked into at the same time: the empty chunks inside the explored area of that Bedrock world are not
 in its database at all (read file by file, the write-ahead log included), and the world was never

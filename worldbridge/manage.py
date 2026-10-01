@@ -28,6 +28,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
+from . import gameversion as gv
 from . import nbt
 from .i18n import N_, tr
 
@@ -361,7 +362,7 @@ def _open_bedrock(path: str) -> WorldDocs:
     version, root = _read_bedrock_level(path)
     old = not os.path.isdir(os.path.join(path, "db"))
     ver = nbt.get_tag(root, "lastOpenedWithVersion")
-    vs = ".".join(str(int(v.py_data)) for v in ver) if ver is not None else ""
+    vs = gv.bedrock_label([int(v.py_data) for v in ver]) if ver is not None else ""
     desc = "Pocket Edition 0.1 – 0.8 (chunks.dat)" if old else f"Bedrock Edition {vs}".strip()
     w = WorldDocs(path, "pe_old" if old else "bedrock", desc)
     w.game_modes = BETA_MODES if old else BEDROCK_MODES

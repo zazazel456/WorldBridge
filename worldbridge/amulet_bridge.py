@@ -15,6 +15,7 @@ import struct
 import time
 from typing import Dict, List, Optional, Tuple
 
+from . import gameversion as gv
 from . import nbt
 from .i18n import N_, tr
 from .model import NETHER, OVERWORLD, THE_END, ConversionError, Progress, WorldInfo
@@ -149,8 +150,7 @@ def make_wrapper(path: str, platform: str, version):
     return w
 
 
-NEW_LAYOUT_DV = 4786
-CAVES_CLIFFS_DV = 2825  # 1.18: overworld from y -64 to 319  # Java 26.1: dimensions/minecraft/<dim>/, players/data/
+CAVES_CLIFFS_DV = 2825  # 1.18: overworld from y -64 to 319
 
 
 @functools.lru_cache(maxsize=1)
@@ -880,11 +880,11 @@ def write_bedrock_level_dat(path: str, info: WorldInfo, version) -> None:
         except Exception:  # noqa: BLE001
             root = nbt.CompoundTag()
     src = info.level
-    v = list(version) + [0] * (5 - len(version))
+    v = gv.bedrock_stored(version)          # 26.50 is [1, 26, 50, 0, 0] to the game
     root["LevelName"] = nbt.StringTag(info.name)
-    root["lastOpenedWithVersion"] = nbt.ListTag([nbt.IntTag(i) for i in v[:5]], 3)
-    root["MinimumCompatibleClientVersion"] = nbt.ListTag([nbt.IntTag(i) for i in v[:5]], 3)
-    root["StorageVersion"] = nbt.IntTag(10 if tuple(v[:3]) >= (1, 18, 0) else 9 if tuple(v[:3]) >= (1, 16, 0) else 8)
+    root["lastOpenedWithVersion"] = nbt.ListTag([nbt.IntTag(i) for i in v], 3)
+    root["MinimumCompatibleClientVersion"] = nbt.ListTag([nbt.IntTag(i) for i in v], 3)
+    root["StorageVersion"] = nbt.IntTag(10 if v[:3] >= (1, 18, 0) else 9 if v[:3] >= (1, 16, 0) else 8)
     seed = nbt.get(src, "RandomSeed")
     if seed is None:
         wgs = nbt.get_tag(src, "WorldGenSettings")

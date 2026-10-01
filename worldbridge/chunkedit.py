@@ -22,6 +22,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 import numpy as np
 
 from . import biomes as bio
+from . import gameversion as gv
 from . import nbt
 from .model import NETHER, OVERWORLD, THE_END, ConversionError, Progress
 from .i18n import tr
@@ -73,14 +74,15 @@ def world_game(path: str) -> Tuple[str, Optional[Tuple[int, ...]]]:
         try:
             from .amulet_bridge import load_format_version
 
-            return "bedrock", load_format_version(d.path)
+            return "bedrock", gv.bedrock(load_format_version(d.path))
         except Exception:  # noqa: BLE001
             return "bedrock", None
     return "", None
 
 
-_DATA_VERSIONS = ((4189, (1, 21, 4)), (3463, (1, 20)), (3105, (1, 19)), (2860, (1, 18)), (2724, (1, 17)),
-                  (2566, (1, 16)), (2225, (1, 15)), (1952, (1, 14)), (1451, (1, 13)))
+# only when PyMCTranslate cannot say (it knows every release's DataVersion)
+_DATA_VERSIONS = ((5020, (26, 3)), (4901, (26, 2)), (4783, (26, 1)), (4189, (1, 21, 4)), (3463, (1, 20)),
+                  (3105, (1, 19)), (2860, (1, 18)), (2724, (1, 17)), (2566, (1, 16)), (2225, (1, 15)), (1952, (1, 14)), (1451, (1, 13)))
 
 
 def _java_version(world: str) -> Tuple[int, ...]:
@@ -108,7 +110,7 @@ def _java_version(world: str) -> Tuple[int, ...]:
             dv = int(nbt.get(nbt.get_tag(root, "Data") or root, "DataVersion", 0) or 0)
         except Exception:  # noqa: BLE001
             dv = 0
-    return next((v for n, v in _DATA_VERSIONS if dv >= n), (1, 12))
+    return gv.java_from_data_version(dv) or next((v for n, v in _DATA_VERSIONS if dv >= n), (1, 12))
 
 
 # ------------------------------------------------------------------ backup

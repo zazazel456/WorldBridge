@@ -637,8 +637,10 @@ def to_bedrock(it: Item, version: Tuple[int, ...]) -> Optional[nbt.CompoundTag]:
 
 
 def _bedrock_block_version(version) -> int:
-    v = list(version) + [0, 0, 0, 0]
-    return (v[0] << 24) | (v[1] << 16) | (v[2] << 8) | v[3]
+    """The block-state version of Bedrock ``version`` (26.50 writes 1.21.60.33, not 26.50)."""
+    from .gameversion import bedrock_block_version as bbv
+
+    return bbv(tuple(version))
 
 
 @functools.lru_cache(maxsize=1)

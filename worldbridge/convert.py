@@ -119,7 +119,7 @@ def _source_is_pre118(d: det.Detected) -> bool:
     try:
         if d.kind == "bedrock":
             root = ab.read_bedrock_level_dat(d.path)
-            v = tuple(int(x.py_data) for x in (ab.nbt.get_tag(root, "lastOpenedWithVersion") or []))[:3]
+            v = ab.gv.bedrock(int(x.py_data) for x in (ab.nbt.get_tag(root, "lastOpenedWithVersion") or []))[:3]
             return bool(v) and v < CAVES_CLIFFS
         from .java.modern import chunk_data_version
 
