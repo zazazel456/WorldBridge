@@ -26,6 +26,16 @@ system.
 > Testers with real console saves (Xbox 360, PS3, Wii U, PS4, Xbox One, Switch) are especially
 > wanted.
 
+**The border, before and after.** A Java 26.3 world converted to Java 1.2.5. Without the ring, the
+old game generates its own terrain right next to the converted world, leaving walls and cut caves.
+With the ring, WorldBridge writes terrain from 1.2.5's own generator around the world, lifted to
+meet it.
+
+| Without the ring | With the ring |
+|:---:|:---:|
+| ![Java 26.3 world in 1.2.5 without the ring: a cut stone wall behind the forest](docs/images/ring-off-forest.webp) | ![The same view with the ring: hills continue into the forest](docs/images/ring-on-forest.webp) |
+| ![Without the ring: a cliff with a cut cave along the sea](docs/images/ring-off-coast.webp) | ![With the ring: a natural coast with beaches](docs/images/ring-on-coast.webp) |
+
 ## Contents
 
 - [Highlights](#highlights)
