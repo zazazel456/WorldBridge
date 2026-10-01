@@ -136,8 +136,8 @@ def test_java_1219_spawn_compound_is_rebuilt(tmp_path):
     level = nbt.CompoundTag({"DataVersion": nbt.IntTag(4556), "SpawnX": nbt.IntTag(10), "SpawnY": nbt.IntTag(70),
                              "SpawnZ": nbt.IntTag(-3)})  # a 1.21.9 level whose spawn the selection moved
     info = _info(nbt.CompoundTag({"DataVersion": nbt.IntTag(4556)}), level)
-    info.split_world_gen = True
     info.level["WorldGenSettings"] = nbt.CompoundTag()
+    info.derived_level_keys.append("WorldGenSettings")
     ab.write_java_level_dat(str(tmp_path), info, ab.latest("java"))
     data = _level(str(tmp_path))
     assert list(data["spawn"]["pos"]) == [10, 70, -3] and "SpawnX" not in data

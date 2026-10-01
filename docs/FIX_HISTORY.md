@@ -17,7 +17,7 @@ a converted world, not by an automated check.
 - [The ring and the terrain generators (21–23, 25–27, 29–31, 34–49)](#the-ring-and-the-terrain-generators)
 - [Blocks and content (30, 33, 38)](#blocks-and-content)
 - [Later fixes (50–57)](#later-fixes-5057)
-- [0.2.1 (65–69)](#021)
+- [0.2.1 (65–75)](#021)
 
 ---
 
@@ -344,3 +344,50 @@ the game's code (`LevelStorageSource`, `ItemIdFix`, the item rename fixes).
 off hand to Java 26.3 and 1.13.2, to LCE and back to Bedrock; the level.dat of a Bedrock world (flat
 too) and of a Java 1.21.3 and 1.21.9 world; the names by data version; the numeric names against
 the game's table; the chests and entities of the hub.
+
+70. **World management: the inventory of a native Bedrock player looked empty.** A player saved by
+    Bedrock lists every slot, the empty ones too (36 in the inventory, 4 of armour, 1 off hand, 27 in
+    the ender chest, name `""`), and the table showed them all in slot order: with an empty hotbar its
+    first rows were all empty. The table now lists where each item is (hotbar, inventory, armour, off
+    hand, ender chest) and hides the empty slots unless asked. The Bedrock ender chest
+    (`EnderChestInventory`) was not read at all. Saving a Bedrock player wrote its strings as plain
+    UTF-8, but the game keeps raw bytes in some (actor storage keys): they are written back as read.
+    A database locked by Minecraft left the player list empty without a word: it is now said.
+71. **World management did not follow the world's version.**
+    - The single player of a Java world (level.dat `Player`, the one the game loads for the world's
+      owner) and of a Pocket Edition 0.x world was not listed; Java 26.1+ keeps it in
+      `players/data/<singleplayer_uuid>.dat`, now marked as such.
+    - Java 1.21.5+ armour and off hand (`equipment`) were missing from the inventory.
+    - Java 1.21.11's game rules (`game_rules`, typed, new names) were not shown, and neither were
+      Bedrock's number rules (spawn radius, sleeping percentage…).
+    - Game modes offered Spectator where it does not exist: Bedrock's level value 3 is not Spectator,
+      LCE has none, Java got it in 1.8 and Adventure in 1.3; Pocket Edition 0.x has Survival and
+      Creative only.
+    - Settings were offered for versions without them: difficulty before Java 1.8 (it was in
+      options.txt), cheats before 1.3, the time of day as `DayTime` before 1.3 (then it was `Time`).
+    - An item could not be named in a numeric-id world (Java before 1.8, LCE); a renamed Bedrock
+      block item kept its old `Block` compound, which the game reads first.
+72. **Java 1.21.5+ armour and off hand lost on the way to Bedrock and older Java.** Java 1.21.5 moved
+    them from the inventory's slots 100–103 and -106 into `equipment`; the Bedrock writer and the
+    numeric layout still looked in the inventory. Bedrock's `Offhand` was never written.
+73. **Game modes between editions.** Bedrock's player modes 5 ("same as the world") and 6
+    (Spectator) became Survival in Java: 6 is now Spectator and 5 leaves the mode to the world, as
+    Java does without `playerGameType`. Java's Spectator became Creative in every Bedrock version;
+    it is Spectator from Bedrock 1.21.40, which has it. LCE gets Creative for it.
+74. **The world settings of Java 1.21.11+ and 26.x.** Java 1.21.11 turned `GameRules` into
+    `game_rules` (typed values, new names, some inverted), and 26.1 moved difficulty into
+    `difficulty_settings` and weather and game rules into data/minecraft/*.dat. The writers of
+    Bedrock, LCE and older Java read the 1.21.10 keys and lost difficulty, hardcore, weather and every
+    rule. Such a level is now read with those keys as well (the game's own 1.21.11 renames, read
+    backwards); a Java target that keeps the source's level.dat does not get them. The difficulty
+    also read 0 as "missing": a Peaceful world became Normal from Java to Bedrock and back. The game
+    rules that both editions have (keepInventory, mobGriefing, doDaylightCycle… not randomTickSpeed,
+    three times faster in Bedrock) now go from one edition to the other.
+75. **Java 26.x → 26.x: the single player started anew.** Fix 67 kept the source's level.dat but put
+    the host player back inside it, where Java 26.1+ no longer reads it, and the source's players/data
+    went to playerdata/. The host now goes to players/data/<singleplayer_uuid>.dat (the UUID chosen in
+    the "Giocatori" tab, if any), and players/ keeps the 26.1 layout; an older output level gets the
+    old folders, which the game moves when it upgrades it.
+
+`tests/test_manage.py`, `tests/test_version_quirks.py` and `tests/test_gui.py` cover them with
+players and levels as each version writes them.

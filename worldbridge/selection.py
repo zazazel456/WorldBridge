@@ -165,6 +165,15 @@ def apply_to_info(info: WorldInfo, sel: Selection, family: str, progress: Option
 # ------------------------------------------------------------------ Java player files
 
 
+def uuid_int_array(u: str) -> nbt.IntArrayTag:
+    """A UUID as Java 1.16+ stores it: four ints, most significant first."""
+    import numpy as np
+
+    v = _uuid.UUID(u).int
+    vals = [(v >> s) & 0xFFFFFFFF for s in (96, 64, 32, 0)]
+    return nbt.IntArrayTag(np.array([x - (1 << 32) if x >= 1 << 31 else x for x in vals], "int32"))
+
+
 def set_player_uuid(p: nbt.CompoundTag, u: str) -> None:
     v = _uuid.UUID(u).int
     dv = int(nbt.get(p, "DataVersion", 0) or 0)
@@ -186,9 +195,10 @@ def set_player_uuid(p: nbt.CompoundTag, u: str) -> None:
             del p["UUID"]
 
 
-def write_java_playerdata(out_dir: str, info: WorldInfo, prepare) -> int:
-    """``playerdata/<uuid>.dat`` for every player linked to a nickname (``prepare`` turns the
-    source compound into the target layout, e.g. :func:`java.numeric.java_player_nbt`)."""
+def write_java_playerdata(out_dir: str, info: WorldInfo, prepare, folder: str = "playerdata") -> int:
+    """``playerdata/<uuid>.dat`` (Java 26.1+: ``players/data``) for every player linked to a
+    nickname (``prepare`` turns the source compound into the target layout, e.g.
+    :func:`java.numeric.java_player_nbt`)."""
     links = getattr(info, "player_links", None) or {}
     n = 0
     for key, p in info.players.items():
@@ -197,9 +207,9 @@ def write_java_playerdata(out_dir: str, info: WorldInfo, prepare) -> int:
             continue
         q = prepare(nbt.copy(p))
         set_player_uuid(q, ln.uuid)
-        folder = os.path.join(out_dir, "playerdata")
-        os.makedirs(folder, exist_ok=True)
-        with open(os.path.join(folder, f"{ln.uuid}.dat"), "wb") as f:
+        d = os.path.join(out_dir, folder)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, f"{ln.uuid}.dat"), "wb") as f:
             f.write(nbt.dump(nbt.CompoundTag(q), "", compressed=True))
         n += 1
     return n

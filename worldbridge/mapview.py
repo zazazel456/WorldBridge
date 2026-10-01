@@ -406,8 +406,9 @@ def _player_entries(players: Dict[str, nbt.CompoundTag], names: Optional[Dict[st
         label = tr("Main player") if key in ("host", "~local_player") else key
         if name:
             label += f" ({name})"
-        inv = nbt.get_tag(p, "Inventory")
-        out.append(PlayerEntry(key, label, pos, int(dim or 0), name, len(inv) if inv is not None else 0))
+        from .items import player_stacks
+
+        out.append(PlayerEntry(key, label, pos, int(dim or 0), name, len(player_stacks(p))))
     return out
 
 

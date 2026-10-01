@@ -207,8 +207,10 @@ class WorldInfo:
     thumbnail_png: Optional[bytes] = None
     # key -> selection.PlayerLink chosen in the "Giocatori" tab (nickname / UUID in the target)
     player_links: Dict[str, object] = field(default_factory=dict)
-    # Java 26.1+: level["WorldGenSettings"] was read from data/minecraft/world_gen_settings.dat
-    split_world_gen: bool = False
+    # keys added to ``level`` from elsewhere so every writer finds them where Java 1.12 - 1.21.10
+    # kept them (Java 1.21.11+ / 26.x sources: game rules, difficulty, weather, generation
+    # settings); a Java target that keeps the source's own level.dat removes them
+    derived_level_keys: List[str] = field(default_factory=list)
 
     @property
     def name(self) -> str:

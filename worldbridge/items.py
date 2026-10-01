@@ -751,6 +751,27 @@ def java_map_id(uuid: int) -> int:
     return (uuid & 0x3FFFFFFF) | 0x40000000  # a map made in Bedrock: stable, far from Java's own numbers
 
 
+# ------------------------------------------------------------------ players
+# Java 1.21.5 moved a player's armour and off hand out of the inventory, into "equipment"
+EQUIPMENT_SLOTS = {"feet": 100, "legs": 101, "chest": 102, "head": 103, "offhand": -106}
+
+
+def player_stacks(p: nbt.CompoundTag) -> nbt.ListTag:
+    """A Java / LCE player's inventory with the armour and off hand in their slots (100 - 103,
+    -106), also when the player is Java 1.21.5+ data and keeps them in ``equipment``."""
+    out = nbt.ListTag([t for t in (nbt.get_tag(p, "Inventory") or []) if isinstance(t, nbt.CompoundTag)], 10)
+    eq = nbt.get_tag(p, "equipment")
+    if isinstance(eq, nbt.CompoundTag):
+        used = {int(nbt.get(t, "Slot", -1000)) for t in out}
+        for key, slot in EQUIPMENT_SLOTS.items():
+            t = nbt.get_tag(eq, key)
+            if isinstance(t, nbt.CompoundTag) and len(t) and slot not in used:
+                t = nbt.copy(t)
+                t["Slot"] = nbt.ByteTag(slot)
+                out.append(t)
+    return out
+
+
 # ------------------------------------------------------------------ list helpers
 def convert_list(lst, src: str, dst: str, **kw) -> nbt.ListTag:
     reader = {"legacy": from_legacy, "java": from_java_modern, "bedrock": from_bedrock}[src]

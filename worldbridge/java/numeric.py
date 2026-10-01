@@ -689,6 +689,9 @@ def java_player_nbt(player: nbt.CompoundTag, opt: JavaWriteOptions) -> nbt.Compo
     # over from the source (LCE Aquatic stores 922) would make Minecraft skip the item-id
     # fixes and drop every item it cannot read
     p.pop("DataVersion", None)
+    if "equipment" in p:  # Java 1.21.5+: armour and off hand back into the inventory's slots
+        p["Inventory"] = items.player_stacks(p)
+        del p["equipment"]
     for key in ("Inventory", "EnderItems"):
         if key in p:
             p[key] = legacy_items(p[key], dv >= 1451)
@@ -710,7 +713,7 @@ def old_player_nbt(player: nbt.CompoundTag, opt: JavaWriteOptions) -> nbt.Compou
     return oc.player(java_player_nbt(player, opt))
 
 
-def write_java_players(out_dir: str, info: WorldInfo, opt: JavaWriteOptions) -> int:
+def write_java_players(out_dir: str, info: WorldInfo, opt: JavaWriteOptions, folder: str = "playerdata") -> int:
     """playerdata/<uuid>.dat for the players linked to a nickname in the "Giocatori" tab
     (players/<nickname>.dat before Java 1.8, when player files were still named after the player)."""
     from ..selection import write_java_playerdata
@@ -730,7 +733,7 @@ def write_java_players(out_dir: str, info: WorldInfo, opt: JavaWriteOptions) -> 
         return n
     if opt.legacy_layout():
         return write_java_playerdata(out_dir, info, lambda p: old_player_nbt(p, opt))
-    return write_java_playerdata(out_dir, info, lambda p: java_player_nbt(p, opt))
+    return write_java_playerdata(out_dir, info, lambda p: java_player_nbt(p, opt), folder)
 
 
 def generator_name(level) -> str:

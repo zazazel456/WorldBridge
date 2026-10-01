@@ -199,7 +199,8 @@ class ManageTab(QWidget):
             return
         w = self.world
         ro = "  ·  " + tr("<b>read-only</b> (Xbox 360 STFS package)") if w.read_only else ""
-        self.desc.setText(f"{w.description}  ·  {os.path.abspath(w.path)}{ro}")
+        warn = "<br>" + theme.span(w.warning, "negative") if w.warning else ""
+        self.desc.setText(f"{w.description}  ·  {os.path.abspath(w.path)}{ro}{warn}")
         self.docs.blockSignals(True)
         self.docs.clear()
         for d in w.docs:
@@ -267,45 +268,55 @@ class ManageTab(QWidget):
 
     # ------------------------------------------------------------------ inventory
     def _inventory_table(self, doc):
-        from ..manage import inventory
+        from ..manage import inventory, item_count, item_name
 
         self.quick.addRow(heading(tr("Inventory")))
-        items = inventory(doc)
-        t = QTableWidget(len(items), 3)
-        t.setHorizontalHeaderLabels([tr("Slot"), tr("Item"), tr("Count")])
-        t.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        stacks = inventory(doc)
+        show_empty = getattr(self, "_show_empty", False)
+        shown = [st for st in stacks if show_empty or not st.empty]
+        if not stacks:
+            self.quick.addRow(HintLabel(tr("This player has no inventory.")))
+            return
+        t = QTableWidget(len(shown), 4)
+        t.setHorizontalHeaderLabels([tr("Where"), tr("Slot"), tr("Item"), tr("Count")])
+        t.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         t.verticalHeader().setVisible(False)
         t.setMinimumHeight(240)
-        for row, it in enumerate(items):
-            name = nbt.get(it, "id", nbt.get(it, "Name", ""))
-            count = nbt.get(it, "count", nbt.get(it, "Count", 1))
-            for col, val in enumerate((nbt.get(it, "Slot", ""), name, count)):
+        for row, st in enumerate(shown):
+            for col, val in enumerate((tr(st.section), st.slot, item_name(st.tag), item_count(st.tag))):
                 cell = QTableWidgetItem(str(val))
-                if col == 0:
+                if col < 2:
                     cell.setFlags(cell.flags() & ~Qt.ItemIsEditable)
                 t.setItem(row, col, cell)
-        t.itemChanged.connect(lambda cell, items=items, doc=doc: self._item_edited(doc, items, cell))
+        t.itemChanged.connect(lambda cell, shown=shown, doc=doc: self._item_edited(doc, shown, cell))
         self.quick.addRow(t)
+        n_empty = sum(1 for st in stacks if st.empty)
+        cb = QCheckBox(tr("Show the empty slots ({n})", n=n_empty))
+        cb.setChecked(show_empty)
+        cb.toggled.connect(lambda on, doc=doc: self._toggle_empty(doc, on))
+        self.quick.addRow(cb)
         hint = HintLabel(tr("Double-click to change the item (e.g. minecraft:diamond) or the count; the item's other "
                             "data (enchantments, name) are in the tree on the right."))
         self.quick.addRow(hint)
 
-    def _item_edited(self, doc, items, cell):
+    def _toggle_empty(self, doc, on: bool):
+        self._show_empty = on
+        self._build_quick(doc)
+
+    def _item_edited(self, doc, stacks, cell):
+        from ..manage import set_item_count, set_item_name
+
         if self._filling:
             return
-        it = items[cell.row()]
+        it = stacks[cell.row()].tag
         text = cell.text().strip()
         try:
-            if cell.column() == 1:
-                key = "id" if "id" in it else "Name"
-                old = it.get(key)
-                it[key] = nbt.StringTag(text) if isinstance(old, nbt.StringTag) or old is None else type(old)(int(text))
-            elif cell.column() == 2:
-                key = "count" if "count" in it else "Count"
-                old = it.get(key)
-                it[key] = (type(old) if old is not None else nbt.ByteTag)(int(text))
-        except (TypeError, ValueError, OverflowError):
-            self.state.setText(theme.span(tr("Invalid value"), "negative"))
+            if cell.column() == 2:
+                set_item_name(it, text)
+            elif cell.column() == 3:
+                set_item_count(it, int(text))
+        except (TypeError, ValueError, OverflowError) as e:
+            self.state.setText(theme.span(tr("Invalid value") + f": {e}", "negative"))
             return
         doc.dirty = True
         self._set_dirty(True)

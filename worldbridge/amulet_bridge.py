@@ -786,8 +786,15 @@ def write_java_level_dat(path: str, info: WorldInfo, target_version) -> None:
 
     target_dv = java_data_version(target_version)
     level_dv = int(nbt.get(info.level, "DataVersion", 0) or 0)
+    players = "playerdata"
     if 1451 <= level_dv <= target_dv:
-        data = _source_java_level(info, level_dv)
+        data, host = _source_java_level(info, level_dv)
+        if host is not None:  # 26.1+: the single player lives in players/data/<singleplayer_uuid>.dat
+            players = PLAYERS_26
+            uid, p = host
+            os.makedirs(os.path.join(path, players), exist_ok=True)
+            with open(os.path.join(path, players, f"{uid}.dat"), "wb") as f:
+                f.write(nbt.dump(nbt.CompoundTag(p), "", compressed=True))
     else:
         host = next(iter(info.players.values()), None)
         host_dv = int(nbt.get(host, "DataVersion", 0) or 0) if host is not None else 0
@@ -802,16 +809,22 @@ def write_java_level_dat(path: str, info: WorldInfo, target_version) -> None:
     with open(os.path.join(path, "level.dat"), "wb") as f:
         f.write(nbt.dump(nbt.CompoundTag({"Data": data}), "", compressed=True))
     # playerdata files are upgraded from their own DataVersion
-    write_java_players(path, info, JavaWriteOptions(kind="anvil", player_dv=target_dv))
+    write_java_players(path, info, JavaWriteOptions(kind="anvil", player_dv=target_dv), players)
 
 
-def _source_java_level(info: WorldInfo, level_dv: int) -> nbt.CompoundTag:
-    """A Java 1.13+ source's own level, with the selected spawn, name and host player."""
-    from .selection import set_player_uuid
+PLAYERS_26 = os.path.join("players", "data")
+
+
+def _source_java_level(info: WorldInfo, level_dv: int):
+    """A Java 1.13+ source's own level, with the selected spawn, name and host player; and, for a
+    26.1+ level (``singleplayer_uuid``), the host as (uuid, compound) for players/data instead."""
+    import uuid as _uuid
+
+    from .selection import set_player_uuid, uuid_int_array
 
     data = nbt.copy(info.level)
-    if info.split_world_gen:  # 26.1+: in data/minecraft/world_gen_settings.dat, copied with data/
-        data.pop("WorldGenSettings", None)
+    for key in info.derived_level_keys:  # read from 26.1+'s data/minecraft/*.dat (copied as they are)
+        data.pop(key, None)              # or added in the 1.21.10 layout for the other targets
     if level_dv >= SPAWN_COMPOUND_DV and "spawn" not in data and "SpawnX" in data:
         pos = [int(nbt.get(data, k, 0)) for k in ("SpawnX", "SpawnY", "SpawnZ")]
         data["spawn"] = nbt.CompoundTag({"dimension": nbt.StringTag("minecraft:overworld"),
@@ -820,14 +833,25 @@ def _source_java_level(info: WorldInfo, level_dv: int) -> nbt.CompoundTag:
         for k in ("SpawnX", "SpawnY", "SpawnZ", "SpawnAngle"):
             data.pop(k, None)
     data.pop("Player", None)
+    host = None
     if info.players:
         key = next(iter(info.players))
         p = nbt.copy(info.players[key])
         ln = info.player_links.get(key)
         if ln is not None and getattr(ln, "uuid", None):
             set_player_uuid(p, ln.uuid)
-        data["Player"] = p
-    return data
+        sp = nbt.get_tag(data, "singleplayer_uuid")
+        if sp is None:
+            data["Player"] = p
+        else:
+            if ln is not None and getattr(ln, "uuid", None):
+                uid = ln.uuid
+                data["singleplayer_uuid"] = uuid_int_array(uid)
+            else:
+                vals = [int(v) & 0xFFFFFFFF for v in sp]
+                uid = str(_uuid.UUID(int=(vals[0] << 96) | (vals[1] << 64) | (vals[2] << 32) | vals[3]))
+            host = (uid, p)
+    return data, host
 
 
 def _flat_options() -> nbt.CompoundTag:
@@ -870,7 +894,8 @@ def write_bedrock_level_dat(path: str, info: WorldInfo, version) -> None:
     root["SpawnX"], root["SpawnY"], root["SpawnZ"] = nbt.IntTag(sx), nbt.IntTag(sy), nbt.IntTag(sz)
     gt = int(nbt.get(src, "GameType", 0) or 0)
     root["GameType"] = nbt.IntTag(BEDROCK_GAMETYPE.get(gt, 0))
-    root["Difficulty"] = nbt.IntTag(int(nbt.get(src, "Difficulty", 2) or 2))
+    diff = nbt.get(src, "Difficulty")
+    root["Difficulty"] = nbt.IntTag(2 if diff is None else int(diff))  # 0 is Peaceful, not "missing"
     gen = str(nbt.get(src, "generatorName", "default") or "default").lower()
     root["Generator"] = nbt.IntTag(2 if gen == "flat" else 1)
     t = int(nbt.get(src, "Time", 0) or 0)
@@ -891,6 +916,12 @@ def write_bedrock_level_dat(path: str, info: WorldInfo, version) -> None:
     root["hasBeenLoadedInCreative"] = nbt.ByteTag(1 if gt == 1 else 0)
     root["rainLevel"] = nbt.FloatTag(1.0 if nbt.get(src, "raining", 0) else 0.0)
     root["lightningLevel"] = nbt.FloatTag(1.0 if nbt.get(src, "thundering", 0) else 0.0)
+    rules = nbt.get_tag(src, "GameRules")
+    if isinstance(rules, nbt.CompoundTag):  # the rules both editions have (keepInventory...)
+        from .gamerules import bedrock_rules
+
+        for k, v in bedrock_rules(rules).items():
+            root[k] = v
     root.setdefault("NetworkVersion", nbt.IntTag(0))
     root.setdefault("Platform", nbt.IntTag(2))
     root.setdefault("SpawnMobs", nbt.ByteTag(1))
@@ -923,12 +954,19 @@ def bedrock_info_to_java(root: nbt.CompoundTag) -> nbt.CompoundTag:
         out["SpawnY"] = nbt.IntTag(64)
     gt = int(nbt.get(root, "GameType", 0) or 0)
     out["GameType"] = nbt.IntTag(gt if gt in (0, 1, 2) else 0)
-    out["Difficulty"] = nbt.ByteTag(int(nbt.get(root, "Difficulty", 2) or 2))
+    diff = nbt.get(root, "Difficulty")
+    out["Difficulty"] = nbt.ByteTag(2 if diff is None else int(diff))  # 0 is Peaceful, not "missing"
     out["Time"] = nbt.LongTag(int(nbt.get(root, "currentTick", 0) or 0))
     out["DayTime"] = nbt.LongTag(int(nbt.get(root, "Time", 0) or 0))
     out["generatorName"] = nbt.StringTag("flat" if int(nbt.get(root, "Generator", 1) or 1) == 2 else "default")
     out["allowCommands"] = nbt.ByteTag(1 if nbt.get(root, "commandsEnabled", 0) else 0)
     out["raining"] = nbt.ByteTag(1 if float(nbt.get(root, "rainLevel", 0) or 0) > 0 else 0)
+    out["thundering"] = nbt.ByteTag(1 if float(nbt.get(root, "lightningLevel", 0) or 0) > 0 else 0)
+    from .gamerules import java_rules_from_bedrock
+
+    rules = java_rules_from_bedrock(root)
+    if len(rules):
+        out["GameRules"] = rules
     return out
 
 
