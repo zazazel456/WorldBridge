@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Callable, List, Optional, Tuple
 
-from PySide6.QtCore import QEvent, QPoint, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Signal
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QStyle, QToolButton, QVBoxLayout, QWhatsThis, QWidget,
@@ -15,6 +15,25 @@ from PySide6.QtWidgets import (
 
 from . import theme
 from ..i18n import tr
+
+
+class GuiThread(QObject):
+    """Runs callbacks in the thread it was made in (the interface's). PySide6 runs a plain function
+    or a lambda connected to a worker's signal in the worker's own thread, and a message box or a
+    new thread made there crashes the program: worker signals reach such callbacks through this."""
+
+    _call = Signal(object, object)
+
+    def __init__(self, parent: Optional[QObject] = None):
+        super().__init__(parent)
+        self._call.connect(self._run)
+
+    def _run(self, fn, args):
+        fn(*args)
+
+    def wrap(self, fn: Callable) -> Callable:
+        """``fn`` as a slot that may be called from any thread."""
+        return lambda *args: self._call.emit(fn, args)
 
 
 def spacing(widget: Optional[QWidget] = None, large: bool = False) -> int:

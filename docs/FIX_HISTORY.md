@@ -436,6 +436,17 @@ players and levels as each version writes them.
 `tests/test_game_versions.py` covers them with worlds converted to Java 26.3 and Bedrock 26.50 and the
 version numbers of the Bedrock 26.52 world.
 
+81. **WorldBridge closed itself after an edit of the source world.** Found painting plains chunks of
+    the Bedrock 26.52 world as dappled forest: the "Done" message appeared, then the program crashed.
+    The edit runs in a worker thread, and its end was connected to plain functions (the message and
+    the map's reload); PySide6 runs such functions in the thread that emits the signal, so the message
+    box and the map's new reading thread were made outside the interface's thread, which Qt does not
+    allow ("Cannot create children for a parent that is in a different thread"). The same held for
+    the trimmed-world copy, the progress shown in the status line and the map's error message. A
+    worker's signals now reach those functions through `GuiThread` (gui/widgets.py), which runs them
+    in the interface's thread; `tests/test_gui.py` paints a Bedrock 26.50 world from the map and checks
+    where the message runs.
+
 Looked into at the same time: the empty chunks inside the explored area of that Bedrock world are not
 in its database at all (read file by file, the write-ahead log included), and the world was never
 trimmed: the game left them out of its files, and generates a missing chunk again from the seed. The
