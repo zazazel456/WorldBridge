@@ -229,7 +229,9 @@ The full block table is in [BTA_BLOCK_MAPPING.md](BTA_BLOCK_MAPPING.md).
 ## Tools around the conversion
 
 - **Map** (`mapview.py`): the top block of every column, shaded by the height difference with its
-  northern neighbour and darkened by water depth. Numeric worlds are read through the hub reader,
+  northern neighbour and darkened by water depth. The colours are the game's `MapColor` of every
+  block, read from a Java client jar by `tools/mapcolors.py` into `mapcolors.py` (Bedrock names go
+  through their Java name; the blocks without a map colour are seen through, as on a game map). Numeric worlds are read through the hub reader,
   Java 1.13+ region files and Bedrock sub-chunks are parsed directly; Java 1.13+ reads only the top
   sections. Tiles load in rings around the view.
 - **Selections** (`selection.py`): MCA Selector's CSV format (`regionX;regionZ;chunkX;chunkZ`, or

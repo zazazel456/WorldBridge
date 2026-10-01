@@ -17,7 +17,7 @@ a converted world, not by an automated check.
 - [The ring and the terrain generators (21–23, 25–27, 29–31, 34–49)](#the-ring-and-the-terrain-generators)
 - [Blocks and content (30, 33, 38)](#blocks-and-content)
 - [Later fixes (50–57)](#later-fixes-5057)
-- [0.2.1 (65–75)](#021)
+- [0.2.1 (65–77)](#021)
 
 ---
 
@@ -391,3 +391,29 @@ the game's table; the chests and entities of the hub.
 
 `tests/test_manage.py`, `tests/test_version_quirks.py` and `tests/test_gui.py` cover them with
 players and levels as each version writes them.
+
+76. **Biomes of Java 26.2 – 26.3 and Bedrock 26.20 – 26.50 missing from the biome painter.** The
+    biome list stopped at the pale garden: sulfur caves (Java 26.2, Bedrock 26.20) and the dappled
+    forest (Java 26.3, Bedrock 26.50) could not be painted. Checked against the biomes of the Java 26.3
+    client jar (data/minecraft/worldgen/biome, 67): those two were the only ones missing. The Bedrock
+    list was the Java list of the same version number, but the two editions number their versions
+    differently (Bedrock 26.20 came before Java 26.3's biomes; the pale garden came with Bedrock
+    1.21.50, not 1.21.40): every biome since 1.19 now has its first Java and Bedrock version. The
+    painting went through Java 1.21.4's biome table, which has neither: it uses the latest. Checked on
+    a Bedrock 26.52 world: the painted chunks hold Bedrock's ids 195 and 194.
+77. **Map colours of recent blocks.** The map's colours were a hand-made table with keywords: leaf
+    litter (the floor of forests since 1.21.5) and about fifty other recent blocks fell on the grey
+    for unknown blocks, the dappled forest's orange, red and yellow poplar leaves on the plain green
+    of leaves. A Bedrock 26.52 world showed its forests grey and the dappled forest green. The colours
+    are now generated from the game: `tools/mapcolors.py` reads the bytecode of a Java client jar
+    (Blocks, MapColor, DyeColor and the block ids, with the 16-colour and copper families, the
+    properties copied from other blocks and the colours computed per block state) and writes
+    `worldbridge/mapcolors.py` with the map colour of each of the 1,286 blocks of Java 26.3. The blocks
+    without a map colour (glass, torches, rails, buttons, flower pots…) are seen through, as on a game
+    map; Bedrock names (normal_stone_slab, magma…) go through their Java name; the hand-made table is
+    left for the names of older versions. On that world every block has its colour.
+
+Looked into at the same time: the empty chunks inside the explored area of that Bedrock world are not
+in its database at all (read file by file, the write-ahead log included), and the world was never
+trimmed: the game left them out of its files, and generates a missing chunk again from the seed. The
+map and the converter cannot show or carry chunks that are not in the files (see the user guide).

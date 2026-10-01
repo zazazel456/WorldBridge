@@ -24,6 +24,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 import numpy as np
 
 from . import nbt
+from .mapcolors import MAP_COLORS, SEE_THROUGH
 from .model import NETHER, OVERWORLD, THE_END, Progress
 from .i18n import tr
 
@@ -103,10 +104,28 @@ _DYE_FAMILIES = ("wool", "carpet", "concrete_powder", "concrete", "terracotta", 
                  "shulker_box", "bed", "banner", "candle", "glazed_terracotta")
 
 
-@functools.lru_cache(maxsize=4096)
+@functools.lru_cache(maxsize=8192)
+def _java_name(name: str) -> str:
+    """The latest Java name of a block named the Bedrock way (normal_stone_slab, magma, seaLantern...)."""
+    from .items import _bedrock_block_to_flat
+
+    return _bedrock_block_to_flat("minecraft:" + name, ()) or name
+
+
+@functools.lru_cache(maxsize=8192)
 def block_color(name: str) -> Tuple[int, int, int]:
-    """Map colour of a block (any namespace / edition naming)."""
-    n = name.split(":", 1)[-1].lower()
+    """Map colour of a block (any namespace / edition naming): the colour Minecraft Java draws it with
+    on a map (worldbridge.mapcolors, read from the game), then the tables below for the names of
+    older versions."""
+    n = name.split(":", 1)[-1]
+    for key in (n, n.lower()):
+        if key in MAP_COLORS:
+            return MAP_COLORS[key]
+    if n.lower() not in _EXACT:
+        j = _java_name(n)
+        if j in MAP_COLORS:
+            return MAP_COLORS[j]
+    n = n.lower()
     if n in _EXACT:
         return _EXACT[n]
     for dye in sorted(_DYES, key=len, reverse=True):
@@ -121,8 +140,15 @@ def block_color(name: str) -> Tuple[int, int, int]:
     return (150, 150, 150)
 
 
+@functools.lru_cache(maxsize=8192)
 def is_air(name: str) -> bool:
-    return name.split(":", 1)[-1] in AIR
+    """Air, or a block a Minecraft map sees through (glass, torches, rails...: MapColor.NONE)."""
+    n = name.split(":", 1)[-1]
+    if n in AIR or n in SEE_THROUGH:
+        return True
+    if n in MAP_COLORS or n.lower() in _EXACT:
+        return False
+    return _java_name(n) in SEE_THROUGH
 
 
 def is_watery(name: str) -> bool:

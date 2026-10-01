@@ -111,8 +111,15 @@ Long explanations are behind the ⓘ buttons.
 ## Map and chunks tab
 
 As soon as a source world is chosen, a top-down map is drawn: one pixel per block, shaded relief,
-darker water where it is deep. In the Nether the terrain under the bedrock roof is shown. It works
-with every format: LCE on every console, Java from Classic to 26.x, Bedrock and Pocket Edition.
+darker water where it is deep, in the colours Minecraft Java draws on its own maps (glass, torches,
+rails and the like are seen through, as there). In the Nether the terrain under the bedrock roof is
+shown. It works with every format: LCE on every console, Java from Classic to 26.x, Bedrock and
+Pocket Edition.
+
+A chunk the map leaves empty inside the explored area is not in the world's files: Bedrock worlds
+can leave out chunks the game has shown (seen on a world never trimmed). The game generates a missing
+chunk again from the seed when a player gets there, so it looks the same in the game. A conversion treats them as not generated: the target
+game generates them (or the ring fills them, for the targets that have one).
 
 **Toolbar:** the **Dimension** shown; what a click does (**Pan**, **Select**, **Spawn**); the
 **Selection** menu; **Fit** (Ctrl+0); **World trim** and its settings.
