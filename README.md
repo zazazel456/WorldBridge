@@ -197,6 +197,12 @@ folder.
 **World management** edits any world's NBT without converting it. **EN | IT** at the top right
 switches the language at once, keeping every choice.
 
+| Conversion | Map and chunks | World management |
+|:---:|:---:|:---:|
+| ![The Conversion tab: target game and version, terrain border, what is converted, output folder](docs/images/ui-conversion.webp) | ![The Map and chunks tab: a top-down map of a world with the spawn, chunk selection, biome painting and in-place edits](docs/images/ui-map.webp) | ![The World management tab: quick settings and the NBT tree of level.dat](docs/images/ui-manage.webp) |
+
+The window follows the desktop's theme; these screenshots use KDE Plasma with a Kvantum theme.
+
 **Command line.**
 
 ```bash
