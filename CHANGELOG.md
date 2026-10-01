@@ -55,6 +55,17 @@ Biomes and map colours of the latest versions ([fixes 76–77](docs/FIX_HISTORY.
   colours of every Java 26.3 block, read from its jar, and the blocks a game map sees through (glass,
   torches, rails) are seen through.
 
+The version of each world read and written as the game itself does ([fixes 78–80](docs/FIX_HISTORY.md#021)):
+
+- **"Edit the source world" lacked the newest biomes** (dappled forest, sulfur caves) on Bedrock 26.x
+  and Java 26.x worlds, while the painter for the converted world had them: Bedrock 26.x stores its
+  version as 1.26.x, read as older than 1.21, and Java worlds newer than 1.21.4 were taken for 1.21.4.
+- **Bedrock 26.x worlds written as a version far newer than the game**: the level.dat said 26.50
+  where the game writes 1.26.50, and the game compares the two numbers to decide whether it can open
+  the world.
+- **Block items written for Bedrock with the game's version in place of the block-state version**
+  (26.50 in place of the 1.21.60.33 that 26.x writes), in inventories, chests and flower pots.
+
 ## 0.2.0 – first public release (alpha)
 
 The first version published. 0.1.0 was never released.

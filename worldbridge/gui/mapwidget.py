@@ -1384,13 +1384,16 @@ class MapTab(QWidget):
     def _set_world_game(self, path: str) -> None:
         from .. import biomes as bio
         from ..chunkedit import world_game
+        from ..gameversion import bedrock_label
 
         fam, ver = world_game(path) if path else ("", None)
         self._world_game = (fam, ver)
         _fill_biomes(self.world_biome_box, fam, ver)
         name = {"lce": "LCE", "java": "Java", "bedrock": "Bedrock", "pe_old": "Pocket Edition"}.get(fam, "")
-        if fam in ("java", "bedrock") and ver:
-            name += " " + ".".join(str(x) for x in ver) + ("+" if fam == "java" else "")
+        if fam == "java" and ver:
+            name += " " + ".".join(str(x) for x in ver) + "+"
+        elif fam == "bedrock" and ver:
+            name += " " + bedrock_label(ver)
         self.world_game_label.setText(tr("biomes of {game}", game=name) if bio.available(fam, ver) else "")
 
     # ---------------------------------------------------------- edits on the world itself

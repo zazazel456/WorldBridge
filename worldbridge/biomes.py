@@ -153,7 +153,9 @@ def available(family: str, version: Optional[Sequence[int]] = None) -> Tuple[int
     if family == "java":
         return _java_list(version or (99,))
     if family == "bedrock":
-        return _bedrock_list(version or (99,))
+        from .gameversion import bedrock
+
+        return _bedrock_list(bedrock(version) or (99,))
     return ()                                          # Pocket Edition 0.x: no biomes in chunks.dat
 
 
