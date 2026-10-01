@@ -286,9 +286,10 @@ class JavaWriteOptions:
     world_name: Optional[str] = None
     y_offset: int = 0
     keep_modern: bool = True  # (hub only) keep modern_blocks side info
-    # the target is opened by a 1.13+ game: players that already are Java 1.13+ data stay as
-    # they are (the game upgrades them from their own DataVersion) instead of being downgraded
-    modern_players: bool = False
+    # players that already are Java 1.13+ data with a DataVersion up to this one stay as they are
+    # (the game upgrades them from there) instead of being downgraded; 0 = none.  It must not
+    # be newer than the data version the game upgrades them from (level.dat: the level's)
+    player_dv: int = 0
 
     def old_version(self) -> Optional[str]:
         """The Java version whose content (items, mobs, block entities) the output is limited to."""
@@ -677,9 +678,10 @@ def _legacy_tiles(tiles, named: bool = False):
 def java_player_nbt(player: nbt.CompoundTag, opt: JavaWriteOptions) -> nbt.CompoundTag:
     """A source player in the form written to level.dat / playerdata."""
     p = nbt.copy(player)
-    if opt.modern_players and int(nbt.get(p, "DataVersion", 0) or 0) >= 1451:
-        # already a Java 1.13+ player (Java source): keep it untouched, the game upgrades it
-        # from its own DataVersion
+    dv = int(nbt.get(p, "DataVersion", 0) or 0)
+    if 1451 <= dv <= opt.player_dv:
+        # already a Java 1.13+ player (Java or Bedrock source): keep it untouched, the game
+        # upgrades it from its own DataVersion
         return p
     from ..lce.world import legacy_items
 
@@ -689,7 +691,7 @@ def java_player_nbt(player: nbt.CompoundTag, opt: JavaWriteOptions) -> nbt.Compo
     p.pop("DataVersion", None)
     for key in ("Inventory", "EnderItems"):
         if key in p:
-            p[key] = legacy_items(p[key])
+            p[key] = legacy_items(p[key], dv >= 1451)
             if not opt.legacy_layout():
                 # read by Java 1.9+: numeric ids the game's ItemIdFix does not know (cooked
                 # mutton 424, banners, shields, elytra...) would become air

@@ -128,7 +128,7 @@ def legacy_block_item_name(bid: int, dmg: int) -> Optional[str]:
     if name in ("air", "numerical"):
         return None if bid else "air"
     return {"wall_torch": "torch", "redstone_wall_torch": "redstone_torch", "sign": "oak_sign",
-            "wall_sign": "oak_sign", "stone_slab": "smooth_stone_slab" if bid == 43 else "stone_slab",
+            "wall_sign": "oak_sign", "stone_slab": "smooth_stone_slab",  # 1.13's stone_slab (1.14 rename)
             "grass_path": "dirt_path"}.get(name, name)
 
 
@@ -164,7 +164,8 @@ def _flat_to_legacy() -> Dict[str, Tuple[int, int]]:
             if n and n not in out:
                 out[n] = (bid, d)
     out.update({"rose_red": (351, 1), "cactus_green": (351, 2), "dandelion_yellow": (351, 11), "sign": (323, 0),
-                "grass": (31, 1), "short_grass": (31, 1), "dirt_path": (208, 0)})
+                "grass": (31, 1), "short_grass": (31, 1), "dirt_path": (208, 0),
+                "stone_slab": (44, 0)})  # the plain stone slab (1.14+): the nearest one
     out.pop("air", None)
     return out
 
@@ -414,11 +415,19 @@ def to_legacy(it: Item) -> Optional[nbt.CompoundTag]:
 
 
 # ------------------------------------------------------------------ Java 1.13+
+# older Java names of items (see _JAVA_RENAMES) that no later version uses for anything else
+_JAVA_OLD_NAMES = {"sign": "oak_sign", "grass_path": "dirt_path", "scute": "turtle_scute",
+                   "semi_weathered_cut_copper": "weathered_cut_copper",
+                   "semi_weathered_cut_copper_slab": "weathered_cut_copper_slab",
+                   "semi_weathered_cut_copper_stairs": "weathered_cut_copper_stairs"}
+
+
 def from_java_modern(t: nbt.CompoundTag) -> Optional[Item]:
     iid = nbt.get(t, "id")
     if not isinstance(iid, str):
         return from_legacy(t)
     name = iid.split(":", 1)[-1]
+    name = _JAVA_OLD_NAMES.get(name, name)
     count = nbt.get(t, "count", nbt.get(t, "Count", 1))
     it = Item(name=name, count=int(count or 1), damage=0, slot=nbt.get(t, "Slot"))
     tag = nbt.get_tag(t, "tag")
@@ -466,10 +475,31 @@ def _snbt_text(tag):
     return getattr(tag, "py_data", tag)
 
 
-def to_java_modern(it: Item, data_version: int) -> nbt.CompoundTag:
-    name = it["name"]
+# Item renames of Minecraft's data fixers after 1.13: (data version, old name, new name).  Data
+# older than that version is renamed when the game upgrades it, data as new or newer must carry
+# the new name: an item is written with the name that, once upgraded, is the intended one.
+_JAVA_RENAMES = ((2680, "grass_path", "dirt_path"),
+                 # a 1.17 snapshot shifted the copper names: semi_weathered -> weathered -> oxidized
+                 (2690, "semi_weathered_cut_copper", "weathered_cut_copper"),
+                 (2690, "semi_weathered_cut_copper_slab", "weathered_cut_copper_slab"),
+                 (2690, "semi_weathered_cut_copper_stairs", "weathered_cut_copper_stairs"),
+                 (3692, "grass", "short_grass"), (3800, "scute", "turtle_scute"), (4541, "chain", "iron_chain"))
+
+
+def java_item_name(name: str, data_version: int) -> str:
+    """``name`` (a WorldBridge name, 1.13 - 1.21) as Java data of ``data_version`` names it."""
     if data_version < 1952 and name == "oak_sign":  # before 1.14
-        name = "sign"
+        return "sign"
+    for dv, old, new in _JAVA_RENAMES:
+        if data_version >= dv and name == old:
+            name = new
+        elif data_version < dv and name == new:
+            name = old
+    return name
+
+
+def to_java_modern(it: Item, data_version: int) -> nbt.CompoundTag:
+    name = java_item_name(it["name"], data_version)
     out = nbt.CompoundTag({"id": nbt.StringTag("minecraft:" + name)})
     if it.get("slot") is not None:
         out["Slot"] = nbt.ByteTag(int(it["slot"]))
@@ -611,13 +641,26 @@ def _bedrock_block_version(version) -> int:
     return (v[0] << 24) | (v[1] << 16) | (v[2] << 8) | v[3]
 
 
+@functools.lru_cache(maxsize=1)
+def _latest(platform: str) -> Tuple[int, ...]:
+    return max(tuple(v) for v in _tm().version_numbers(platform))
+
+
+def bedrock_block_version(blk: nbt.CompoundTag) -> Tuple[int, ...]:
+    """The game version a Bedrock block compound was saved with (its ``version``), else the latest:
+    Bedrock renames blocks (stone_block_slab4 -> normal_stone_slab...), the names need the right table."""
+    v = int(nbt.get(blk, "version", 0) or 0)
+    ver = (v >> 24 & 255, v >> 16 & 255, v >> 8 & 255)
+    return ver if ver[0] >= 1 else _latest("bedrock")
+
+
 @functools.lru_cache(maxsize=None)
-def _bedrock_block_to_flat(name: str, states_key: tuple, version: Tuple[int, ...] = (1, 21, 0)) -> Optional[str]:
+def _bedrock_block_to_flat(name: str, states_key: tuple, version: Optional[Tuple[int, ...]] = None) -> Optional[str]:
     try:
         from amulet.api.block import Block
 
-        ver = _tm().get_version("bedrock", version)
-        v13 = _tm().get_version("java", (1, 21, 0))
+        ver = _tm().get_version("bedrock", version or _latest("bedrock"))
+        v13 = _tm().get_version("java", _latest("java"))
         ns, base = name.split(":", 1) if ":" in name else ("minecraft", name)
         blk = Block(ns, base, dict(states_key))
         u = ver.block.to_universal(blk)[0]
@@ -653,7 +696,8 @@ def from_bedrock(t: nbt.CompoundTag) -> Optional[Item]:
         flat = None
         if blk is not None and "name" in blk:
             states = nbt.get_tag(blk, "states") or nbt.CompoundTag()
-            flat = _bedrock_block_to_flat(str(nbt.get(blk, "name")), tuple(sorted(states.items(), key=lambda kv: kv[0])))
+            flat = _bedrock_block_to_flat(str(nbt.get(blk, "name")), tuple(sorted(states.items(), key=lambda kv: kv[0])),
+                                          bedrock_block_version(blk))
         # pre-1.19 Bedrock names are the numeric-era ones ("log", "wool" + Damage), also with Damage 0
         if flat is None and ids.item_id_from_name(n) is not None:
             leg = legacy_to_flat(ids.item_id_from_name(n), dmg)

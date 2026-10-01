@@ -47,6 +47,7 @@ def read_amulet_info(d) -> WorldInfo:
             try:
                 wgs = nbt.load(open(wgs_file, "rb").read()).tag
                 info.level["WorldGenSettings"] = nbt.get_tag(wgs, "data") or wgs
+                info.split_world_gen = True
             except Exception:  # noqa: BLE001
                 pass
         p = nbt.get_tag(info.level, "Player")

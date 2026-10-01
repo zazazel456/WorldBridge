@@ -545,17 +545,26 @@ def legacy_item(it: nbt.CompoundTag) -> Optional[nbt.CompoundTag]:
     return it
 
 
-def legacy_items(lst) -> nbt.ListTag:
+def legacy_items(lst, modern: bool = False) -> nbt.ListTag:
+    """``modern``: the stacks of Java 1.13+ data (a player with DataVersion >= 1451), named as in
+    1.13+: "melon" is the block there, not the slice of Java 1.12."""
     if len(lst) == 0:
         return lst
     out = nbt.ListTag([], 10)
     for it in lst:
         if len(it) == 0:
             continue
-        li = legacy_item(it)
+        li = legacy_item(it) if not modern else _modern_item(it)
         if li is not None:
             out.append(li)
     return out
+
+
+def _modern_item(it: nbt.CompoundTag) -> Optional[nbt.CompoundTag]:
+    from .. import items as _items
+
+    canon = _items.from_java_modern(it) if isinstance(it, nbt.CompoundTag) else None
+    return _items.to_legacy(canon) if canon else None
 
 
 def sanitize_tiles(tiles: List[nbt.CompoundTag], blocks: np.ndarray, dx: int, dz: int,
@@ -608,9 +617,10 @@ def sanitize_tiles(tiles: List[nbt.CompoundTag], blocks: np.ndarray, dx: int, dz
 
 def legacy_player(p: nbt.CompoundTag, opt: LCEWriteOptions, mapper) -> nbt.CompoundTag:
     p = nbt.copy(p)
+    modern = int(nbt.get(p, "DataVersion", 0) or 0) >= 1451
     for key in ("Inventory", "EnderItems"):
         if key in p:
-            p[key] = legacy_items(p[key])
+            p[key] = legacy_items(p[key], modern)
     dim = dimension_of(p)
     if isinstance(nbt.get_tag(p, "Dimension"), nbt.StringTag):
         p["Dimension"] = nbt.IntTag(dim)

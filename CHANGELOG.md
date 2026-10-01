@@ -2,15 +2,25 @@
 
 ## 0.2.1 – bug fix (alpha)
 
-- **Items lost from the player's inventory on the way to Java 1.9 and later** (found in game:
-  Bedrock 26.50 → Java 26.3, cooked mutton gone from the inventory but not from the furnace). The
-  player was written with numeric item ids, and Minecraft's own numeric id fix only knows the items
-  of Java 1.7: cooked and raw mutton, banners, doors other than oak, chorus fruit, beetroot, shields,
-  elytra, totems, prismarine, slime blocks, red sandstone, concrete and every other item added from
-  Java 1.8 on became air. The player's inventory and ender chest now carry the item names (with the
-  same Damage), from every source. Chests, furnaces, dropped items and mob equipment of the worlds
-  upgraded by the game ("Java 1.9 → latest") had the same problem and are fixed too.
-  See [fix 65](docs/FIX_HISTORY.md#021).
+Items lost or changed in the players' inventories on the way to Java (found in game: Bedrock 26.50 →
+Java 26.3, the cooked mutton gone from the inventory but not from the furnace). Details in
+[fixes 65–69](docs/FIX_HISTORY.md#021).
+
+- **Bedrock → Java: every item newer than Java 1.12 was lost from the player** (netherite, tridents,
+  crossbows, copper, deepslate, spyglasses, maces, honey, cherry wood…), and the off hand was never
+  carried over. The Bedrock player now becomes a Java player that keeps every item by name.
+- **Items added in Java 1.8 – 1.12 became air on the way to Java 1.9+** (mutton, cooked mutton,
+  banners, doors, shields, elytra, totems, prismarine, slime blocks, red sandstone, concrete…): they
+  were written with numeric ids that Minecraft's own upgrade does not know. Players, chests, furnaces,
+  dropped items and mob equipment now carry the item names.
+- **Java 1.13+ → latest Java: some items of the player changed into others** (melons into melon
+  slices, stone slabs into smooth stone slabs, weathered cut copper into oxidized cut copper, purple
+  shulker boxes into plain ones): the game upgraded the player again as if it came from 1.12. The
+  source's own level.dat is kept, so the game upgrades the world exactly as it would the original.
+- **Item names written for the wrong version**: short grass, turtle scutes, iron chains and dirt paths
+  in chests reaching the latest Java with names the game no longer reads; the 1.12 stone slab named
+  as the plain stone slab of 1.14+; block items saved by recent Bedrock versions (the plain stone slab
+  `normal_stone_slab`…) read with the tables of Bedrock 1.21.0 and lost.
 
 ## 0.2.0 – first public release (alpha)
 

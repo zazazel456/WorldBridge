@@ -207,6 +207,8 @@ class WorldInfo:
     thumbnail_png: Optional[bytes] = None
     # key -> selection.PlayerLink chosen in the "Giocatori" tab (nickname / UUID in the target)
     player_links: Dict[str, object] = field(default_factory=dict)
+    # Java 26.1+: level["WorldGenSettings"] was read from data/minecraft/world_gen_settings.dat
+    split_world_gen: bool = False
 
     @property
     def name(self) -> str:

@@ -767,20 +767,76 @@ def apply_modern_blocks(dst_path: str, modern: Dict[int, Dict[Tuple[int, int, in
 # --------------------------------------------------------------------- level.dat writers
 
 
-def write_java_level_dat(path: str, info: WorldInfo, data_version: int = 1343, modern_players: bool = False):
-    """A level.dat that every Java version (1.9+) upgrades with its data fixers."""
-    from .java.numeric import JavaWriteOptions, build_java_level
+# Minecraft upgrades the player inside level.dat from the level's DataVersion, not from the
+# player's own: a level and its player have to be written for the same version.
+LEGACY_LEVEL_DV = 1343   # Java 1.12.2: the level and players rebuilt in the numeric layout
+SPAWN_COMPOUND_DV = 4548  # Java 1.21.9: spawn: {dimension, pos, yaw, pitch} replaces SpawnX/Y/Z
 
-    opt = JavaWriteOptions(kind="anvil", modern_players=modern_players)
-    data = build_java_level(info, opt)
-    data["DataVersion"] = nbt.IntTag(data_version)
-    if data_version >= 1343:
-        data["Version"] = nbt.CompoundTag({"Id": nbt.IntTag(data_version), "Name": nbt.StringTag(""), "Snapshot": nbt.ByteTag(0)})
+
+def write_java_level_dat(path: str, info: WorldInfo, target_version) -> None:
+    """The level.dat (and the linked players' playerdata) of a Java world opened by
+    ``target_version``, which upgrades it with its data fixers.
+
+    * a Java 1.13+ source no newer than the target keeps its own level and players, with its
+      DataVersion: the game upgrades them exactly as it would the original world;
+    * a Bedrock source (players made by bedrock.extra.bedrock_player_to_java) is written as a
+      Java 1.15.2 level, so its players' items keep their modern names;
+    * everything else is a Java 1.12.2 level with players in the numeric layout."""
+    from .java.numeric import JavaWriteOptions, build_java_level, write_java_players
+
+    target_dv = java_data_version(target_version)
+    level_dv = int(nbt.get(info.level, "DataVersion", 0) or 0)
+    if 1451 <= level_dv <= target_dv:
+        data = _source_java_level(info, level_dv)
+    else:
+        host = next(iter(info.players.values()), None)
+        host_dv = int(nbt.get(host, "DataVersion", 0) or 0) if host is not None else 0
+        # the level fields are rebuilt in the 1.12 layout: the game turns them into
+        # WorldGenSettings only from data older than 1.16 (data version 2550)
+        dv = host_dv if 1451 <= host_dv < 2550 and host_dv <= target_dv else LEGACY_LEVEL_DV
+        data = build_java_level(info, JavaWriteOptions(kind="anvil", player_dv=dv))
+        data["DataVersion"] = nbt.IntTag(dv)
+        data["Version"] = nbt.CompoundTag({"Id": nbt.IntTag(dv), "Name": nbt.StringTag(""), "Snapshot": nbt.ByteTag(0)})
+        if dv >= 1506 and str(nbt.get(data, "generatorName", "")).lower() == "flat":
+            data["generatorOptions"] = _flat_options()  # what the 1.13 fixes make of the classic flat world
     with open(os.path.join(path, "level.dat"), "wb") as f:
         f.write(nbt.dump(nbt.CompoundTag({"Data": data}), "", compressed=True))
-    from .java.numeric import write_java_players
+    # playerdata files are upgraded from their own DataVersion
+    write_java_players(path, info, JavaWriteOptions(kind="anvil", player_dv=target_dv))
 
-    write_java_players(path, info, opt)
+
+def _source_java_level(info: WorldInfo, level_dv: int) -> nbt.CompoundTag:
+    """A Java 1.13+ source's own level, with the selected spawn, name and host player."""
+    from .selection import set_player_uuid
+
+    data = nbt.copy(info.level)
+    if info.split_world_gen:  # 26.1+: in data/minecraft/world_gen_settings.dat, copied with data/
+        data.pop("WorldGenSettings", None)
+    if level_dv >= SPAWN_COMPOUND_DV and "spawn" not in data and "SpawnX" in data:
+        pos = [int(nbt.get(data, k, 0)) for k in ("SpawnX", "SpawnY", "SpawnZ")]
+        data["spawn"] = nbt.CompoundTag({"dimension": nbt.StringTag("minecraft:overworld"),
+                                         "pos": nbt.IntArrayTag(pos), "yaw": nbt.FloatTag(0.0),
+                                         "pitch": nbt.FloatTag(0.0)})
+        for k in ("SpawnX", "SpawnY", "SpawnZ", "SpawnAngle"):
+            data.pop(k, None)
+    data.pop("Player", None)
+    if info.players:
+        key = next(iter(info.players))
+        p = nbt.copy(info.players[key])
+        ln = info.player_links.get(key)
+        if ln is not None and getattr(ln, "uuid", None):
+            set_player_uuid(p, ln.uuid)
+        data["Player"] = p
+    return data
+
+
+def _flat_options() -> nbt.CompoundTag:
+    layers = [("minecraft:bedrock", 1), ("minecraft:dirt", 2), ("minecraft:grass_block", 1)]
+    return nbt.CompoundTag({
+        "layers": nbt.ListTag([nbt.CompoundTag({"block": nbt.StringTag(b), "height": nbt.IntTag(h)})
+                               for b, h in layers], 10),
+        "biome": nbt.StringTag("minecraft:plains"),
+        "structures": nbt.CompoundTag({"village": nbt.CompoundTag()})})
 
 
 BEDROCK_GAMETYPE = {0: 0, 1: 1, 2: 2, 3: 1}

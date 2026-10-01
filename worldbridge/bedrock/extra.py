@@ -68,6 +68,41 @@ def write_nbt_list(tags: List[nbt.CompoundTag]) -> bytes:
 
 # ------------------------------------------------------------------ players
 
+# Java 1.15.2.  A Bedrock player becomes a Java player of this version: its items keep their
+# names (netherite, copper, tridents... have no numeric id), and the level.dat of a world from
+# Bedrock carries this DataVersion too, so Minecraft upgrades the player from here.  From an
+# older version the game's 1.13 - 1.14 renames would hit modern names (stone_slab ->
+# smooth_stone_slab, melon -> melon_slice, purple_shulker_box -> shulker_box).
+BEDROCK_PLAYER_DV = 2230
+
+
+def _player_items(p: nbt.CompoundTag, write, offhand: bool = False):
+    """(inventory, ender chest) of a Bedrock player, each stack written by ``write``."""
+    inv = nbt.ListTag([], 10)
+
+    def add(lst, it, slot=None):
+        c = items.from_bedrock(it)
+        if not c:
+            return
+        if slot is not None:
+            c["slot"] = slot
+        w = write(c)
+        if w is not None:
+            lst.append(w)
+
+    for it in nbt.get_tag(p, "Inventory") or []:
+        add(inv, it)
+    for i, it in enumerate(nbt.get_tag(p, "Armor") or []):
+        add(inv, it, 100 + (3 - i))
+    if offhand:
+        for it in (nbt.get_tag(p, "Offhand") or [])[:1]:
+            add(inv, it, -106)
+    ender = nbt.ListTag([], 10)
+    for it in nbt.get_tag(p, "EnderChestInventory") or []:
+        add(ender, it)
+    return inv, ender
+
+
 def bedrock_player_to_legacy(p: nbt.CompoundTag) -> nbt.CompoundTag:
     out = nbt.CompoundTag()
     pos = [float(v.py_data) for v in (nbt.get_tag(p, "Pos") or [])] or [0.0, 64.0, 0.0]
@@ -83,29 +118,7 @@ def bedrock_player_to_legacy(p: nbt.CompoundTag) -> nbt.CompoundTag:
     gm = nbt.get(p, "PlayerGameMode")
     if gm is not None:
         out["playerGameType"] = nbt.IntTag(int(gm) if int(gm) in (0, 1, 2, 3) else 0)
-    inv = nbt.ListTag([], 10)
-    for it in nbt.get_tag(p, "Inventory") or []:
-        c = items.from_bedrock(it)
-        if c:
-            w = items.to_legacy(c)
-            if w is not None:
-                inv.append(w)
-    for i, it in enumerate(nbt.get_tag(p, "Armor") or []):
-        c = items.from_bedrock(it)
-        if c:
-            c["slot"] = 100 + (3 - i)
-            w = items.to_legacy(c)
-            if w is not None:
-                inv.append(w)
-    out["Inventory"] = inv
-    ender = nbt.ListTag([], 10)
-    for it in nbt.get_tag(p, "EnderChestInventory") or []:
-        c = items.from_bedrock(it)
-        if c:
-            w = items.to_legacy(c)
-            if w is not None:
-                ender.append(w)
-    out["EnderItems"] = ender
+    out["Inventory"], out["EnderItems"] = _player_items(p, items.to_legacy)
     for a in nbt.get_tag(p, "Attributes") or []:
         name = nbt.get(a, "Name")
         if name == "minecraft:health":
@@ -114,6 +127,16 @@ def bedrock_player_to_legacy(p: nbt.CompoundTag) -> nbt.CompoundTag:
             out["foodLevel"] = nbt.IntTag(int(float(nbt.get(a, "Current", 20.0))))
         elif name == "minecraft:player.level":
             out["XpLevel"] = nbt.IntTag(int(float(nbt.get(a, "Current", 0.0))))
+    return out
+
+
+def bedrock_player_to_java(p: nbt.CompoundTag) -> nbt.CompoundTag:
+    """A Bedrock player as a Java 1.15.2 player (see BEDROCK_PLAYER_DV): every item, the off
+    hand included, by name.  The targets without these items translate it like any Java player."""
+    out = bedrock_player_to_legacy(p)
+    out["DataVersion"] = nbt.IntTag(BEDROCK_PLAYER_DV)
+    out["Inventory"], out["EnderItems"] = _player_items(
+        p, lambda c: items.to_java_modern(c, BEDROCK_PLAYER_DV), offhand=True)
     return out
 
 
@@ -155,7 +178,7 @@ def legacy_player_to_bedrock(p: nbt.CompoundTag, version, uid: int, world_game_t
     out["UniqueID"] = nbt.LongTag(uid)
     lst = list(nbt.get_tag(p, "Inventory") or [])
     ender_lst = list(nbt.get_tag(p, "EnderItems") or [])
-    src = "legacy"
+    src = "java" if int(nbt.get(p, "DataVersion", 0) or 0) >= 1451 else "legacy"  # Java 1.13+ items
     for t in lst + ender_lst:
         if isinstance(nbt.get(t, "id"), str) and items.flat_to_legacy(str(nbt.get(t, "id"))) is not None:
             src = "java"
@@ -232,12 +255,12 @@ def read_bedrock_players(path: str) -> Dict[str, nbt.CompoundTag]:
         out = {}
         raw = _get(db, b"~local_player")
         if raw:
-            out["host"] = bedrock_player_to_legacy(nbt.load(raw, little_endian=True, compressed=False).tag)
+            out["host"] = bedrock_player_to_java(nbt.load(raw, little_endian=True, compressed=False).tag)
         for key, raw in db.iterate(b"player_server_", b"player_server_\xff"):
             if not key.startswith(b"player_server_") or len(out) >= 64:
                 continue
             try:
-                out[key.decode("utf-8", "replace")] = bedrock_player_to_legacy(
+                out[key.decode("utf-8", "replace")] = bedrock_player_to_java(
                     nbt.load(raw, little_endian=True, compressed=False).tag)
             except Exception:  # noqa: BLE001
                 pass
