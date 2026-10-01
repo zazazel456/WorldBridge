@@ -624,6 +624,8 @@ def legacy_player(p: nbt.CompoundTag, opt: LCEWriteOptions, mapper) -> nbt.Compo
     dim = dimension_of(p)
     if isinstance(nbt.get_tag(p, "Dimension"), nbt.StringTag):
         p["Dimension"] = nbt.IntTag(dim)
+    if int(nbt.get(p, "playerGameType", 0) or 0) not in (0, 1, 2):  # LCE has no Spectator
+        p["playerGameType"] = nbt.IntTag(1)
     pos = nbt.get_tag(p, "Pos")
     if pos is not None and len(pos) == 3:
         cx, cz = int(pos[0].py_data) >> 4, int(pos[2].py_data) >> 4
@@ -694,6 +696,8 @@ def build_lce_level(info: WorldInfo, opt: LCEWriteOptions, mapper) -> nbt.Compou
     lvl["newSeaLevel"] = nbt.ByteTag(1)
     lvl.setdefault("MapFeatures", nbt.ByteTag(1))
     lvl.setdefault("GameType", nbt.IntTag(0))
+    if int(lvl["GameType"].py_data) not in (0, 1, 2):  # LCE has no Spectator
+        lvl["GameType"] = nbt.IntTag(1)
     lvl.setdefault("Time", nbt.LongTag(0))
     lvl["hasStronghold"] = nbt.ByteTag(0)
     lvl["StrongholdX"] = lvl["StrongholdY"] = lvl["StrongholdZ"] = nbt.IntTag(0)

@@ -351,3 +351,22 @@ def test_language_switch_keeps_every_choice(win, app, tmp_path):
         i18n.set_language("en")
         it.close()
         app.processEvents()
+
+
+def test_inventory_table_shows_the_items_of_a_native_bedrock_player(app, tmp_path):
+    from worldbridge.gui.manageui import ManageTab
+
+    from .test_manage import _bedrock_world, _native_bedrock_player
+
+    tab = ManageTab()
+    tab.open(_bedrock_world(tmp_path, _native_bedrock_player()))
+    tab.docs.setCurrentRow(next(i for i, d in enumerate(tab.world.docs) if d.kind == "player"))
+    table = tab.quick_holder.findChildren(QtWidgets.QTableWidget)[-1]
+    rows = [tuple(table.item(r, c).text() for c in range(4)) for r in range(table.rowCount())]
+    assert [r[2] for r in rows] == ["minecraft:cooked_mutton", "minecraft:oak_planks", "minecraft:netherite_helmet",
+                                    "minecraft:shield", "minecraft:elytra"]           # not 68 rows, most empty
+    box = next(cb for cb in tab.quick_holder.findChildren(QtWidgets.QCheckBox) if "empty" in cb.text())
+    box.setChecked(True)
+    table = tab.quick_holder.findChildren(QtWidgets.QTableWidget)[-1]
+    assert table.rowCount() == 5 + 63
+    tab.close()

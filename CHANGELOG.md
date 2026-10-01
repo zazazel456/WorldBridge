@@ -22,6 +22,28 @@ Java 26.3, the cooked mutton gone from the inventory but not from the furnace). 
   as the plain stone slab of 1.14+; block items saved by recent Bedrock versions (the plain stone slab
   `normal_stone_slab`…) read with the tables of Bedrock 1.21.0 and lost.
 
+World management and the settings of a world between versions ([fixes 70–75](docs/FIX_HISTORY.md#021)):
+
+- **World management: the inventory of a native Bedrock player looked empty.** Bedrock saves every
+  slot, the empty ones too, and the table listed them all in slot order. The items are now listed
+  by place (hotbar, inventory, armour, off hand, ender chest), with the empty slots on request. The
+  Bedrock ender chest is shown, a player edited in Bedrock keeps the raw bytes the game stores in some
+  strings, and a world open in Minecraft (database locked) says so instead of showing no players.
+- **World management follows the world's version:** the single player stored in a Java or Pocket
+  Edition 0.x level.dat (26.1+: in players/data) is listed; Java 1.21.5+ armour and off hand
+  (`equipment`), Java 1.21.11 game rules (`game_rules`), Bedrock number rules; game modes and settings
+  only as the version has them (no Spectator in Bedrock, LCE and before Java 1.8; no difficulty before
+  1.8, no `DayTime` before 1.3…).
+- **Java 1.21.5+ armour and off hand lost on the way to Bedrock and to older Java**; Bedrock's off
+  hand never written.
+- **Game modes between editions:** Bedrock Spectator and "same as the world" became Survival in Java;
+  Java Spectator became Creative even in Bedrock 1.21.40+, which has it.
+- **World settings of Java 1.21.11+ / 26.x lost** on the way to Bedrock, LCE and older Java
+  (difficulty, hardcore, weather, game rules); a Peaceful world became Normal between Java and
+  Bedrock; the game rules both editions have (keepInventory…) now go across.
+- **Java 26.x → 26.x: the single player started anew** (0.2.1's own fix 67): it stays in
+  players/data, where Java 26.1+ reads it.
+
 ## 0.2.0 – first public release (alpha)
 
 The first version published. 0.1.0 was never released.

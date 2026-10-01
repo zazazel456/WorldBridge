@@ -12,6 +12,62 @@ from .model import Progress, WorldInfo
 from .i18n import tr
 
 
+_DIFFICULTY = {"peaceful": 0, "easy": 1, "normal": 2, "hard": 3}
+
+
+def _side_data(world: str, name: str) -> Optional[nbt.CompoundTag]:
+    """Java 26.1+: data/minecraft/<name>.dat ({"data": {...}})."""
+    p = os.path.join(world, "data", "minecraft", name + ".dat")
+    if not os.path.exists(p):
+        return None
+    try:
+        root = nbt.load(open(p, "rb").read()).tag
+    except Exception:  # noqa: BLE001
+        return None
+    data = nbt.get_tag(root, "data")
+    return data if isinstance(data, nbt.CompoundTag) else root
+
+
+def classic_java_level(info: WorldInfo, world: str) -> None:
+    """A Java 1.21.11+ / 26.x level read with the keys of 1.12 - 1.21.10 as well, for the writers
+    of the other editions and versions (see WorldInfo.derived_level_keys)."""
+    from .gamerules import classic_java_rules
+
+    lv = info.level
+
+    def add(key, tag):
+        if key not in lv and tag is not None:
+            lv[key] = tag
+            info.derived_level_keys.append(key)
+
+    wgs = _side_data(world, "world_gen_settings")                      # 26.1+
+    if wgs is not None:
+        add("WorldGenSettings", wgs)
+    ds = nbt.get_tag(lv, "difficulty_settings")                          # 26.1+
+    if isinstance(ds, nbt.CompoundTag):
+        d = nbt.get(ds, "difficulty")
+        if d is not None:
+            add("Difficulty", nbt.ByteTag(_DIFFICULTY.get(str(d).lower(), int(d) if str(d).isdigit() else 2)))
+        if "hardcore" in ds:
+            add("hardcore", nbt.ByteTag(1 if nbt.get(ds, "hardcore") else 0))
+        if "locked" in ds:
+            add("DifficultyLocked", nbt.ByteTag(1 if nbt.get(ds, "locked") else 0))
+    weather = _side_data(world, "weather")                               # 26.1+
+    if weather is not None:
+        for keys, dst, cls in ((("raining",), "raining", nbt.ByteTag), (("thundering",), "thundering", nbt.ByteTag),
+                               (("rain_time", "rainTime"), "rainTime", nbt.IntTag),
+                               (("thunder_time", "thunderTime"), "thunderTime", nbt.IntTag),
+                               (("clear_weather_time", "clearWeatherTime"), "clearWeatherTime", nbt.IntTag)):
+            v = next((nbt.get(weather, k) for k in keys if k in weather), None)
+            if v is not None:
+                add(dst, cls(int(v)))
+    rules = nbt.get_tag(lv, "game_rules")                                # 1.21.11
+    if not isinstance(rules, nbt.CompoundTag):
+        rules = _side_data(world, "game_rules")                          # 26.1+
+    if isinstance(rules, nbt.CompoundTag):
+        add("GameRules", classic_java_rules(rules))
+
+
 def read_amulet_info(d) -> WorldInfo:
     info = WorldInfo()
     if d.kind == "bedrock":
@@ -42,14 +98,7 @@ def read_amulet_info(d) -> WorldInfo:
     else:
         root = nbt.load(open(os.path.join(d.path, "level.dat"), "rb").read()).tag
         info.level = nbt.get_tag(root, "Data") or root
-        wgs_file = os.path.join(d.path, "data", "minecraft", "world_gen_settings.dat")
-        if "WorldGenSettings" not in info.level and os.path.exists(wgs_file):  # 26.1+
-            try:
-                wgs = nbt.load(open(wgs_file, "rb").read()).tag
-                info.level["WorldGenSettings"] = nbt.get_tag(wgs, "data") or wgs
-                info.split_world_gen = True
-            except Exception:  # noqa: BLE001
-                pass
+        classic_java_level(info, d.path)
         p = nbt.get_tag(info.level, "Player")
         if p is not None:
             info.players["host"] = p
@@ -174,7 +223,7 @@ def direct_extras(d, out_dir: str, target, info: WorldInfo, progress: Progress, 
             from .java.modern import inject_from_java
 
             inject_from_java(d.path, out_dir, info, progress)
-            _copy_java_side_files(d.path, out_dir)
+            _copy_java_side_files(d.path, out_dir, bool(info.player_links))
         elif target.family == "bedrock" and d.kind == "bedrock":
             from .bedrock.extra import copy_bedrock_extras
 
@@ -198,12 +247,38 @@ def _copy_maps(src: str, dst: str) -> None:
                 shutil.copy2(os.path.join(data, fn), os.path.join(dst, "data", fn))
 
 
-def _copy_java_side_files(src: str, dst: str) -> None:
-    """Maps, statistics, advancements, player files of a Java world."""
+def _copy_java_side_files(src: str, dst: str, selected_players: bool = False) -> None:
+    """Maps, statistics, advancements, player files of a Java world.  Java 26.1 moved the players'
+    files into players/ (players/data...): they stay there when the output keeps the source's 26.1+
+    level.dat, and go back to playerdata/, stats/, advancements/ when the output level is older
+    (the game moves them itself when it upgrades it).  Files already written are kept; with players
+    chosen in the "Giocatori" tab the source's player files are not copied (the chosen ones are
+    written by the level.dat writer)."""
     import shutil
 
-    for sub in ("stats", "advancements", "playerdata", os.path.join("players", "data"), "data", "datapacks"):
-        s = os.path.join(src, sub)
-        d = os.path.join(dst, sub if sub != os.path.join("players", "data") else "playerdata")
-        if os.path.isdir(s) and not os.path.exists(d):
-            shutil.copytree(s, d, dirs_exist_ok=True)
+    try:
+        out_level = nbt.load(open(os.path.join(dst, "level.dat"), "rb").read()).tag
+        split = nbt.get_tag(nbt.get_tag(out_level, "Data") or out_level, "singleplayer_uuid") is not None
+    except Exception:  # noqa: BLE001
+        split = False
+    moves = [("stats", "stats"), ("advancements", "advancements"), ("data", "data"), ("datapacks", "datapacks")]
+    if not selected_players:
+        moves.append(("playerdata", "playerdata"))
+    if split:
+        moves += [(os.path.join("players", k), os.path.join("players", k)) for k in ("stats", "advancements")
+                  ] + ([] if selected_players else [(os.path.join("players", "data"), os.path.join("players", "data"))])
+    else:
+        moves += [(os.path.join("players", "stats"), "stats"), (os.path.join("players", "advancements"), "advancements")]
+        if not selected_players:
+            moves.append((os.path.join("players", "data"), "playerdata"))
+    for a, b in moves:
+        s, d = os.path.join(src, a), os.path.join(dst, b)
+        if not os.path.isdir(s):
+            continue
+        for root, _dirs, files in os.walk(s):
+            rel = os.path.relpath(root, s)
+            os.makedirs(os.path.join(d, rel), exist_ok=True)
+            for fn in files:
+                t = os.path.join(d, rel, fn)
+                if not os.path.exists(t):
+                    shutil.copy2(os.path.join(root, fn), t)

@@ -116,8 +116,10 @@ def bedrock_player_to_legacy(p: nbt.CompoundTag) -> nbt.CompoundTag:
         out["UUIDMost"] = nbt.LongTag(ent._signed(v >> 64, 64))
         out["UUIDLeast"] = nbt.LongTag(ent._signed(v, 64))
     gm = nbt.get(p, "PlayerGameMode")
-    if gm is not None:
-        out["playerGameType"] = nbt.IntTag(int(gm) if int(gm) in (0, 1, 2, 3) else 0)
+    # Bedrock: 5 = the world's mode (Java: no playerGameType, the same), 6 = Spectator (Java 3)
+    mode = {0: 0, 1: 1, 2: 2, 6: 3}.get(int(gm)) if gm is not None else None
+    if mode is not None:
+        out["playerGameType"] = nbt.IntTag(mode)
     out["Inventory"], out["EnderItems"] = _player_items(p, items.to_legacy)
     for a in nbt.get_tag(p, "Attributes") or []:
         name = nbt.get(a, "Name")
@@ -176,7 +178,7 @@ def legacy_player_to_bedrock(p: nbt.CompoundTag, version, uid: int, world_game_t
         dim = {"minecraft:the_nether": -1, "minecraft:the_end": 1}.get(dim, 0)
     out["DimensionId"] = nbt.IntTag(DIM_TO_BEDROCK.get(int(dim or 0), 0))
     out["UniqueID"] = nbt.LongTag(uid)
-    lst = list(nbt.get_tag(p, "Inventory") or [])
+    lst = list(items.player_stacks(p))  # Java 1.21.5+: armour and off hand from "equipment"
     ender_lst = list(nbt.get_tag(p, "EnderItems") or [])
     src = "java" if int(nbt.get(p, "DataVersion", 0) or 0) >= 1451 else "legacy"  # Java 1.13+ items
     for t in lst + ender_lst:
@@ -196,12 +198,15 @@ def legacy_player_to_bedrock(p: nbt.CompoundTag, version, uid: int, world_game_t
 
     inv = [None] * 36
     armor = [None] * 4
+    offhand = None
     for slot, b in slots(lst):
         if 0 <= slot < 36:
             b["Slot"] = nbt.ByteTag(slot)
             inv[slot] = b
         elif 100 <= slot <= 103:
             armor[3 - (slot - 100)] = b
+        elif slot == -106:
+            offhand = b
     ender = [None] * 27
     for slot, b in slots(ender_lst):
         if 0 <= slot < 27:
@@ -211,11 +216,14 @@ def legacy_player_to_bedrock(p: nbt.CompoundTag, version, uid: int, world_game_t
                                             "WasPickedUp": nbt.ByteTag(0), **({"Slot": nbt.ByteTag(s)} if s is not None else {})})
     out["Inventory"] = nbt.ListTag([inv[i] if inv[i] is not None else empty(i) for i in range(36)], 10)
     out["Armor"] = nbt.ListTag([a if a is not None else empty() for a in armor], 10)
+    out["Offhand"] = nbt.ListTag([offhand if offhand is not None else empty()], 10)
     out["EnderChestInventory"] = nbt.ListTag([ender[i] if ender[i] is not None else empty(i) for i in range(27)], 10)
     gt = nbt.get(p, "playerGameType")
     gt = int(gt) if gt is not None and int(gt) in (0, 1, 2, 3) else None
-    mode = {3: 1}.get(gt, gt)  # no spectator before Bedrock 1.21.40: creative
-    if gt is None or (world_game_type is not None and mode == {3: 1}.get(world_game_type, world_game_type)):
+    # Spectator is 6 from Bedrock 1.21.40; before, the nearest is Creative
+    spectator = 6 if tuple(version) >= (1, 21, 40) else 1
+    mode = {3: spectator}.get(gt, gt)
+    if gt is None or (world_game_type is not None and mode == {3: spectator}.get(world_game_type, world_game_type)):
         out["PlayerGameMode"] = nbt.IntTag(5)  # "default": follows the world
     else:
         out["PlayerGameMode"] = nbt.IntTag(mode)

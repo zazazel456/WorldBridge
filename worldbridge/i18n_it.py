@@ -615,6 +615,24 @@ _SECTIONS = {
             'Livello dei fulmini',
         'Local player':
             'Giocatore locale',
+        'Single player (in level.dat)':
+            'Giocatore in singolo (in level.dat)',
+        'Single player ({name})':
+            'Giocatore in singolo ({name})',
+        'The players cannot be read ({error}): close Minecraft if the world is open in it.':
+            'Impossibile leggere i giocatori ({error}): chiudi Minecraft se il mondo è aperto lì.',
+        '{player}: unreadable ({error})':
+            '{player}: illeggibile ({error})',
+        'Hotbar':
+            'Barra rapida',
+        'Armour':
+            'Armatura',
+        'Off hand':
+            'Mano secondaria',
+        'Ender chest':
+            'Baule di ender',
+        'Unknown item: {name}':
+            'Oggetto sconosciuto: {name}',
         'Survival':
             'Sopravvivenza',
         'Creative':
@@ -969,6 +987,12 @@ _SECTIONS = {
             '(questo gioco non memorizza i biomi)',
     },
     'worldbridge/gui/manageui.py': {
+        'Where':
+            'Dove',
+        'This player has no inventory.':
+            'Questo giocatore non ha un inventario.',
+        'Show the empty slots ({n})':
+            'Mostra gli slot vuoti ({n})',
         '{n} entries':
             '{n} voci',
         '{n} elements':
