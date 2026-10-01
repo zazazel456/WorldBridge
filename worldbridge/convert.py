@@ -518,8 +518,7 @@ def _make_writer(t: TargetSpec, out: str, progress: Progress, src: WorldSource, 
     elif t.family == "java" and t.java_mode == "numeric":
         opt = JavaWriteOptions(kind="anvil", version_limit=t.java_version_limit, world_name=t.world_name, y_offset=t.y_offset)
     else:  # dfu hub or temporary hub for Amulet targets
-        opt = JavaWriteOptions(kind="anvil", world_name=t.world_name, y_offset=t.y_offset,
-                               modern_players=t.family == "java" and t.java_mode in ("dfu", "auto"))
+        opt = JavaWriteOptions(kind="anvil", world_name=t.world_name, y_offset=t.y_offset)
     return JavaNumericWriter(out, opt, progress)
 
 
@@ -881,7 +880,7 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
             if platform == "bedrock":
                 ab.write_bedrock_level_dat(out_dir, src.info, wver)
             else:
-                ab.write_java_level_dat(out_dir, src.info, 1343, tuple(target.version) == ab.latest("java"))
+                ab.write_java_level_dat(out_dir, src.info, target.version)
             from .extra import inject_target_extras
 
             inject_target_extras(hub_dir, out_dir, target, src.info, progress, wver)
@@ -999,7 +998,7 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
     if platform == "bedrock":
         ab.write_bedrock_level_dat(out_dir, info, wver)
     else:
-        ab.write_java_level_dat(out_dir, info, 1343, tuple(target.version) == ab.latest("java"))
+        ab.write_java_level_dat(out_dir, info, target.version)
     direct_extras(d, out_dir, target, info, progress, wver)
     if sel.filters:  # entities/block entities are only attached to written chunks, but be sure
         (prune_bedrock if platform == "bedrock" else prune_java)(out_dir, sel)

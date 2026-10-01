@@ -21,7 +21,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from .. import blocks as blk
-from .. import ids, nbt
+from .. import ids, items, nbt
 from ..lce.chunk import array_to_nibbles, java128_to_yzx, nibbles_to_array, yzx_to_java128
 from ..model import NETHER, OVERWORLD, THE_END, NumericChunk, Progress, WorldInfo, WorldSource
 from ..entities import hanging_to_modern
@@ -286,9 +286,10 @@ class JavaWriteOptions:
     world_name: Optional[str] = None
     y_offset: int = 0
     keep_modern: bool = True  # (hub only) keep modern_blocks side info
-    # the target is opened by a 1.13+ game: players that already are Java 1.13+ data stay as
-    # they are (the game upgrades them from their own DataVersion) instead of being downgraded
-    modern_players: bool = False
+    # players that already are Java 1.13+ data with a DataVersion up to this one stay as they are
+    # (the game upgrades them from there) instead of being downgraded; 0 = none.  It must not
+    # be newer than the data version the game upgrades them from (level.dat: the level's)
+    player_dv: int = 0
 
     def old_version(self) -> Optional[str]:
         """The Java version whose content (items, mobs, block entities) the output is limited to."""
@@ -443,9 +444,9 @@ class JavaNumericWriter:
         lvl["zPos"] = nbt.IntTag(c.cz)
         lvl["LastUpdate"] = nbt.LongTag(int(c.last_update or 0))
         lvl["TerrainPopulated"] = nbt.ByteTag(1 if c.terrain_populated else 0)
-        if self.old is None:
-            lvl["Entities"] = nbt.compound_list(_legacy_entities(c.entities))
-            lvl["TileEntities"] = nbt.compound_list(_legacy_tiles(c.tile_entities))
+        if self.old is None:  # a 1.12.2 world: item ids by name (see items.named_item)
+            lvl["Entities"] = nbt.compound_list(_legacy_entities(c.entities, named=True))
+            lvl["TileEntities"] = nbt.compound_list(_legacy_tiles(c.tile_entities, named=True))
             if c.tile_ticks:
                 lvl["TileTicks"] = nbt.compound_list(c.tile_ticks)
             return lvl
@@ -569,15 +570,29 @@ def _shift_chunk_y(c: NumericChunk, dy: int):
             e["TileY"] = nbt.IntTag(int(nbt.get(e, "TileY")) + dy)
 
 
-def _legacy_entities(ents):
+def _legacy_entities(ents, named: bool = False):
     from ..lce.world import legacy_entity
 
     out = []
     for e in ents:
         le = legacy_entity(e)
         if le is not None:
+            if named:
+                _name_entity_items(le)
             out.append(java_entity_nbt(le))
     return out
+
+
+def _name_entity_items(e: nbt.CompoundTag) -> None:
+    for key in ("Inventory", "Items", "Equipment", "ArmorItems", "HandItems"):
+        lst = nbt.get_tag(e, key)
+        if isinstance(lst, nbt.ListTag) and len(lst):
+            e[key] = items.named_items(lst)
+    if "Item" in e:
+        e["Item"] = items.named_item(e["Item"])
+    sub = nbt.get_tag(e, "Riding")
+    if isinstance(sub, nbt.CompoundTag):
+        _name_entity_items(sub)
 
 
 # Legacy Console Edition stores a few entity fields differently from Java.  Minecraft's
@@ -642,7 +657,7 @@ def java_entity_nbt(e: nbt.CompoundTag) -> nbt.CompoundTag:
     return e
 
 
-def _legacy_tiles(tiles):
+def _legacy_tiles(tiles, named: bool = False):
     from ..lce.world import legacy_items
 
     out = []
@@ -654,6 +669,8 @@ def _legacy_tiles(tiles):
         t["id"] = nbt.StringTag(tid)
         if "Items" in t:
             t["Items"] = legacy_items(t["Items"])
+            if named:
+                t["Items"] = items.named_items(t["Items"])
         out.append(t)
     return out
 
@@ -661,9 +678,10 @@ def _legacy_tiles(tiles):
 def java_player_nbt(player: nbt.CompoundTag, opt: JavaWriteOptions) -> nbt.CompoundTag:
     """A source player in the form written to level.dat / playerdata."""
     p = nbt.copy(player)
-    if opt.modern_players and int(nbt.get(p, "DataVersion", 0) or 0) >= 1451:
-        # already a Java 1.13+ player (Java source): keep it untouched, the game upgrades it
-        # from its own DataVersion
+    dv = int(nbt.get(p, "DataVersion", 0) or 0)
+    if 1451 <= dv <= opt.player_dv:
+        # already a Java 1.13+ player (Java or Bedrock source): keep it untouched, the game
+        # upgrades it from its own DataVersion
         return p
     from ..lce.world import legacy_items
 
@@ -673,7 +691,11 @@ def java_player_nbt(player: nbt.CompoundTag, opt: JavaWriteOptions) -> nbt.Compo
     p.pop("DataVersion", None)
     for key in ("Inventory", "EnderItems"):
         if key in p:
-            p[key] = legacy_items(p[key])
+            p[key] = legacy_items(p[key], dv >= 1451)
+            if not opt.legacy_layout():
+                # read by Java 1.9+: numeric ids the game's ItemIdFix does not know (cooked
+                # mutton 424, banners, shields, elytra...) would become air
+                p[key] = items.named_items(p[key])
     if isinstance(nbt.get_tag(p, "Dimension"), nbt.StringTag):
         p["Dimension"] = nbt.IntTag({"minecraft:the_nether": -1, "minecraft:the_end": 1}.get(nbt.get(p, "Dimension"), 0))
     if opt.y_offset and "Pos" in p and len(p["Pos"]) == 3:

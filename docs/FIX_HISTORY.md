@@ -17,6 +17,7 @@ a converted world, not by an automated check.
 - [The ring and the terrain generators (21–23, 25–27, 29–31, 34–49)](#the-ring-and-the-terrain-generators)
 - [Blocks and content (30, 33, 38)](#blocks-and-content)
 - [Later fixes (50–57)](#later-fixes-5057)
+- [0.2.1 (65–69)](#021)
 
 ---
 
@@ -287,3 +288,59 @@ converted to Beta 1.7.3.
     forever for LevelDB's background thread when it closes its database. Those workers now start from
     the fork server; a test reproduces the hang with `fork`.
 
+## 0.2.1
+
+Found in game: a Bedrock 26.50 world converted to Java 26.3 had lost the cooked mutton from the
+inventory, but not from the furnace. Looking for the cause turned up four more problems on the way
+from a player's inventory to Java. The rules of Minecraft's data fixers quoted below were checked on
+the game's code (`LevelStorageSource`, `ItemIdFix`, the item rename fixes).
+
+65. **Items added in Java 1.8 – 1.12 became air on the way to Java 1.9+.** The furnace kept the
+    cooked mutton because block entities reach Java 1.13+ with item names; the player went through the
+    numeric hub and was written with numeric ids (cooked mutton = 424), left to Minecraft's data
+    fixers. The game's numeric id fix (`ItemIdFix`, data version 102) only lists the ids of Java 1.7:
+    items 409–416 and 423–453 (mutton, banners, doors other than oak, chorus fruit, beetroot, shields,
+    elytra, boats other than oak, totems, shulker shells, iron nuggets…) and blocks 165–255 (slime
+    blocks, prismarine, red sandstone, purpur, concrete…) became air, silently. Everything Java 1.9+
+    upgrades now names its items the way Java 1.8 – 1.12 saved them, with the same Damage: the
+    players' inventories and ender chests on every route to Java 1.9+, and where the game upgrades
+    the world ("Java 1.9 → latest") also chests, furnaces, dropped items, item frames and mob
+    equipment. The names match the game's table for every id it has. Targets before 1.9 keep numeric
+    ids, which is what those games read.
+66. **Bedrock → Java: every item newer than Java 1.12 lost from the player.** The Bedrock player was
+    translated into the numeric layout of Java 1.12, where netherite, tridents, crossbows, copper,
+    deepslate, spyglasses, maces… have no id: they were dropped. The off hand was never read. A
+    Bedrock player now becomes a Java 1.15.2 player (data version 2230) with every item by name, off
+    hand included; the targets that cannot hold these items (LCE, old Java, Pocket Edition) translate
+    it like any Java 1.13+ player.
+67. **The level.dat player was upgraded from the wrong version.** Minecraft upgrades the `Player`
+    inside level.dat from the level's DataVersion, not from the player's own. The level.dat of every
+    route through Amulet was rebuilt in the Java 1.12.2 layout (data version 1343), and a Java 1.13+
+    player was put into it unchanged: the game ran the 1.13 – 1.17 fixes on it again, and its renames
+    turned modern items into others (`melon` → `melon_slice`, `stone_slab` → `smooth_stone_slab`,
+    `purple_shulker_box` → `shulker_box`, `weathered_cut_copper` → `oxidized_cut_copper`; 1.20.5+
+    stacks were read as 1.12 ones). A Java 1.13+ source no newer than the target now keeps its own
+    level.dat, with its DataVersion: the game upgrades level and player exactly as it would the
+    original world (a selected spawn of a 1.21.9+ level goes into its `spawn` compound, and the 26.1+
+    world generation settings stay in their own file). A world from Bedrock gets a level.dat of data
+    version 2230, the version of its players: after the 1.13 – 1.14 renames, before the 1.16 world
+    generation settings, which the game still builds from the 1.12 fields (a flat world gets the 1.13
+    layers it would have got from the fixes). Every other source keeps the 1.12.2 level.dat with
+    players in the numeric layout. playerdata files are upgraded from their own DataVersion and keep
+    the players up to the target's.
+68. **Item names for the wrong version.** WorldBridge's item names are those of Java 1.13 – 1.21, and
+    they were written as they are whatever the DataVersion of the data: short grass (`grass` until
+    1.20.3), turtle scutes, iron chains (`chain` until 1.21.9) and dirt paths reached the latest Java
+    with names it no longer reads, and became air in chests. They are now written with the name of
+    the data's version, following the game's renames, and read back from any of them. The numeric
+    stone slab (44:0) was named `stone_slab`, the 1.13 name that Java 1.14 renamed `smooth_stone_slab`:
+    as a 1.14+ name it is the plain stone slab, a different block.
+69. **Bedrock block items read with the tables of Bedrock 1.21.0.** Block items (which carry a
+    `Block` compound) were resolved with Bedrock 1.21.0's block table: names of later versions (the
+    plain stone slab `normal_stone_slab`…) passed through unchanged, as names Java does not have. They
+    are now resolved with the version recorded in the compound, and the Java name is the latest one.
+
+`tests/test_item_ids.py` covers each of them: a Bedrock player with old and new items, armour and
+off hand to Java 26.3 and 1.13.2, to LCE and back to Bedrock; the level.dat of a Bedrock world (flat
+too) and of a Java 1.21.3 and 1.21.9 world; the names by data version; the numeric names against
+the game's table; the chests and entities of the hub.

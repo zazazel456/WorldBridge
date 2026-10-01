@@ -1,6 +1,6 @@
 # WorldBridge
 
-![version](https://img.shields.io/badge/version-0.2.0-blue)
+![version](https://img.shields.io/badge/version-0.2.1-blue)
 ![status](https://img.shields.io/badge/status-alpha-orange)
 ![platform](https://img.shields.io/badge/platform-Linux%20x86__64-lightgrey)
 ![license](https://img.shields.io/badge/license-PolyForm%20Noncommercial%20(source--available)-green)
@@ -20,11 +20,11 @@ system.
 > right of the window, or `--lang` on the command line.
 
 > [!IMPORTANT]
-> **WorldBridge 0.2.0 is an alpha, and this is its first public release.** Every figure below was
-> measured, but there are more games, versions and saves than one person can test. **Always convert a
-> copy of your world**, and please [report what you find](#help-test-it), whether it worked or not.
-> Testers with real console saves (Xbox 360, PS3, Wii U, PS4, Xbox One, Switch) are especially
-> wanted.
+> **WorldBridge 0.2.1 is an alpha: the first public release plus bug fixes.** Every figure below
+> was measured, but there are more games, versions and saves than one person can test. **Always
+> convert a copy of your world**, and please [report what you find](#help-test-it), whether it
+> worked or not. Testers with real console saves (Xbox 360, PS3, Wii U, PS4, Xbox One, Switch) are
+> especially wanted.
 
 **The border, before and after.** A Java 26.3 world converted to Java 1.2.5. Without the ring, the
 old game generates its own terrain right next to the converted world, leaving walls and cut caves.
