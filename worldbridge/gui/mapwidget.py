@@ -26,7 +26,7 @@ from ..model import NETHER, OVERWORLD, THE_END, Progress
 from ..i18n import N_, tr
 from . import theme
 from .trimui import CopyWorker, EditWorker, ScanWorker, TrimSettings
-from .widgets import HelpButton, HintLabel, heading, row, spacing, with_help
+from .widgets import GuiThread, HelpButton, HintLabel, heading, row, spacing, with_help
 
 DIM_NAMES = {OVERWORLD: "Overworld", NETHER: "Nether", THE_END: "End"}
 Chunk = Tuple[int, int]
@@ -600,6 +600,7 @@ class MapTab(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._gui = GuiThread(self)
         self._path = ""
         self._thread: Optional[QThread] = None
         self._loader: Optional[MapLoader] = None
@@ -1008,7 +1009,7 @@ class MapTab(QWidget):
         self._loader.meta.connect(self._on_meta)
         self._loader.batch.connect(self._on_batch)
         self._loader.progress.connect(self._on_progress)
-        self._loader.failed.connect(lambda m: self.status.setText(tr("Map not available: {error}", error=m)))
+        self._loader.failed.connect(self._gui.wrap(lambda m: self.status.setText(tr("Map not available: {error}", error=m))))
         self._loader.dim_done.connect(self._on_dim_done)
         self._thread.start()
         self._bridge.open.emit()
@@ -1172,11 +1173,11 @@ class MapTab(QWidget):
         th = QThread(self)
         worker.moveToThread(th)
         th.started.connect(worker.run)
-        worker.done.connect(on_done)
-        worker.failed.connect(on_failed)
+        worker.done.connect(self._gui.wrap(on_done))         # the callbacks show message boxes: interface thread
+        worker.failed.connect(self._gui.wrap(on_failed))
         worker.done.connect(th.quit)
         worker.failed.connect(th.quit)
-        worker.progress.connect(lambda f, m: self.status.setText(f"{m}  ({f * 100:.0f}%)"))
+        worker.progress.connect(self._gui.wrap(lambda f, m: self.status.setText(f"{m}  ({f * 100:.0f}%)")))
         self._trim_thread = (th, worker)
         th.start()
 

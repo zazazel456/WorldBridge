@@ -65,6 +65,8 @@ The version of each world read and written as the game itself does ([fixes 78–
   the world.
 - **Block items written for Bedrock with the game's version in place of the block-state version**
   (26.50 in place of the 1.21.60.33 that 26.x writes), in inventories, chests and flower pots.
+- **WorldBridge closed itself after an edit of the source world** (painted biomes, deleted or kept
+  chunks), right after the message saying it was done ([fix 81](docs/FIX_HISTORY.md#021)).
 
 ## 0.2.0 – first public release (alpha)
 

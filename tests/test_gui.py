@@ -370,3 +370,40 @@ def test_inventory_table_shows_the_items_of_a_native_bedrock_player(app, tmp_pat
     table = tab.quick_holder.findChildren(QtWidgets.QTableWidget)[-1]
     assert table.rowCount() == 5 + 63
     tab.close()
+
+
+def test_source_world_edit_answers_in_the_interface_thread(app, tmp_path, monkeypatch):
+    """The dappled forest painted on a Bedrock 26.50 world from "Edit the source world": the message
+    and the map's reload ran in the worker's thread and crashed the program."""
+    from PySide6.QtCore import QThread
+    from PySide6.QtWidgets import QMessageBox
+
+    from worldbridge import biomes as bio
+    from worldbridge.convert import TargetSpec, convert
+    from worldbridge.gui.mapwidget import MapTab
+
+    from .test_chunkedit import _java
+
+    hub, _src = _java(tmp_path, "hub")
+    world = str(tmp_path / "bedrock")
+    convert(hub, world, TargetSpec(family="bedrock", version=(26, 50, 0), ring=False, blend=False))
+    shown = []
+    monkeypatch.setattr(QMessageBox, "information",
+                        staticmethod(lambda *a, **k: shown.append(QThread.currentThread() is app.thread())))
+    t = MapTab()
+    t.show()
+    try:
+        t._confirm_edit = lambda q: True
+        t.set_source(world)
+        assert _wait(app, lambda: t._meta is not None)
+        dim = t.dim_box.currentData()
+        t.canvas.selection.setdefault(dim, set()).update({(0, 0), (1, 1)})
+        _pick(t.world_biome_box, bio.parse("dappled_forest"))
+        t._edit_paint()
+        assert _wait(app, lambda: shown, 120)
+        assert shown == [True]
+        assert _wait(app, lambda: t._meta is not None and t._path == world)     # the map read again
+    finally:
+        t.shutdown()
+        t.close()
+        app.processEvents()

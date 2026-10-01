@@ -32,7 +32,7 @@ from ..i18n import N_, tr
 from . import theme
 from .mapwidget import MapTab
 from .players import PlayersTab
-from .widgets import Disclosure, HelpButton, HintLabel, InlineMessage, heading, row, spacing, with_help
+from .widgets import Disclosure, GuiThread, HelpButton, HintLabel, InlineMessage, heading, row, spacing, with_help
 
 EDITIONS = [
     ("java", "Java Edition"),
@@ -224,6 +224,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(APP_NAME)
         self.resize(1180, 860)
         self._threads = []
+        self._gui = GuiThread(self)
         self._worker: Optional[ConvertWorker] = None
         self._src_kind = ""
         self._src_name = ""
@@ -1070,7 +1071,7 @@ class MainWindow(QMainWindow):
         th.started.connect(worker.run)
         getattr(worker, signal).connect(slot)
         getattr(worker, signal).connect(th.quit)
-        th.finished.connect(lambda: self._threads.remove((th, worker)) if (th, worker) in self._threads else None)
+        th.finished.connect(self._gui.wrap(lambda: self._threads.remove((th, worker)) if (th, worker) in self._threads else None))
         self._threads.append((th, worker))
         th.start()
 
