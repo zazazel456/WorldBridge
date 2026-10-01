@@ -44,6 +44,17 @@ World management and the settings of a world between versions ([fixes 70–75](d
 - **Java 26.x → 26.x: the single player started anew** (0.2.1's own fix 67): it stays in
   players/data, where Java 26.1+ reads it.
 
+Biomes and map colours of the latest versions ([fixes 76–77](docs/FIX_HISTORY.md#021)):
+
+- **The biome painter lacked the newest biomes**: dappled forest (Java 26.3, Bedrock 26.50) and sulfur
+  caves (Java 26.2, Bedrock 26.20). The list of each version now matches the game's (Java 26.3: its
+  67 biomes), and Bedrock follows its own version numbers (the pale garden was offered from Bedrock
+  1.21.40, it came with 1.21.50).
+- **The map drew recent blocks grey or in the wrong colour** (leaf litter, the dappled forest's
+  poplars, pale moss, bushes, sulfur, cinnabar, tuff…). The colours are now the game's own map
+  colours of every Java 26.3 block, read from its jar, and the blocks a game map sees through (glass,
+  torches, rails) are seen through.
+
 ## 0.2.0 – first public release (alpha)
 
 The first version published. 0.1.0 was never released.

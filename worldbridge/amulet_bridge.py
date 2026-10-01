@@ -345,8 +345,8 @@ def paint_biome(level, chunk, biome_id: int) -> None:
         universal = ver.biome.to_universal(ver.biome.unpack(bid))
     elif bid < 1000:                                     # added in 1.13 - 1.17
         universal = tm.get_version("java", (1, 17, 1)).biome.to_universal("minecraft:" + BIOMES[bid][0])
-    else:                                                # 1.18+ only
-        universal = tm.get_version("java", (1, 21, 4)).biome.to_universal("minecraft:" + modern_name(bid))
+    else:                                                # 1.18+ only (up to the latest Java's biomes)
+        universal = tm.get_version("java", latest("java")).biome.to_universal("minecraft:" + modern_name(bid))
     idx = chunk.biome_palette.get_add_biome(universal)
     b = chunk.biomes
     if b.dimension == BiomesShape.Shape3D:

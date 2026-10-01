@@ -61,7 +61,8 @@ BIOMES: Dict[int, Tuple[str, str]] = {
     1003: ("jagged_peaks", "Picchi frastagliati"), 1004: ("frozen_peaks", "Picchi ghiacciati"),
     1005: ("stony_peaks", "Picchi rocciosi"), 1006: ("deep_dark", "Oscurità profonda"),
     1007: ("mangrove_swamp", "Palude di mangrovie"), 1008: ("cherry_grove", "Boschetto di ciliegi"),
-    1009: ("pale_garden", "Giardino pallido"),
+    1009: ("pale_garden", "Giardino pallido"), 1010: ("sulfur_caves", "Grotte di zolfo"),
+    1011: ("dappled_forest", "Foresta screziata"),
 }
 BY_NAME = {name: i for i, (name, _label) in BIOMES.items()}
 
@@ -115,20 +116,25 @@ def _java_list(version: Sequence[int]) -> Tuple[int, ...]:
         return JAVA_114
     if v < (1, 18):
         return JAVA_116
-    out = JAVA_118
-    if v >= (1, 19):
-        out += (1006, 1007)
-    if v >= (1, 20):
-        out += (1008,)
-    if v >= (1, 21, 4):
-        out += (1009,)
-    return out
+    return JAVA_118 + tuple(b for b, (java, _bedrock) in SINCE.items() if v >= java)
+
+
+# the biomes added after 1.18: the first Java and Bedrock versions with them (the two editions
+# number their versions differently: Bedrock 26.20 is not later than Java 26.3)
+SINCE: Dict[int, Tuple[Tuple[int, ...], Tuple[int, ...]]] = {
+    1006: ((1, 19), (1, 19)), 1007: ((1, 19), (1, 19)),            # deep_dark, mangrove_swamp
+    1008: ((1, 20), (1, 20)),                                      # cherry_grove
+    1009: ((1, 21, 4), (1, 21, 50)),                              # pale_garden
+    1010: ((26, 2), (26, 20)),                                     # sulfur_caves
+    1011: ((26, 3), (26, 50)),                                     # dappled_forest
+}
 
 
 def _bedrock_list(version: Sequence[int]) -> Tuple[int, ...]:
     v = tuple(version)
     if v >= (1, 18):
-        return tuple(b for b in _java_list(v) if b not in (40, 41, 42, 43, 127))
+        return tuple(b for b in JAVA_118 if b not in (40, 41, 42, 43, 127)) + tuple(
+            b for b, (_java, bedrock) in SINCE.items() if v >= bedrock)
     out = JAVA_17
     if v >= (1, 4):                                    # Update Aquatic
         out += tuple(range(44, 51))
