@@ -1,0 +1,13 @@
+# Exact versions installed by run.sh into the local runtime (.runtime/), tested together.
+amulet-core==1.9.48
+amulet-leveldb==1.0.7
+amulet-mutf8==1.0.7
+amulet-nbt==2.1.8
+amulet-rocksdb==1.0.6
+lz4==4.4.5
+numpy==1.26.4
+platformdirs==3.11.0
+portalocker==2.10.1
+PyMCTranslate==1.2.49
+PySide6-Essentials==6.11.2
+shiboken6==6.11.2

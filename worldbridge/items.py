@@ -1,0 +1,710 @@
+"""Item stack translation between
+
+* legacy numeric items   {id: short, Count, Damage, tag}          (LCE, Java <= 1.12, hub)
+* Java 1.13+ items       {id: "minecraft:x", Count, tag}  /  1.20.5+ {id, count, components}
+* Bedrock items          {Name, Count, Damage, Block?, tag}
+
+The canonical form is a small dict keyed on the flattened Java name.
+"""
+
+from __future__ import annotations
+
+import functools
+import json
+import logging
+from typing import Dict, Optional, Tuple
+
+from . import ids, nbt
+
+WOOL = ["white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray", "light_gray", "cyan",
+        "purple", "blue", "brown", "green", "red", "black"]
+DYE_ITEMS = ["ink_sac", "red_dye", "green_dye", "cocoa_beans", "lapis_lazuli", "purple_dye", "cyan_dye",
+             "light_gray_dye", "gray_dye", "pink_dye", "lime_dye", "yellow_dye", "light_blue_dye", "magenta_dye",
+             "orange_dye", "bone_meal"]
+SKULLS = ["skeleton_skull", "wither_skeleton_skull", "zombie_head", "player_head", "creeper_head", "dragon_head",
+          "piglin_head"]
+RECORDS = ["13", "cat", "blocks", "chirp", "far", "mall", "mellohi", "stal", "strad", "ward", "11", "wait"]
+
+# numeric (legacy) item -> flattened name, keyed (id, damage); None damage = any
+LEGACY_ITEM_RENAMES: Dict[Tuple[int, Optional[int]], str] = {
+    (263, 0): "coal", (263, 1): "charcoal", (322, 0): "golden_apple", (322, 1): "enchanted_golden_apple",
+    (349, 0): "cod", (349, 1): "salmon", (349, 2): "tropical_fish", (349, 3): "pufferfish",
+    (350, 0): "cooked_cod", (350, 1): "cooked_salmon", (338, None): "sugar_cane", (382, None): "glistering_melon_slice",
+    (360, None): "melon_slice", (401, None): "firework_rocket", (402, None): "firework_star",
+    (405, None): "nether_brick", (333, None): "oak_boat", (324, None): "oak_door", (323, None): "oak_sign",
+    (433, None): "popped_chorus_fruit", (358, None): "filled_map", (383, None): "spawn_egg",
+    (355, None): "bed", (397, None): "skull", (425, None): "banner", (351, None): "dye",
+}
+for _i, _r in enumerate(RECORDS):
+    LEGACY_ITEM_RENAMES[(2256 + _i, None)] = f"music_disc_{_r}"
+
+LEGACY_ENCH = {0: "protection", 1: "fire_protection", 2: "feather_falling", 3: "blast_protection",
+               4: "projectile_protection", 5: "respiration", 6: "aqua_affinity", 7: "thorns", 8: "depth_strider",
+               9: "frost_walker", 10: "binding_curse", 16: "sharpness", 17: "smite", 18: "bane_of_arthropods",
+               19: "knockback", 20: "fire_aspect", 21: "looting", 22: "sweeping", 32: "efficiency", 33: "silk_touch",
+               34: "unbreaking", 35: "fortune", 48: "power", 49: "punch", 50: "flame", 51: "infinity",
+               61: "luck_of_the_sea", 62: "lure", 70: "mending", 71: "vanishing_curse"}
+LEGACY_ENCH_INV = {v: k for k, v in LEGACY_ENCH.items()}
+LEGACY_ENCH_INV["sweeping_edge"] = 22
+BEDROCK_ENCH = ["protection", "fire_protection", "feather_falling", "blast_protection", "projectile_protection",
+                "thorns", "respiration", "depth_strider", "aqua_affinity", "sharpness", "smite",
+                "bane_of_arthropods", "knockback", "fire_aspect", "looting", "efficiency", "silk_touch",
+                "unbreaking", "fortune", "power", "punch", "flame", "infinity", "luck_of_the_sea", "lure",
+                "frost_walker", "mending", "binding_curse", "vanishing_curse", "impaling", "riptide", "loyalty",
+                "channeling", "multishot", "piercing", "quick_charge", "soul_speed", "swift_sneak", "wind_burst",
+                "density", "breach"]
+BEDROCK_ENCH_INV = {n: i for i, n in enumerate(BEDROCK_ENCH)}
+BEDROCK_ENCH_INV["sweeping"] = None
+
+# legacy potion damage low bits -> effect name
+LEGACY_POTION_EFFECT = {1: "regeneration", 2: "swiftness", 3: "fire_resistance", 4: "poison", 5: "healing",
+                        6: "night_vision", 8: "weakness", 9: "strength", 10: "slowness", 11: "leaping",
+                        12: "harming", 13: "water_breathing", 14: "invisibility"}
+LEGACY_POTION_EFFECT_INV = {v: k for k, v in LEGACY_POTION_EFFECT.items()}
+BEDROCK_POTIONS = ["water", "mundane", "long_mundane", "thick", "awkward", "night_vision", "long_night_vision",
+                   "invisibility", "long_invisibility", "leaping", "long_leaping", "strong_leaping",
+                   "fire_resistance", "long_fire_resistance", "swiftness", "long_swiftness", "strong_swiftness",
+                   "slowness", "long_slowness", "water_breathing", "long_water_breathing", "healing",
+                   "strong_healing", "harming", "strong_harming", "poison", "long_poison", "strong_poison",
+                   "regeneration", "long_regeneration", "strong_regeneration", "strength", "long_strength",
+                   "strong_strength", "weakness", "long_weakness", "wither", "turtle_master",
+                   "long_turtle_master", "strong_turtle_master", "slow_falling", "long_slow_falling",
+                   "strong_slowness"]
+BEDROCK_POTIONS_INV = {n: i for i, n in enumerate(BEDROCK_POTIONS)}
+
+# legacy spawn egg damage (Java numeric entity id) -> entity name
+LEGACY_EGG = {4: "elder_guardian", 5: "wither_skeleton", 6: "stray", 23: "husk", 27: "zombie_villager",
+              28: "skeleton_horse", 29: "zombie_horse", 31: "donkey", 32: "mule", 34: "evoker", 35: "vex",
+              36: "vindicator", 50: "creeper", 51: "skeleton", 52: "spider", 54: "zombie", 55: "slime", 56: "ghast",
+              57: "zombified_piglin", 58: "enderman", 59: "cave_spider", 60: "silverfish", 61: "blaze",
+              62: "magma_cube", 65: "bat", 66: "witch", 67: "endermite", 68: "guardian", 69: "shulker", 90: "pig",
+              91: "sheep", 92: "cow", 93: "chicken", 94: "squid", 95: "wolf", 96: "mooshroom", 98: "ocelot",
+              100: "horse", 101: "rabbit", 102: "polar_bear", 103: "llama", 105: "parrot", 120: "villager"}
+LEGACY_EGG_INV = {v: k for k, v in LEGACY_EGG.items()}
+LEGACY_EGG_INV["zombie_pigman"] = 57
+
+# Java flattened name -> Bedrock item name (non-block items that differ)
+JAVA_TO_BEDROCK_NAME = {"nether_brick": "netherbrick", "oak_sign": "oak_sign", "firework_rocket": "firework_rocket",
+                        "tipped_arrow": "arrow", "enchanted_golden_apple": "enchanted_golden_apple",
+                        "snowball": "snowball", "turtle_scute": "turtle_scute", "scute": "turtle_scute"}
+BEDROCK_TO_JAVA_NAME = {"netherbrick": "nether_brick", "appleenchanted": "enchanted_golden_apple",
+                        "appleEnchanted": "enchanted_golden_apple", "clownfish": "tropical_fish",
+                        "cooked_fish": "cooked_cod", "fish": "cod", "reeds": "sugar_cane", "speckled_melon":
+                        "glistering_melon_slice", "melon": "melon_slice", "fireworks": "firework_rocket",
+                        "fireworkscharge": "firework_star", "boat": "oak_boat", "wooden_door": "oak_door",
+                        "sign": "oak_sign", "turtle_shell_piece": "turtle_scute", "chorus_fruit_popped":
+                        "popped_chorus_fruit", "map": "filled_map", "emptymap": "map", "empty_map": "map",
+                        "muttoncooked": "cooked_mutton", "muttonraw": "mutton", "short_grass": "grass"}
+
+log = logging.getLogger(__name__)
+
+
+# ------------------------------------------------------------------ PyMCTranslate helpers
+@functools.lru_cache(maxsize=1)
+def _tm():
+    from .amulet_bridge import translation_manager
+
+    return translation_manager()
+
+
+@functools.lru_cache(maxsize=None)
+def legacy_block_item_name(bid: int, dmg: int) -> Optional[str]:
+    """(numeric block id, item damage) -> flattened Java name."""
+    data = dmg & 15
+    if bid == 145:
+        data = (dmg & 3) << 2
+    elif bid in (50, 75, 76):
+        data = 5
+    elif bid in (54, 61, 65, 130, 146, 23, 158):
+        data = 2
+    try:
+        v12 = _tm().get_version("java", (1, 12, 2))
+        v13 = _tm().get_version("java", (1, 13, 2))
+        u = v12.block.to_universal(v12.ints_to_block(bid, data))[0]
+        j = v13.block.from_universal(u)[0]
+        name = j.base_name
+    except Exception:  # noqa: BLE001
+        return ids.java_block_names().get(bid)
+    if name in ("air", "numerical"):
+        return None if bid else "air"
+    return {"wall_torch": "torch", "redstone_wall_torch": "redstone_torch", "sign": "oak_sign",
+            "wall_sign": "oak_sign", "stone_slab": "smooth_stone_slab" if bid == 43 else "stone_slab",
+            "grass_path": "dirt_path"}.get(name, name)
+
+
+@functools.lru_cache(maxsize=1)
+def _flat_to_legacy() -> Dict[str, Tuple[int, int]]:
+    out: Dict[str, Tuple[int, int]] = {}
+    # blocks that are not obtainable as items go last so real item ids win
+    not_items = {8, 9, 10, 11, 26, 34, 36, 43, 51, 55, 59, 62, 63, 64, 68, 71, 74, 75, 83, 90, 92, 93, 94, 104, 105,
+                 115, 117, 118, 119, 124, 125, 127, 132, 140, 141, 142, 144, 149, 150, 176, 177, 178, 181, 193, 194,
+                 195, 196, 197, 204, 207, 209, 212}
+    for bid in [b for b in range(256) if b not in not_items]:
+        for d in range(16):
+            n = legacy_block_item_name(bid, d)
+            if n and n not in out:
+                out[n] = (bid, d)
+    for (iid, dmg), n in LEGACY_ITEM_RENAMES.items():
+        if dmg is not None:
+            out[n] = (iid, dmg)
+        elif n not in ("spawn_egg", "bed", "skull", "banner", "dye"):
+            out[n] = (iid, 0)
+    for iid, n in ids.JAVA_ITEMS.items():
+        out.setdefault(n, (iid, 0))
+    for i, n in enumerate(DYE_ITEMS):
+        out[n] = (351, i)
+    for i, c in enumerate(WOOL):
+        out[f"{c}_bed"] = (355, i)
+        out[f"{c}_banner"] = (425, 15 - i)
+    for i, n in enumerate(SKULLS[:6]):
+        out[n] = (397, i)
+    for bid in sorted(not_items):
+        for d in range(16):
+            n = legacy_block_item_name(bid, d)
+            if n and n not in out:
+                out[n] = (bid, d)
+    out.update({"rose_red": (351, 1), "cactus_green": (351, 2), "dandelion_yellow": (351, 11), "sign": (323, 0),
+                "grass": (31, 1), "short_grass": (31, 1), "dirt_path": (208, 0)})
+    out.pop("air", None)
+    return out
+
+
+def flat_to_legacy(name: str) -> Optional[Tuple[int, int]]:
+    n = name.split(":", 1)[-1]
+    if n.endswith("_spawn_egg"):
+        e = n[: -len("_spawn_egg")]
+        eid = LEGACY_EGG_INV.get(e)
+        return (383, eid) if eid is not None else None
+    return _flat_to_legacy().get(n)
+
+
+def legacy_to_flat(iid: int, dmg: int) -> Optional[str]:
+    if iid < 256:
+        return legacy_block_item_name(iid, dmg)
+    if iid == 351:
+        return DYE_ITEMS[dmg & 15]
+    if iid == 355:
+        return f"{WOOL[dmg & 15]}_bed"
+    if iid == 425:
+        return f"{WOOL[15 - (dmg & 15)]}_banner"
+    if iid == 397:
+        return SKULLS[min(dmg, 5)]
+    if iid == 383:
+        e = LEGACY_EGG.get(dmg)
+        return f"{e}_spawn_egg" if e else None
+    n = LEGACY_ITEM_RENAMES.get((iid, dmg)) or LEGACY_ITEM_RENAMES.get((iid, None))
+    if n:
+        return n
+    return ids.JAVA_ITEMS.get(iid)
+
+
+# ------------------------------------------------------------------ potions
+def legacy_potion_type(dmg: int) -> str:
+    if dmg == 0:
+        return "water"
+    eff = dmg & 15
+    if eff == 0:
+        return {16: "awkward", 32: "thick"}.get(dmg & 63, "mundane")
+    name = LEGACY_POTION_EFFECT.get(eff, "mundane")
+    if dmg & 32:
+        return "strong_" + name
+    if dmg & 64:
+        return "long_" + name
+    return name
+
+
+def potion_type_to_legacy(t: str, splash: bool) -> int:
+    t = t.split(":", 1)[-1]
+    base = {"water": 0, "awkward": 16, "thick": 32, "mundane": 64}.get(t)
+    if base is not None:
+        return base | (16384 if splash and base else 0)
+    strong = t.startswith("strong_")
+    long_ = t.startswith("long_")
+    eff = LEGACY_POTION_EFFECT_INV.get(t.replace("strong_", "").replace("long_", ""), 0)
+    return eff | (32 if strong else 0) | (64 if long_ else 0) | (16384 if splash else 8192)
+
+
+# ------------------------------------------------------------------ text helpers
+def json_text(s: str) -> str:
+    return json.dumps({"text": s}, ensure_ascii=False)
+
+
+def plain_text(s) -> str:
+    if s is None:
+        return ""
+    s = str(s)
+    if s.startswith(("{", "[", '"')):
+        try:
+            return _flatten_json(json.loads(s))
+        except ValueError:
+            return s
+    return s
+
+
+def _flatten_json(j) -> str:
+    if isinstance(j, str):
+        return j
+    if isinstance(j, list):
+        return "".join(_flatten_json(x) for x in j)
+    if isinstance(j, dict):
+        return str(j.get("text", "")) + "".join(_flatten_json(x) for x in j.get("extra", []))
+    return str(j)
+
+
+# ------------------------------------------------------------------ canonical form
+class Item(dict):
+    """keys: name (flat, no namespace), count, damage (durability or variant), slot,
+    ench [(name, lvl)], stored [(name, lvl)], custom_name, lore, color, potion, pages, author, title, extra_tag"""
+
+
+def _ench_list(lst, table) -> list:
+    out = []
+    for e in lst or []:
+        try:
+            eid = e["id"].py_data
+            lvl = int(e["lvl"].py_data)
+        except (KeyError, AttributeError, TypeError):
+            continue
+        name = table.get(eid) if isinstance(eid, int) else str(eid).split(":", 1)[-1]
+        if name:
+            out.append((name, lvl))
+    return out
+
+
+def _is_damageable(name: str) -> bool:
+    return name.endswith(("_sword", "_shovel", "_pickaxe", "_axe", "_hoe", "_helmet", "_chestplate", "_leggings",
+                          "_boots")) or name in ("bow", "fishing_rod", "flint_and_steel", "shears", "shield",
+                                                 "elytra", "carrot_on_a_stick", "trident", "crossbow", "mace",
+                                                 "warped_fungus_on_a_stick", "brush")
+
+
+def from_legacy(t: nbt.CompoundTag) -> Optional[Item]:
+    iid = nbt.get(t, "id")
+    if iid is None:
+        return None
+    dmg = int(nbt.get(t, "Damage", 0) or 0)
+    if isinstance(iid, str):
+        num = ids.item_id_from_name(iid)
+        if num is None:
+            name = iid.split(":", 1)[-1]
+            iid = None
+        else:
+            iid = num
+    if iid is not None:
+        iid = int(iid)
+        name = legacy_to_flat(iid, dmg)
+        if name is None:
+            return None
+    it = Item(name=name, count=int(nbt.get(t, "Count", 1) or 1), damage=dmg if _is_damageable(name) else 0,
+              slot=nbt.get(t, "Slot"))
+    if iid in (373, 438, 441):
+        it["potion"] = legacy_potion_type(dmg)
+        if iid == 373 and dmg & 16384:
+            it["name"] = "splash_potion"
+    if iid == 358:
+        it["map"] = dmg
+    tag = nbt.get_tag(t, "tag")
+    if tag is not None:
+        _read_java_tag(it, tag, LEGACY_ENCH)
+    return it
+
+
+def _read_java_tag(it: Item, tag: nbt.CompoundTag, ench_table):
+    it["ench"] = _ench_list(nbt.get_tag(tag, "ench") or nbt.get_tag(tag, "Enchantments"), ench_table)
+    it["stored"] = _ench_list(nbt.get_tag(tag, "StoredEnchantments"), ench_table)
+    disp = nbt.get_tag(tag, "display")
+    if disp is not None:
+        if "Name" in disp:
+            it["custom_name"] = plain_text(nbt.get(disp, "Name"))
+        if "Lore" in disp:
+            it["lore"] = [plain_text(x.py_data) for x in disp["Lore"]]
+        if "color" in disp:
+            it["color"] = int(nbt.get(disp, "color"))
+    if "Potion" in tag:
+        it["potion"] = str(nbt.get(tag, "Potion")).split(":", 1)[-1]
+    if "pages" in tag:
+        it["pages"] = [plain_text(p.py_data) for p in tag["pages"]]
+        it["author"] = nbt.get(tag, "author")
+        it["title"] = nbt.get(tag, "title")
+    if "map" in tag:
+        it["map"] = int(nbt.get(tag, "map"))
+    ent = nbt.get_tag(tag, "EntityTag")
+    if ent is not None and it["name"] == "spawn_egg":
+        e = str(nbt.get(ent, "id", "pig")).split(":", 1)[-1]
+        it["name"] = f"{ids.ENTITY_OLD_TO_NEW.get(e, e)}_spawn_egg"
+
+
+def to_legacy(it: Item) -> Optional[nbt.CompoundTag]:
+    name = it["name"]
+    num = None
+    if name in ("potion", "splash_potion", "lingering_potion", "tipped_arrow"):
+        splash = name != "potion"
+        num = ({"potion": 373, "splash_potion": 373, "lingering_potion": 441, "tipped_arrow": 440}[name],
+               potion_type_to_legacy(it.get("potion", "water"), splash) if name != "tipped_arrow" else 0)
+    elif name == "filled_map":
+        num = (358, int(it.get("map", 0)))
+    else:
+        num = flat_to_legacy(name)
+    if num is None:
+        return None
+    iid, dmg = num
+    if _is_damageable(name):
+        dmg = int(it.get("damage", 0))
+    out = nbt.CompoundTag({"id": nbt.ShortTag(iid), "Count": nbt.ByteTag(max(1, min(64, int(it.get("count", 1))))),
+                           "Damage": nbt.ShortTag(dmg)})
+    if it.get("slot") is not None:
+        out["Slot"] = nbt.ByteTag(int(it["slot"]))
+    tag = nbt.CompoundTag()
+    if it.get("ench"):
+        tag["ench"] = nbt.ListTag([nbt.CompoundTag({"id": nbt.ShortTag(LEGACY_ENCH_INV[n]), "lvl": nbt.ShortTag(l)})
+                                   for n, l in it["ench"] if n in LEGACY_ENCH_INV], 10)
+    if it.get("stored"):
+        tag["StoredEnchantments"] = nbt.ListTag([nbt.CompoundTag({"id": nbt.ShortTag(LEGACY_ENCH_INV[n]),
+                                                                   "lvl": nbt.ShortTag(l)})
+                                                 for n, l in it["stored"] if n in LEGACY_ENCH_INV], 10)
+    disp = nbt.CompoundTag()
+    if it.get("custom_name"):
+        disp["Name"] = nbt.StringTag(it["custom_name"])
+    if it.get("lore"):
+        disp["Lore"] = nbt.ListTag([nbt.StringTag(x) for x in it["lore"]], 8)
+    if it.get("color") is not None:
+        disp["color"] = nbt.IntTag(it["color"])
+    if len(disp):
+        tag["display"] = disp
+    if it.get("pages") is not None:
+        tag["pages"] = nbt.ListTag([nbt.StringTag(p) for p in it["pages"]], 8)
+        if it.get("author"):
+            tag["author"] = nbt.StringTag(it["author"])
+        if it.get("title"):
+            tag["title"] = nbt.StringTag(it["title"])
+    if len(tag):
+        out["tag"] = tag
+    return out
+
+
+# ------------------------------------------------------------------ Java 1.13+
+def from_java_modern(t: nbt.CompoundTag) -> Optional[Item]:
+    iid = nbt.get(t, "id")
+    if not isinstance(iid, str):
+        return from_legacy(t)
+    name = iid.split(":", 1)[-1]
+    count = nbt.get(t, "count", nbt.get(t, "Count", 1))
+    it = Item(name=name, count=int(count or 1), damage=0, slot=nbt.get(t, "Slot"))
+    tag = nbt.get_tag(t, "tag")
+    if tag is not None:
+        it["damage"] = int(nbt.get(tag, "Damage", 0) or 0)
+        _read_java_tag(it, tag, LEGACY_ENCH)
+    comps = nbt.get_tag(t, "components")
+    if comps is not None:
+        _read_components(it, comps)
+    return it
+
+
+def _read_components(it: Item, c: nbt.CompoundTag):
+    def g(k):
+        return nbt.get_tag(c, "minecraft:" + k)
+
+    if g("damage") is not None:
+        it["damage"] = int(g("damage").py_data)
+    for key, dst in (("enchantments", "ench"), ("stored_enchantments", "stored")):
+        e = g(key)
+        if e is not None:
+            lv = nbt.get_tag(e, "levels") if "levels" in e else e
+            it[dst] = [(k.split(":", 1)[-1], int(v.py_data)) for k, v in lv.items()] if lv is not None else []
+    cn = g("custom_name")
+    if cn is not None:
+        it["custom_name"] = plain_text(cn.py_data) if isinstance(cn, nbt.StringTag) else plain_text(json.dumps(_snbt_text(cn)))
+    pc = g("potion_contents")
+    if pc is not None:
+        p = pc.py_data if isinstance(pc, nbt.StringTag) else nbt.get(pc, "potion")
+        if p:
+            it["potion"] = str(p).split(":", 1)[-1]
+    dc = g("dyed_color")
+    if dc is not None:
+        it["color"] = int(dc.py_data) if not isinstance(dc, nbt.CompoundTag) else int(nbt.get(dc, "rgb", 0))
+    mid = g("map_id")
+    if mid is not None:
+        it["map"] = int(mid.py_data)
+
+
+def _snbt_text(tag):
+    if isinstance(tag, nbt.CompoundTag):
+        return {k: _snbt_text(v) for k, v in tag.items()}
+    if isinstance(tag, nbt.ListTag):
+        return [_snbt_text(v) for v in tag]
+    return getattr(tag, "py_data", tag)
+
+
+def to_java_modern(it: Item, data_version: int) -> nbt.CompoundTag:
+    name = it["name"]
+    if data_version < 1952 and name == "oak_sign":  # before 1.14
+        name = "sign"
+    out = nbt.CompoundTag({"id": nbt.StringTag("minecraft:" + name)})
+    if it.get("slot") is not None:
+        out["Slot"] = nbt.ByteTag(int(it["slot"]))
+    if data_version >= 3837:  # 1.20.5 components
+        out["count"] = nbt.IntTag(int(it.get("count", 1)))
+        comps = nbt.CompoundTag()
+        if it.get("damage"):
+            comps["minecraft:damage"] = nbt.IntTag(int(it["damage"]))
+        for key, src in (("minecraft:enchantments", "ench"), ("minecraft:stored_enchantments", "stored")):
+            if it.get(src):
+                lv = nbt.CompoundTag({"minecraft:" + n: nbt.IntTag(l) for n, l in it[src]})
+                comps[key] = lv if data_version >= 4325 else nbt.CompoundTag({"levels": lv})  # 1.21.5 flattened
+        if it.get("custom_name"):
+            comps["minecraft:custom_name"] = (nbt.StringTag(it["custom_name"]) if data_version >= 4325
+                                              else nbt.StringTag(json_text(it["custom_name"])))
+        if it.get("potion"):
+            comps["minecraft:potion_contents"] = nbt.CompoundTag({"potion": nbt.StringTag("minecraft:" + it["potion"])})
+        if it.get("map") is not None and name == "filled_map":
+            comps["minecraft:map_id"] = nbt.IntTag(int(it["map"]))
+        if len(comps):
+            out["components"] = comps
+        return out
+    out["Count"] = nbt.ByteTag(int(it.get("count", 1)))
+    tag = nbt.CompoundTag()
+    if it.get("damage"):
+        tag["Damage"] = nbt.IntTag(int(it["damage"]))
+    if it.get("ench"):
+        tag["Enchantments"] = nbt.ListTag([nbt.CompoundTag({"id": nbt.StringTag("minecraft:" + n), "lvl": nbt.ShortTag(l)})
+                                           for n, l in it["ench"]], 10)
+    if it.get("stored"):
+        tag["StoredEnchantments"] = nbt.ListTag([nbt.CompoundTag({"id": nbt.StringTag("minecraft:" + n), "lvl": nbt.ShortTag(l)})
+                                                 for n, l in it["stored"]], 10)
+    disp = nbt.CompoundTag()
+    if it.get("custom_name"):
+        disp["Name"] = nbt.StringTag(json_text(it["custom_name"]))
+    if it.get("lore"):
+        disp["Lore"] = nbt.ListTag([nbt.StringTag(json_text(x)) for x in it["lore"]], 8)
+    if it.get("color") is not None:
+        disp["color"] = nbt.IntTag(it["color"])
+    if len(disp):
+        tag["display"] = disp
+    if it.get("potion"):
+        tag["Potion"] = nbt.StringTag("minecraft:" + it["potion"])
+    if it.get("map") is not None and name == "filled_map":
+        tag["map"] = nbt.IntTag(int(it["map"]))
+    if it.get("pages") is not None:
+        written = name == "written_book"
+        tag["pages"] = nbt.ListTag([nbt.StringTag(json_text(p) if written else p) for p in it["pages"]], 8)
+        if written:
+            tag["author"] = nbt.StringTag(it.get("author") or "")
+            tag["title"] = nbt.StringTag(it.get("title") or "")
+    if len(tag):
+        out["tag"] = tag
+    return out
+
+
+# ------------------------------------------------------------------ Bedrock
+@functools.lru_cache(maxsize=None)
+def _bedrock_block_for_flat(name: str, version: Tuple[int, ...]) -> Optional[Tuple[str, dict]]:
+    leg = flat_to_legacy(name)
+    if leg is None or leg[0] >= 256:
+        return None
+    bid, d = leg
+    data = d if bid != 145 else (d & 3) << 2
+    try:
+        v12 = _tm().get_version("java", (1, 12, 2))
+        vb = _tm().get_version("bedrock", version)
+        u = v12.block.to_universal(v12.ints_to_block(bid, data))[0]
+        b = vb.block.from_universal(u)[0]
+        return b.namespaced_name, dict(b.properties)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def to_bedrock(it: Item, version: Tuple[int, ...]) -> Optional[nbt.CompoundTag]:
+    name = it["name"]
+    dmg = int(it.get("damage", 0))
+    bname = None
+    block = None
+    if name.endswith("_bed") and name[:-4] in WOOL:
+        bname, dmg = "minecraft:bed", WOOL.index(name[:-4])
+    elif name.endswith("_banner") and name[:-7] in WOOL:
+        bname, dmg = "minecraft:banner", 15 - WOOL.index(name[:-7])
+    elif name in SKULLS:
+        bname, dmg = "minecraft:skull", SKULLS.index(name)
+    elif name in ("potion", "splash_potion", "lingering_potion"):
+        bname, dmg = "minecraft:" + name, BEDROCK_POTIONS_INV.get(it.get("potion", "water"), 0)
+    elif name == "tipped_arrow":
+        bname, dmg = "minecraft:arrow", BEDROCK_POTIONS_INV.get(it.get("potion", "water"), 0) + 1
+    else:
+        b = _bedrock_block_for_flat(name, tuple(version))
+        if b is not None:
+            bname = b[0]
+            block = b
+        else:
+            bname = "minecraft:" + JAVA_TO_BEDROCK_NAME.get(name, name)
+    out = nbt.CompoundTag({"Name": nbt.StringTag(bname), "Count": nbt.ByteTag(max(1, min(127, int(it.get("count", 1))))),
+                           "Damage": nbt.ShortTag(dmg), "WasPickedUp": nbt.ByteTag(0)})
+    if it.get("slot") is not None:
+        out["Slot"] = nbt.ByteTag(int(it["slot"]))
+    if block is not None:
+        states = nbt.CompoundTag()
+        for k, v in block[1].items():
+            states[k.split(":", 1)[-1] if k.startswith("minecraft:") and False else k] = v
+        out["Block"] = nbt.CompoundTag({"name": nbt.StringTag(block[0]), "states": states, "version": nbt.IntTag(_bedrock_block_version(version))})
+    tag = nbt.CompoundTag()
+    if name == "filled_map":
+        out["Damage"] = nbt.ShortTag(0)  # Bedrock: 0 = ordinary map; the map is named by its uuid
+        if it.get("map") is not None:
+            tag["map_uuid"] = nbt.LongTag(bedrock_map_uuid(int(it["map"])))
+    if _is_damageable(name) and it.get("damage"):
+        tag["Damage"] = nbt.IntTag(int(it["damage"]))
+    ench = [(BEDROCK_ENCH_INV.get(n), l) for n, l in (it.get("ench") or []) + (it.get("stored") or [])]
+    ench = [(i, l) for i, l in ench if i is not None]
+    if ench:
+        tag["ench"] = nbt.ListTag([nbt.CompoundTag({"id": nbt.ShortTag(i), "lvl": nbt.ShortTag(l)}) for i, l in ench], 10)
+    disp = nbt.CompoundTag()
+    if it.get("custom_name"):
+        disp["Name"] = nbt.StringTag(it["custom_name"])
+    if it.get("lore"):
+        disp["Lore"] = nbt.ListTag([nbt.StringTag(x) for x in it["lore"]], 8)
+    if len(disp):
+        tag["display"] = disp
+    if it.get("color") is not None:
+        tag["customColor"] = nbt.IntTag(it["color"] | -16777216 if it["color"] < 0x1000000 else it["color"])
+    if it.get("pages") is not None:
+        tag["pages"] = nbt.ListTag([nbt.CompoundTag({"text": nbt.StringTag(p), "photoname": nbt.StringTag("")})
+                                    for p in it["pages"]], 10)
+        if name == "written_book":
+            tag["author"] = nbt.StringTag(it.get("author") or "")
+            tag["title"] = nbt.StringTag(it.get("title") or "")
+    if len(tag):
+        out["tag"] = tag
+    return out
+
+
+def _bedrock_block_version(version) -> int:
+    v = list(version) + [0, 0, 0, 0]
+    return (v[0] << 24) | (v[1] << 16) | (v[2] << 8) | v[3]
+
+
+@functools.lru_cache(maxsize=None)
+def _bedrock_block_to_flat(name: str, states_key: tuple, version: Tuple[int, ...] = (1, 21, 0)) -> Optional[str]:
+    try:
+        from amulet.api.block import Block
+
+        ver = _tm().get_version("bedrock", version)
+        v13 = _tm().get_version("java", (1, 21, 0))
+        ns, base = name.split(":", 1) if ":" in name else ("minecraft", name)
+        blk = Block(ns, base, dict(states_key))
+        u = ver.block.to_universal(blk)[0]
+        j = v13.block.from_universal(u)[0]
+        return j.base_name
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def from_bedrock(t: nbt.CompoundTag) -> Optional[Item]:
+    name = str(nbt.get(t, "Name", "") or "")
+    if not name:
+        return None
+    n = name.split(":", 1)[-1]
+    dmg = int(nbt.get(t, "Damage", 0) or 0)
+    it = Item(count=int(nbt.get(t, "Count", 1) or 1), damage=0, slot=nbt.get(t, "Slot"))
+    if n in ("potion", "splash_potion", "lingering_potion"):
+        it["name"] = n
+        it["potion"] = BEDROCK_POTIONS[dmg] if dmg < len(BEDROCK_POTIONS) else "water"
+    elif n == "arrow" and dmg > 0:
+        it["name"] = "tipped_arrow"
+        it["potion"] = BEDROCK_POTIONS[dmg - 1] if dmg - 1 < len(BEDROCK_POTIONS) else "water"
+    elif n == "bed":
+        it["name"] = f"{WOOL[dmg & 15]}_bed"
+    elif n == "banner":
+        it["name"] = f"{WOOL[15 - (dmg & 15)]}_banner"
+    elif n == "skull":
+        it["name"] = SKULLS[min(dmg, 6)]
+    elif n == "spawn_egg":
+        return None
+    else:
+        blk = nbt.get_tag(t, "Block")
+        flat = None
+        if blk is not None and "name" in blk:
+            states = nbt.get_tag(blk, "states") or nbt.CompoundTag()
+            flat = _bedrock_block_to_flat(str(nbt.get(blk, "name")), tuple(sorted(states.items(), key=lambda kv: kv[0])))
+        # pre-1.19 Bedrock names are the numeric-era ones ("log", "wool" + Damage), also with Damage 0
+        if flat is None and ids.item_id_from_name(n) is not None:
+            leg = legacy_to_flat(ids.item_id_from_name(n), dmg)
+            flat = leg
+        if flat is None:
+            flat = BEDROCK_TO_JAVA_NAME.get(n, n)
+        it["name"] = flat
+    tag = nbt.get_tag(t, "tag")
+    if tag is not None:
+        if _is_damageable(it["name"]):
+            it["damage"] = int(nbt.get(tag, "Damage", 0) or 0)
+        ench = []
+        for e in nbt.get_tag(tag, "ench") or []:
+            i = int(nbt.get(e, "id", -1))
+            if 0 <= i < len(BEDROCK_ENCH):
+                ench.append((BEDROCK_ENCH[i], int(nbt.get(e, "lvl", 1))))
+        if it["name"] == "enchanted_book":
+            it["stored"] = ench
+        else:
+            it["ench"] = ench
+        disp = nbt.get_tag(tag, "display")
+        if disp is not None:
+            if "Name" in disp:
+                it["custom_name"] = str(nbt.get(disp, "Name"))
+            if "Lore" in disp:
+                it["lore"] = [str(x.py_data) for x in disp["Lore"]]
+        if "customColor" in tag:
+            it["color"] = int(nbt.get(tag, "customColor")) & 0xFFFFFF
+        if "pages" in tag:
+            it["pages"] = [str(nbt.get(p, "text", "")) for p in tag["pages"]]
+            it["author"] = nbt.get(tag, "author")
+            it["title"] = nbt.get(tag, "title")
+        if it["name"] == "filled_map" and nbt.get(tag, "map_uuid") is not None:
+            it["map"] = java_map_id(int(nbt.get(tag, "map_uuid")))
+    return it
+
+
+# Bedrock names a map by a 64 bit id, Java / LCE by a small number (map_<n>.dat): a fixed,
+# reversible mapping keeps the maps in item frames and inventories pointing at their data.
+_MAP_BASE = -0x5742000000000000
+
+
+def bedrock_map_uuid(n: int) -> int:
+    return _MAP_BASE - n
+
+
+def java_map_id(uuid: int) -> int:
+    n = _MAP_BASE - uuid
+    if 0 <= n < 1 << 30:
+        return n  # one of ours
+    return (uuid & 0x3FFFFFFF) | 0x40000000  # a map made in Bedrock: stable, far from Java's own numbers
+
+
+# ------------------------------------------------------------------ list helpers
+def convert_list(lst, src: str, dst: str, **kw) -> nbt.ListTag:
+    reader = {"legacy": from_legacy, "java": from_java_modern, "bedrock": from_bedrock}[src]
+    out = nbt.ListTag([], 10)
+    for t in lst or []:
+        if not isinstance(t, nbt.CompoundTag) or len(t) == 0:
+            continue
+        it = reader(t)
+        if it is None or not it.get("name") or it["name"] == "air":
+            continue
+        w = write(it, dst, **kw)
+        if w is not None:
+            out.append(w)
+    return out
+
+
+def write(it: Item, dst: str, **kw):
+    if dst == "legacy":
+        return to_legacy(it)
+    if dst == "java":
+        return to_java_modern(it, kw.get("data_version", 3465))
+    return to_bedrock(it, kw.get("version", (1, 21, 0)))
+
+
+def convert_one(t, src: str, dst: str, **kw):
+    reader = {"legacy": from_legacy, "java": from_java_modern, "bedrock": from_bedrock}[src]
+    if not isinstance(t, nbt.CompoundTag) or len(t) == 0:
+        return None
+    it = reader(t)
+    if it is None:
+        return None
+    return write(it, dst, **kw)

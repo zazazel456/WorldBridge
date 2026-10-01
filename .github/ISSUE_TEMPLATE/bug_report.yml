@@ -1,0 +1,48 @@
+name: Bug report
+description: Something crashed, was lost or came out wrong.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please work on a **copy** of your world. Do not attach anything you do not want public: worlds can contain player names and account ids.
+  - type: input
+    id: version
+    attributes:
+      label: WorldBridge version
+      placeholder: "0.2.0"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps or command
+      description: The command line you ran, or the steps in the interface (source, target, options).
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Error and log
+      description: The full error, or the report at the end of the conversion.
+      render: text
+  - type: input
+    id: world
+    attributes:
+      label: World
+      description: Source game, version, platform; a link to the world if you can share it.
+  - type: input
+    id: system
+    attributes:
+      label: Linux distribution and desktop
+      placeholder: "Ubuntu 24.04, GNOME"
+    validations:
+      required: true

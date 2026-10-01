@@ -1,0 +1,353 @@
+"""The graphical interface (offscreen): every function still reachable after the reorganisation,
+rows shown for the chosen target, messages inside the window, a conversion started from it, and
+the desktop theme integration (gui/theme.py)."""
+import os
+import time
+
+import pytest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+from PySide6.QtGui import QColor, QPalette  # noqa: E402
+
+from worldbridge.gui import theme  # noqa: E402
+from worldbridge.lce.world import LCEWriteOptions, LCEWriter  # noqa: E402
+from worldbridge.model import Progress  # noqa: E402
+
+from .helpers import SyntheticWorld  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def app():
+    return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+
+@pytest.fixture
+def win(app):
+    from worldbridge.gui.app import MainWindow
+
+    w = MainWindow(remember=False)
+    w.resize(1200, 850)
+    w.show()
+    app.processEvents()
+    yield w
+    w.close()
+    app.processEvents()
+
+
+def _wait(app, cond, sec=60):
+    end = time.time() + sec
+    while time.time() < end and not cond():
+        app.processEvents()
+        time.sleep(0.02)
+    return cond()
+
+
+def _shown(w, widget):
+    return w.form.isRowVisible(widget)
+
+
+def _pick(box, data):
+    items = [box.itemData(i) for i in range(box.count())]
+    items = [tuple(v) if isinstance(v, list) else v for v in items]
+    assert data in items, data
+    box.setCurrentIndex(items.index(data))
+
+
+def test_every_tab_and_control_is_there(win, app):
+    assert [win.tabs.tabText(i) for i in range(win.tabs.count())] == ["Conversion", "Map and chunks", "Players",
+                                                                      "World management"]
+    for i in range(win.tabs.count()):
+        win.tabs.setCurrentIndex(i)
+        app.processEvents()
+        win.grab()
+    m = win.map_tab
+    # the map's selection menu and the view actions (they were buttons in a row before)
+    assert [a.text() for a in m.sel_actions] == ["Select all", "Deselect all", "Invert selection",
+                                                 "Import selection…", "Export selection…"]
+    assert [a.shortcut().toString() for a in m.sel_actions[:3]] == ["Ctrl+A", "Ctrl+Shift+A", "Ctrl+I"]
+    assert [m.modes.button(i).text() for i in range(3)] == ["Pan", "Select", "Spawn"]
+    assert m.modes.checkedId() == 1
+    # everything else of the old rows: scope, move, spawn, regeneration, biomes, trim, edits on the world
+    for name in ("scope_all", "scope_sel", "move_sel", "move_center", "move_at", "move_x", "move_z", "use_spawn",
+                 "sx", "sy", "sz", "regen_nether", "regen_end", "biome_box", "world_biome_box", "trim_btn",
+                 "trim_gear", "trim_settings", "dim_box"):
+        assert getattr(m, name) is not None
+    labels = {b.text() for b in m.findChildren(QtWidgets.QPushButton)}
+    assert {"Apply", "Remove", "Restore the original", "Delete the selected chunks…", "Keep only the selected chunks…",
+            "Give the biome to the selected chunks…"} <= labels
+    # the manage tab keeps its buttons
+    labels = {b.text() for b in win.manage_tab.findChildren(QtWidgets.QPushButton)}
+    assert {"Open folder…", "Open file…", "Use the world opened at the top", "Reload", "&Save changes"} <= labels
+    # the conversion's buttons are hidden on the world's management
+    win.tabs.setCurrentWidget(win.manage_tab)
+    assert not win.run_box.isVisible()
+    win.tabs.setCurrentIndex(0)
+    assert win.run_box.isVisible() and win.btn_convert.isVisible() and not win.btn_cancel.isVisible()
+
+
+def test_rows_follow_the_target(win):
+    _pick(win.edition, "java")
+    win.java_ver.setCurrentIndex(0)                                   # latest: the game blends
+    assert _shown(win, win.java_ver) and not _shown(win, win.lce_plat) and not _shown(win, win.bed_ver)
+    assert win.blend_row.isVisibleTo(win) and not win.ring_row.isVisibleTo(win)
+    assert not _shown(win, win.depth_box)
+    _pick(win.java_ver, ("numeric", None, "1.12"))                    # 1.12: WorldBridge's ring
+    assert not win.blend_row.isVisibleTo(win) and win.ring_row.isVisibleTo(win)
+    assert _shown(win, win.depth_box) and _shown(win, win.tall_box)
+    _pick(win.java_ver, ("alpha", None, "alpha"))
+    assert _shown(win, win.alpha_hint)
+    _pick(win.edition, "lce")
+    _pick(win.lce_plat, "win64")
+    assert _shown(win, win.lce_plat) and _shown(win, win.lce_xuid_row) and not _shown(win, win.java_ver)
+    _pick(win.lce_plat, "ps3")
+    assert not _shown(win, win.lce_xuid_row)
+    _pick(win.edition, "bedrock")
+    old = [win.bed_ver.itemData(i) for i in range(win.bed_ver.count()) if tuple(win.bed_ver.itemData(i)) < (1, 18)]
+    _pick(win.bed_ver, old[0])
+    assert not _shown(win, win.borders)                              # old Bedrock: no border at all
+    assert _shown(win, win.depth_box)
+    _pick(win.edition, "pe_old")
+    assert _shown(win, win.pe_hint) and not _shown(win, win.bed_ver)
+    # the chosen underground y only when asked for
+    _pick(win.depth, "custom")
+    assert win.depth_y.isVisibleTo(win) and win.depth_y.isEnabled()
+    _pick(win.depth, "cut")
+    assert not win.depth_y.isVisibleTo(win)
+    # Better than Adventure: its rows, Java only
+    assert not _shown(win, win.bta_pal_row)
+    win._on_detected([("title", "BTA")], "bta", "Mondo")
+    assert _shown(win, win.bta_pal_row) and win.edition.currentData() == "java"
+    assert not win.edition.model().item(win.edition.findData("lce")).isEnabled()
+    win._on_detected([("title", "x")], "lce", "Mondo")
+    assert not _shown(win, win.bta_pal_row)
+
+
+def test_target_spec(win):
+    win._on_detected([("title", "x")], "java_numeric", "Mio")
+    _pick(win.edition, "lce")
+    _pick(win.lce_plat, "win64")
+    win.lce_xuid.setText(" 123 ")
+    win.ring.setChecked(False)
+    _pick(win.depth, "custom")
+    win.depth_y.setValue(-20)
+    win.name_edit.setText("Nuovo")
+    t = win._target()
+    assert (t.family, t.lce_platform, t.lce_player_id, t.ring, t.depth, t.world_name) == \
+        ("lce", "win64", "123", False, -20, "Nuovo")
+    assert t.selection is None
+    m = win.map_tab
+    m.canvas.selection = {0: {(0, 0), (1, 0)}}
+    m.scope_sel.setChecked(True)
+    m.move_sel.setChecked(True)
+    m.move_x.setValue(100)
+    m.use_spawn.setChecked(True)
+    m.sx.setValue(5)
+    m.regen_end.setChecked(True)
+    t = win._target()
+    assert t.selection.chunks == {0: {(0, 0), (1, 0)}} and t.selection.move_to == (100, 0)
+    assert t.selection.spawn == (5, m.sy.value(), m.sz.value()) and t.regen == (1,)
+    # the conversion tab says it
+    text = win.scope_label.text()
+    assert "Selected chunks only (2)" in text and "X 100" in text and "End regenerated" in text
+    assert "new spawn 5" in text
+    assert win._output_dir(t).endswith("Nuovo_LCE_win64")
+
+
+def test_messages_inside_the_window(win, app):
+    win.src_edit.setText("")
+    win._start()                                   # no world: said in the window, no dialog to close
+    assert win.message.isVisible() and "Open the world to convert first" in win.message.text.text()
+    win.message.dismiss()
+    assert not win.message.isVisible()
+
+
+def test_players_summary(win):
+    class E:
+        def __init__(self, i):
+            self.key, self.name, self.label, self.items, self.pos, self.dim = f"k{i}", "", f"P{i}", 1, None, 0
+
+    t = win.players_tab
+    t.set_players([E(0), E(1), E(2)])
+    assert "as in the source world" in win.players_label.text()
+    t.enable.setChecked(True)
+    t._rows[2][0].setChecked(False)
+    assert win.players_label.text() == "2 of 3 transferred · main: P0"
+    t.set_players([])
+    assert not t.table.isVisible() and not t.enable.isEnabled()
+
+
+def test_convert_from_the_window(win, app, tmp_path):
+    src = SyntheticWorld(radius=1, dims=(0,))
+    w = LCEWriter(str(tmp_path / "lce"), LCEWriteOptions(platform="win64"), Progress())
+    for cx, cz in src.chunk_coords(0):
+        w.add_chunk(0, src.read_chunk(0, cx, cz))
+    w.finish(src.info)
+    win.src_edit.setText(str(tmp_path / "lce"))
+    win._on_source_changed()
+    assert _wait(app, lambda: win._src_kind == "lce")
+    assert "Test World" in win.src_info.text() and win.windowTitle().startswith("Test World")
+    _pick(win.edition, "java")
+    _pick(win.java_ver, ("numeric", None, "1.12"))
+    win.ring.setChecked(False)
+    win.out_edit.setText(str(tmp_path / "out"))
+    win._start()
+    assert win.btn_cancel.isVisible() and win.bar.isVisible() and win.log_box.content.isVisible()
+    assert _wait(app, lambda: win._worker is None, 180)
+    assert win.message.isVisible() and "Conversion completed" in win.message.text.text()
+    assert win.btn_open.isVisible() and os.path.isfile(os.path.join(win._result_path, "level.dat"))
+
+
+# ============================================================ theme
+
+
+def test_desktop_styles(monkeypatch, tmp_path):
+    cfg = tmp_path / "cfg"
+    (cfg / "qt6ct").mkdir(parents=True)
+    (cfg / "kdeglobals").write_text("[General]\nColorScheme=BreezeDark\n\n[Colors:Window]\n"
+                                    "ForegroundNegative=1,2,3\n\n[KDE]\nwidgetStyle=kvantum\n")
+    (cfg / "qt6ct" / "qt6ct.conf").write_text("[Appearance]\nstyle=Oxygen\n")
+    for k in ("QT_STYLE_OVERRIDE", "QT_QPA_PLATFORMTHEME", "KDE_FULL_SESSION"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("WORLDBRIDGE_USER_CONFIG", str(cfg))
+    monkeypatch.setenv("XDG_CONFIG_DIRS", str(tmp_path / "none"))
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
+    assert theme.wanted_styles() == ["kvantum"]
+    monkeypatch.setenv("QT_STYLE_OVERRIDE", "Breeze")
+    monkeypatch.setenv("QT_QPA_PLATFORMTHEME", "qt6ct")
+    assert theme.wanted_styles() == ["Breeze", "Oxygen", "kvantum"]
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "GNOME")
+    monkeypatch.delenv("QT_STYLE_OVERRIDE")
+    monkeypatch.delenv("QT_QPA_PLATFORMTHEME")
+    assert theme.wanted_styles() == []                                   # Fusion with GNOME's colours
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
+    (cfg / "kdeglobals").write_text("[General]\nColorScheme=BreezeLight\n")
+    assert theme.wanted_styles() == ["breeze"]                           # Plasma's default
+
+
+def test_state_colours(monkeypatch, tmp_path, app):
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (cfg / "kdeglobals").write_text("[Colors:Window]\nForegroundNegative=1,2,3\n")
+    monkeypatch.setenv("WORLDBRIDGE_USER_CONFIG", str(cfg))
+    monkeypatch.setenv("XDG_CONFIG_DIRS", str(tmp_path / "none"))
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
+    monkeypatch.delattr(theme.state_color, "cache", raising=False)
+    assert theme.state_color("negative") == QColor(1, 2, 3)
+    assert theme.state_color("positive") == QColor(39, 174, 96)          # Breeze's, not in the scheme
+    monkeypatch.delattr(theme.state_color, "cache", raising=False)
+    # secondary text is opaque (Qt's placeholder colour is half transparent)
+    assert theme.secondary_color().alpha() == 255
+    assert "color:#" in theme.span("x", "secondary")
+
+
+def test_hint_label_follows_the_palette(app):
+    from worldbridge.gui.widgets import HintLabel
+
+    box = QtWidgets.QWidget()
+    lab = HintLabel("ciao", box)
+    pal = box.palette()
+    pal.setColor(QPalette.PlaceholderText, QColor(10, 200, 30))
+    box.setPalette(pal)
+    app.processEvents()
+    assert lab.palette().color(QPalette.WindowText) == QColor(10, 200, 30)
+
+
+def test_environment_for_the_desktop(monkeypatch, tmp_path):
+    from PySide6.QtCore import QSettings
+
+    real = tmp_path / "real"
+    data = tmp_path / "data"
+    real.mkdir()
+    data.mkdir()
+    monkeypatch.setenv("WORLDBRIDGE_USER_CONFIG", str(real))
+    monkeypatch.setenv("WORLDBRIDGE_USER_DATA", str(data))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "runtime-config"))
+    monkeypatch.setenv("XDG_DATA_DIRS", "/usr/share")
+    monkeypatch.setattr(theme, "settings_dir", lambda: str(tmp_path / "settings"))
+    theme.prepare_environment()
+    assert os.environ["XDG_CONFIG_HOME"] == str(real)                    # the desktop's settings are read
+    assert os.environ["XDG_DATA_DIRS"] == f"{data}:/usr/share"
+    s = QSettings(QSettings.IniFormat, QSettings.UserScope, "WorldBridge", "Prova")
+    assert s.fileName().startswith(str(tmp_path / "settings"))          # Qt's writes stay in .runtime
+
+
+def test_style_plugins(monkeypatch, tmp_path):
+    import PySide6
+
+    lib = os.path.join(os.path.dirname(PySide6.__file__), "Qt", "lib", "libQt6Widgets.so.6")
+    assert "libQt6Gui.so.6" in theme.elf_needed(lib)
+    assert theme.elf_needed(str(tmp_path / "missing.so")) == []
+    monkeypatch.setattr(theme, "SYSTEM_PLUGIN_DIRS", ())
+    (tmp_path / "plugins" / "styles").mkdir(parents=True)
+    (tmp_path / "plugins" / "styles" / "libbroken.so").write_bytes(b"not a plugin")
+    monkeypatch.setenv("WORLDBRIDGE_QT_PLUGIN_DIRS", str(tmp_path / "plugins"))
+    assert theme.find_style_plugin("kvantum") is None
+
+
+def test_broken_style_is_refused(monkeypatch, tmp_path):
+    """A plugin that cannot work is tried in another process, refused, and the answer remembered."""
+    import shutil
+
+    import PySide6
+
+    fake = tmp_path / "libfake.so"
+    shutil.copy(os.path.join(os.path.dirname(PySide6.__file__), "Qt", "lib", "libQt6Svg.so.6"), fake)
+    monkeypatch.setattr(theme, "settings_dir", lambda: str(tmp_path / "settings"))
+    monkeypatch.setattr(theme, "RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setenv("WORLDBRIDGE_HOME", str(tmp_path))
+    assert theme.style_works(str(fake), "fake", timeout=120) is False
+    cache = (tmp_path / "settings" / "WorldBridge" / "styles.json").read_text()
+    assert "libfake.so" in cache and "false" in cache
+
+
+def test_language_switch_keeps_every_choice(win, app, tmp_path):
+    """EN | IT at the top right: the window comes back in the other language with the same world,
+    the same conversion choices, the same map selection, spawn and players."""
+    from worldbridge import i18n
+
+    src = SyntheticWorld(radius=1, dims=(0,))
+    w = LCEWriter(str(tmp_path / "lce"), LCEWriteOptions(platform="win64"), Progress())
+    for cx, cz in src.chunk_coords(0):
+        w.add_chunk(0, src.read_chunk(0, cx, cz))
+    w.finish(src.info)
+    win.src_edit.setText(str(tmp_path / "lce"))
+    win._on_source_changed()
+    assert _wait(app, lambda: win._src_kind == "lce" and win.map_tab._meta is not None)
+    _pick(win.edition, "java")
+    _pick(win.java_ver, ("numeric", None, "1.12"))
+    win.ring.setChecked(False)
+    win.name_edit.setText("Renamed")
+    m = win.map_tab
+    m.canvas.set_chunks([(0, 0), (1, 0)], True, 0)
+    m.scope_sel.setChecked(True)
+    m.use_spawn.setChecked(True)
+    m.sx.setValue(7)
+    m.regen_end.setChecked(True)
+    win.tabs.setCurrentWidget(m)
+    before = win._target()
+
+    it = win.switch_language("it")
+    try:
+        assert it is not None and i18n.language() == "it" and not win.isVisible()
+        assert [it.tabs.tabText(i) for i in range(it.tabs.count())] == ["Conversione", "Mappa e chunk", "Giocatori",
+                                                                        "Gestione mondo"]
+        assert _wait(app, lambda: it._src_kind == "lce" and it.map_tab._meta is not None and it._pending_state is None)
+        app.processEvents()
+        after = it._target()
+        assert (after.family, after.java_mode, after.java_version_limit, after.ring, after.world_name, after.regen) == \
+            (before.family, before.java_mode, before.java_version_limit, before.ring, before.world_name, before.regen)
+        assert after.selection.chunks == before.selection.chunks == {0: {(0, 0), (1, 0)}}
+        assert after.selection.spawn[0] == 7
+        assert it.tabs.currentWidget() is it.map_tab
+        assert "Solo i chunk selezionati (2)" in it.scope_label.text()
+        assert [b.text() for b in it.lang_group.buttons() if b.isChecked()] == ["IT"]
+        en = it.switch_language("en")
+        assert en is not None and i18n.language() == "en" and en.tabs.tabText(0) == "Conversion"
+        assert _wait(app, lambda: en._src_kind == "lce" and en._pending_state is None)
+        en.close()
+    finally:
+        i18n.set_language("en")
+        it.close()
+        app.processEvents()

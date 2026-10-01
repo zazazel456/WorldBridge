@@ -1,0 +1,15 @@
+name: Feature request
+description: A format, version or tool WorldBridge should support.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What you would like
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: What you are trying to do with your worlds.

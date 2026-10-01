@@ -1,0 +1,6 @@
+# Manual installation (pip). run.sh uses requirements.lock instead (exact versions).
+amulet-core>=1.9.48
+PyMCTranslate>=1.2.49
+amulet-nbt>=2.1
+numpy>=1.24
+PySide6-Essentials>=6.6

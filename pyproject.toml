@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "worldbridge"
+version = "0.2.0"
+description = "Minecraft world toolkit: converts between Java, Bedrock, Legacy Console Edition, Pocket Edition, Classic / Indev and Better than Adventure"
+readme = "README.md"
+license = {text = "PolyForm-Noncommercial-1.0.0"}
+requires-python = ">=3.9"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "License :: Other/Proprietary License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Games/Entertainment",
+]
+dependencies = [
+    "amulet-core>=1.9.48",
+    "PyMCTranslate>=1.2.49",
+    "amulet-nbt>=2.1",
+    "numpy>=1.24",
+    "PySide6-Essentials>=6.6",
+]
+
+[project.urls]
+Homepage = "https://github.com/zazazel456/WorldBridge"
+Issues = "https://github.com/zazazel456/WorldBridge/issues"
+Changelog = "https://github.com/zazazel456/WorldBridge/blob/main/CHANGELOG.md"
+
+[project.scripts]
+worldbridge-cli = "worldbridge.cli:main"
+
+[project.gui-scripts]
+worldbridge = "worldbridge.__main__:run"
+
+[tool.setuptools.packages.find]
+include = ["worldbridge*"]
+
+[tool.setuptools.package-data]
+"worldbridge.lce.vendor" = ["LICENSE-LCEStudio"]
+"worldbridge.bta" = ["data/*.txt", "data/*.gz", "data/*.properties"]

@@ -1,0 +1,65 @@
+name: Test report
+description: You converted a world and opened it in the game. Tell how it went, good or bad.
+title: "[Test] <source> → <target>"
+labels: ["test report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing WorldBridge. Reports of conversions that **worked** are as useful as the ones that did not.
+  - type: input
+    id: version
+    attributes:
+      label: WorldBridge version
+      description: Shown in About, or by `./run.sh --help`.
+      placeholder: "0.2.0"
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: Source world
+      description: Game, version and platform.
+      placeholder: "Java 1.12.2 / LCE Xbox 360 TU75 / Bedrock 1.21.50 Android…"
+    validations:
+      required: true
+  - type: input
+    id: target
+    attributes:
+      label: Target
+      description: Game, version and platform you converted to.
+      placeholder: "Java 26.3 / neoLegacy TU31 / PS3 (RPCS3)…"
+    validations:
+      required: true
+  - type: textarea
+    id: options
+    attributes:
+      label: Options
+      description: Border (ring / blending / none), height, chunk selection, players… or "defaults".
+  - type: dropdown
+    id: result
+    attributes:
+      label: Overall result
+      options:
+        - Everything I checked was right
+        - Small problems
+        - Big problems (lost content, broken terrain)
+        - The game did not open the world
+    validations:
+      required: true
+  - type: textarea
+    id: checked
+    attributes:
+      label: What you checked in the game
+      description: Border with new terrain, chests and signs, mobs, inventory, Nether / End… Screenshots welcome.
+  - type: textarea
+    id: report
+    attributes:
+      label: Conversion report
+      description: The report WorldBridge shows at the end, or the command line output.
+      render: text
+  - type: input
+    id: system
+    attributes:
+      label: Linux distribution and desktop
+      placeholder: "Fedora 42, KDE Plasma 6"
