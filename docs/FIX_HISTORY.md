@@ -17,6 +17,7 @@ a converted world, not by an automated check.
 - [The ring and the terrain generators (21–23, 25–27, 29–31, 34–49)](#the-ring-and-the-terrain-generators)
 - [Blocks and content (30, 33, 38)](#blocks-and-content)
 - [Later fixes (50–57)](#later-fixes-5057)
+- [0.2.1 (65)](#021)
 
 ---
 
@@ -287,3 +288,19 @@ converted to Beta 1.7.3.
     forever for LevelDB's background thread when it closes its database. Those workers now start from
     the fork server; a test reproduces the hang with `fork`.
 
+## 0.2.1
+
+65. **Bedrock → Java 26.3: cooked mutton lost from the inventory (found in game), and with it every
+    item added from Java 1.8 on.** The furnace kept it: block entities reach Java 1.13+ with item
+    names, but the player went through the numeric hub and was written with numeric ids (cooked
+    mutton = 424), left to Minecraft's data fixers. The game's numeric id fix (`ItemIdFix`, data
+    version 102) only lists the ids of Java 1.7: items 409–416 and 423–453 (mutton, cooked mutton,
+    banners, spruce to dark oak doors, chorus fruit, beetroot, shields, elytra, boats other than oak,
+    totems, shulker shells, iron nuggets…) and blocks 165–255 (slime blocks, prismarine, red
+    sandstone, concrete, purpur…) became air, silently. Everything Java 1.9+ upgrades now names its
+    items the way Java 1.8–1.12 saved them, with the same Damage, so the game's later fixes
+    (flattening, components) do the rest: the player's inventory and ender chest on every route to
+    Java 1.9+, and on the routes where the game upgrades the world ("Java 1.9 → latest") also chests,
+    furnaces, dropped items, item frames and mob equipment. Targets before 1.9 keep numeric ids,
+    which is what those games read. `tests/test_item_ids.py` covers the player from Bedrock, the
+    chests and entities of the hub, and checks that each name reads back as the same item.

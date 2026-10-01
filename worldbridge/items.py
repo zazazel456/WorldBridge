@@ -198,6 +198,37 @@ def legacy_to_flat(iid: int, dmg: int) -> Optional[str]:
     return ids.JAVA_ITEMS.get(iid)
 
 
+# Minecraft's own numeric id fix (ItemIdFix, data version 102) only knows the ids of Java 1.7:
+# items 409 - 416 and 423 - 453 (mutton, banners, doors, shield, elytra, totem...) and blocks
+# 165 - 255 (slime, prismarine, red sandstone, concrete...) become air.  Data opened by Java
+# 1.9+ names its items the way Java 1.8 - 1.12 saved them, with the same Damage.
+@functools.lru_cache(maxsize=1)
+def _registry_names() -> Dict[int, str]:
+    out = {i: n for i, n in ids.java_block_names().items() if i}
+    out.update(ids.JAVA_ITEMS)
+    return out
+
+
+def named_item(t):
+    """A legacy item with its numeric id written as the Java 1.8 - 1.12 registry name."""
+    if not isinstance(t, nbt.CompoundTag):
+        return t
+    iid = nbt.get_tag(t, "id")
+    if iid is None or isinstance(iid, nbt.StringTag):
+        return t
+    name = _registry_names().get(int(iid.py_data))
+    if name is None:
+        return t
+    t = nbt.copy(t)
+    t["id"] = nbt.StringTag("minecraft:" + name)
+    return t
+
+
+def named_items(lst) -> nbt.ListTag:
+    """:func:`named_item` on every stack of a list (empty slots of positional lists stay)."""
+    return nbt.ListTag([named_item(t) for t in lst], 10)
+
+
 # ------------------------------------------------------------------ potions
 def legacy_potion_type(dmg: int) -> str:
     if dmg == 0:

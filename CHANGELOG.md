@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.1 – bug fix (alpha)
+
+- **Items lost from the player's inventory on the way to Java 1.9 and later** (found in game:
+  Bedrock 26.50 → Java 26.3, cooked mutton gone from the inventory but not from the furnace). The
+  player was written with numeric item ids, and Minecraft's own numeric id fix only knows the items
+  of Java 1.7: cooked and raw mutton, banners, doors other than oak, chorus fruit, beetroot, shields,
+  elytra, totems, prismarine, slime blocks, red sandstone, concrete and every other item added from
+  Java 1.8 on became air. The player's inventory and ender chest now carry the item names (with the
+  same Damage), from every source. Chests, furnaces, dropped items and mob equipment of the worlds
+  upgraded by the game ("Java 1.9 → latest") had the same problem and are fixed too.
+  See [fix 65](docs/FIX_HISTORY.md#021).
+
 ## 0.2.0 – first public release (alpha)
 
 The first version published. 0.1.0 was never released.
