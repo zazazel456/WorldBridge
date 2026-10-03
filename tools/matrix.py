@@ -433,6 +433,17 @@ def _hub_view(path: str, tmp: str):
     return JavaNumericWorld(back)
 
 
+def _item_id(t) -> int:
+    """Numeric id of a hub item: Java 1.8 - 1.12 data carries registry names (minecraft:diamond)."""
+    from worldbridge import items as witems
+
+    v = nbt.get(t, "id", 0)
+    if isinstance(v, str):
+        name = v.split(":")[-1]
+        return next((i for i, n in witems._registry_names().items() if n == name), -1)
+    return int(v or 0)
+
+
 def probe(path: str, tmp: str) -> Dict[str, object]:
     """What survived: counts and presence checks (True / False / number)."""
     r: Dict[str, object] = {}
@@ -451,7 +462,7 @@ def probe(path: str, tmp: str) -> Dict[str, object]:
     tes_by_pos = {(int(nbt.get(t, "x")) & 15, int(nbt.get(t, "y")) - dy, int(nbt.get(t, "z")) & 15): t for t in c.tile_entities}
     r["stone_blocks"] = int((c.blocks[1:55] == 1).sum())
     chest = tes_by_pos.get((1, 65, 1))
-    items = {int(nbt.get(i, "id")): i for i in (nbt.get_tag(chest, "Items") or [])} if chest is not None else {}
+    items = {_item_id(i): i for i in (nbt.get_tag(chest, "Items") or [])} if chest is not None else {}
     r["chest"] = chest is not None
     r["chest_diamonds"] = int(nbt.get(items[264], "Count")) if 264 in items else 0
     sword = items.get(276)
@@ -486,7 +497,7 @@ def probe(path: str, tmp: str) -> Dict[str, object]:
                 "MinecartChest", "Boat", "Item", "Cow", "Sheep"):
         r[f"ent_{eid}"] = ents.get(eid, 0) > 0
     frames = [e for e in c.entities if nbt.get(e, "id") == "ItemFrame"]
-    r["frame_map"] = any(int(nbt.get(nbt.get_tag(f, "Item") or nbt.CompoundTag(), "id", 0) or 0) == 358 for f in frames)
+    r["frame_map"] = any(_item_id(nbt.get_tag(f, "Item") or nbt.CompoundTag()) == 358 for f in frames)
     r["map_data"] = False
     for mp in (os.path.join(w.path, "data", "map_0.dat"),):
         try:
@@ -498,7 +509,7 @@ def probe(path: str, tmp: str) -> Dict[str, object]:
     r["wolf_owner"] = bool(wolf and (nbt.get(wolf[0], "OwnerUUID") or "OwnerUUIDMost" in wolf[0] or "Owner" in wolf[0]))
     r["wolf_sitting"] = bool(wolf and int(nbt.get(wolf[0], "Sitting", 0) or 0))
     p = next(iter(w.info.players.values()), None) if w.info.players else None
-    inv = {int(nbt.get(i, "id")): i for i in (nbt.get_tag(p, "Inventory") or [])} if p is not None else {}
+    inv = {_item_id(i): i for i in (nbt.get_tag(p, "Inventory") or [])} if p is not None else {}
     r["player"] = p is not None
     r["player_sword"] = 276 in inv
     r["player_armor"] = any(int(nbt.get(i, "Slot", 0)) >= 100 for i in inv.values())
