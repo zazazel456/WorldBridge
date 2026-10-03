@@ -28,8 +28,8 @@ def _intro_table() -> Dict[int, int]:
     s(list(range(0, 21)) + [35] + list(range(37, 92)), "alpha")
     s([21, 22, 23, 24, 25, 92], "b1.2")
     s([26, 93, 94], "b1.3")
-    s([27, 28, 30, 31, 32], "b1.5")
-    s([96], "b1.6")
+    s([27, 28, 30], "b1.5")
+    s([31, 32, 96], "b1.6")                              # tall grass, dead bush, trapdoor
     s([29, 33, 34, 36], "b1.7")
     s(range(97, 110), "b1.8")
     s(range(110, 123), "1.0")
@@ -72,7 +72,7 @@ FALLBACK = {
     163: _same(53), 164: _same(53), 174: _fixed(79),
     175: lambda d: (0, 0) if d & 8 else (31, 1),
     165: _fixed(35, 5), 166: _fixed(0), 167: _same(96), 168: _fixed(98, 1), 169: _fixed(89),
-    176: _fixed(0), 177: _fixed(0), 178: _fixed(0), 151: _fixed(0),
+    176: _fixed(0), 177: _fixed(0), 178: _same(151), 151: _fixed(0),
     179: lambda d: (24, d), 180: _same(128), 181: _fixed(43, 1), 182: lambda d: (44, (d & 8) | 1),
     183: _same(107), 184: _same(107), 185: _same(107), 186: _same(107), 187: _same(107),
     188: _fixed(85), 189: _fixed(85), 190: _fixed(85), 191: _fixed(85), 192: _fixed(85),

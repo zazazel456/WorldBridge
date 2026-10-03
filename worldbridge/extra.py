@@ -189,7 +189,7 @@ def inject_target_extras(hub_dir: str, out_dir: str, target, info: WorldInfo, pr
             from .java.modern import inject_from_hub as inject_java
 
             inject_java(hub_dir, out_dir, info, progress)
-            _copy_maps(hub_dir, out_dir)
+            _copy_maps(hub_dir, out_dir, _map_colors(target, version))
     except Exception as ex:  # noqa: BLE001
         progress.warn(tr("Entities / containers not fully transferred: {error}", error=ex))
     _tidy_java_entities(out_dir, target)
@@ -223,7 +223,7 @@ def direct_extras(d, out_dir: str, target, info: WorldInfo, progress: Progress, 
             from .java.modern import inject_from_java
 
             inject_from_java(d.path, out_dir, info, progress, move)
-            _copy_java_side_files(d.path, out_dir, bool(info.player_links))
+            _copy_java_side_files(d.path, out_dir, bool(info.player_links), _map_colors(target, version))
         elif target.family == "bedrock" and d.kind == "bedrock":
             from .bedrock.extra import copy_bedrock_extras
 
@@ -233,7 +233,37 @@ def direct_extras(d, out_dir: str, target, info: WorldInfo, progress: Progress, 
     _tidy_java_entities(out_dir, target)
 
 
-def _copy_maps(src: str, dst: str) -> None:
+def _map_colors(target, version=None) -> int:
+    """The base map colours of the Java target (see maps.java_map_colors)."""
+    from .maps import java_map_colors
+
+    try:
+        return java_map_colors(tuple(getattr(target, "version", None) or version or (99,)))
+    except Exception:  # noqa: BLE001
+        return java_map_colors(version or (99,))
+
+
+def _copy_map_file(s: str, t: str, max_base: Optional[int]) -> None:
+    """Copy one ``map_<n>.dat``, with the colours the target game lacks replaced by the nearest
+    ones it has (a colour id past its palette crashes it when the map is drawn)."""
+    import shutil
+
+    if max_base is None:
+        shutil.copy2(s, t)
+        return
+    from .maps import capped_map_file
+
+    with open(s, "rb") as f:
+        blob = f.read()
+    new = capped_map_file(blob, max_base)
+    if new is blob:
+        shutil.copy2(s, t)
+    else:
+        with open(t, "wb") as f:
+            f.write(new)
+
+
+def _copy_maps(src: str, dst: str, max_base: Optional[int] = None) -> None:
     """Map files of the hub (Amulet only writes the terrain); the game upgrades them."""
     import shutil
 
@@ -244,10 +274,13 @@ def _copy_maps(src: str, dst: str) -> None:
         if fn.startswith("map_") or fn == "idcounts.dat":
             os.makedirs(os.path.join(dst, "data"), exist_ok=True)
             if not os.path.exists(os.path.join(dst, "data", fn)):
-                shutil.copy2(os.path.join(data, fn), os.path.join(dst, "data", fn))
+                if fn.startswith("map_"):
+                    _copy_map_file(os.path.join(data, fn), os.path.join(dst, "data", fn), max_base)
+                else:
+                    shutil.copy2(os.path.join(data, fn), os.path.join(dst, "data", fn))
 
 
-def _copy_java_side_files(src: str, dst: str, selected_players: bool = False) -> None:
+def _copy_java_side_files(src: str, dst: str, selected_players: bool = False, max_base: Optional[int] = None) -> None:
     """Maps, statistics, advancements, player files of a Java world.  Java 26.1 moved the players'
     files into players/ (players/data...): they stay there when the output keeps the source's 26.1+
     level.dat, and go back to playerdata/, stats/, advancements/ when the output level is older
@@ -281,4 +314,7 @@ def _copy_java_side_files(src: str, dst: str, selected_players: bool = False) ->
             for fn in files:
                 t = os.path.join(d, rel, fn)
                 if not os.path.exists(t):
-                    shutil.copy2(os.path.join(root, fn), t)
+                    if a == "data" and fn.startswith("map_") and fn.endswith(".dat"):  # colours the target knows
+                        _copy_map_file(os.path.join(root, fn), t, max_base)
+                    else:
+                        shutil.copy2(os.path.join(root, fn), t)
