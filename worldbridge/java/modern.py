@@ -325,23 +325,29 @@ def _bedrock_chunks(src: str) -> Dict[Tuple[int, int, int], Tuple[list, list]]:
     return out
 
 
-def inject_from_bedrock(src: str, out_dir: str, info: WorldInfo, progress: Progress):
+def _moved_key(move, dim: int, cx: int, cz: int, tl: list, el: list):
+    if move is None:
+        return dim, cx, cz
+    return (dim,) + tuple(move.canon_chunk(dim, cx, cz, tl, el))
+
+
+def inject_from_bedrock(src: str, out_dir: str, info: WorldInfo, progress: Progress, move=None):
     canon = {}
-    for key, (te, en) in _bedrock_chunks(src).items():
+    for (dim, cx, cz), (te, en) in _bedrock_chunks(src).items():
         tl = [c for c in (tiles.from_bedrock(t) for t in te) if c is not None]
         el = [e for e in en if isinstance(e, dict)] + ent.read_list([e for e in en if not isinstance(e, dict)], "bedrock")
         if tl or el:
-            canon[key] = (tl, el)
+            canon[_moved_key(move, dim, cx, cz, tl, el)] = (tl, el)
     inject_canon(out_dir, canon, progress)
 
 
-def inject_from_java(src: str, out_dir: str, info: WorldInfo, progress: Progress):
+def inject_from_java(src: str, out_dir: str, info: WorldInfo, progress: Progress, move=None):
     canon = {}
     for dim, cx, cz, te, en in iter_modern_extras(src, progress):
         tl = [c for c in (tiles.from_java_modern(t) for t in te) if c is not None]
         el = ent.read_list(en, "java")
         if tl or el:
-            canon[(dim, cx, cz)] = (tl, el)
+            canon[_moved_key(move, dim, cx, cz, tl, el)] = (tl, el)
     inject_canon(out_dir, canon, progress)
 
 
@@ -384,7 +390,7 @@ def inject_canon(out_dir: str, canon, progress: Progress):
         if not os.path.exists(path):
             continue
         reg = JavaRegion(path)
-        rw = RegionWriter()
+        rw = RegionWriter(external=True)
         todo = {(cx & 31, cz & 31): (tl, el) for cx, cz, tl, el in entries}
         ent_writer = None
         dv_seen = 3465
@@ -419,7 +425,7 @@ def inject_canon(out_dir: str, canon, progress: Progress):
                 ents = [e for e in (ent.to_java_modern(c, dv if dv < ENTITY_SPLIT_DV else 2730) for c in el) if e is not None]
                 n_e += len(ents)
                 if dv < ENTITY_SPLIT_DV and lvl is not None:
-                    lvl["Entities"] = nbt.compound_list(list(nbt.get_tag(lvl, "Entities") or []) + ents)
+                    lvl["Entities"] = nbt.compound_list(ents)  # they replace the copies Amulet made
                 else:
                     if ent_writer is None:
                         ent_writer = {}
@@ -434,7 +440,7 @@ def inject_canon(out_dir: str, canon, progress: Progress):
             folder = _folder(out_dir, dim, "entities")
             os.makedirs(folder, exist_ok=True)
             epath = os.path.join(folder, f"r.{rx}.{rz}.mca")
-            ew = RegionWriter()
+            ew = RegionWriter(external=True)
             if os.path.exists(epath):
                 old = JavaRegion(epath)
                 for lx, lz in old.chunks():
@@ -462,7 +468,7 @@ def tidy_entity_regions(world: str) -> int:
     for dim in (OVERWORLD, NETHER, THE_END):
         for rx, rz, path in _regions(_folder(world, dim, "entities")):
             reg = JavaRegion(path)
-            rw = RegionWriter()
+            rw = RegionWriter(external=True)
             kept = dirty = 0
             for lx, lz in reg.chunks():
                 raw = reg.read(lx, lz)
@@ -486,6 +492,17 @@ def tidy_entity_regions(world: str) -> int:
             else:
                 os.remove(path)
     return changed
+
+
+def level_data_version(world: str) -> Optional[int]:
+    """DataVersion of the world's level.dat (None: none or unreadable)."""
+    try:
+        with open(os.path.join(world, "level.dat"), "rb") as f:
+            root = nbt.load(f.read()).tag
+        dv = nbt.get(nbt.get_tag(root, "Data") or root, "DataVersion")
+        return int(dv) if dv is not None else None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def chunk_data_version(world: str) -> Optional[int]:

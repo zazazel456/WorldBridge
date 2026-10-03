@@ -191,7 +191,7 @@ def from_java_modern(t: nbt.CompoundTag) -> Optional[dict]:
         c["items"] = _items_from(nbt.get_tag(t, "Items"), "java")
     if "CustomName" in t:
         cn = nbt.get_tag(t, "CustomName")
-        c["custom_name"] = items.plain_text(cn.py_data) if isinstance(cn, nbt.StringTag) else ""
+        c["custom_name"] = items._component_text(cn)
     if kind in ("sign", "hanging_sign"):
         if "front_text" in t:
             ft = t["front_text"]
@@ -455,14 +455,15 @@ def to_java_modern(c: dict, data_version: int) -> Optional[nbt.CompoundTag]:
     if "items" in c:
         t["Items"] = _items_to(c["items"], "java", data_version=data_version)
     if c.get("custom_name"):
-        t["CustomName"] = nbt.StringTag(items.json_text(c["custom_name"]))
+        t["CustomName"] = nbt.StringTag(c["custom_name"] if data_version >= items.TEXT_NBT_DV
+                                        else items.json_text(c["custom_name"]))
     if kind in ("sign", "hanging_sign"):
         front = (list(c.get("front") or []) + ["", "", "", ""])[:4]
         back = (list(c.get("back") or []) + ["", "", "", ""])[:4]
         color = c.get("color", "black")
         if data_version >= 3463:  # 1.20 two-sided signs
             def side(lines):
-                msgs = nbt.ListTag([nbt.StringTag(l) if data_version >= 4325 else nbt.StringTag(items.json_text(l)) for l in lines], 8)
+                msgs = nbt.ListTag([nbt.StringTag(l) if data_version >= items.TEXT_NBT_DV else nbt.StringTag(items.json_text(l)) for l in lines], 8)
                 return nbt.CompoundTag({"messages": msgs, "color": nbt.StringTag(color),
                                         "has_glowing_text": nbt.ByteTag(1 if c.get("glow") else 0)})
 

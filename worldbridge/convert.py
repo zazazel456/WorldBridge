@@ -129,6 +129,18 @@ def _source_is_pre118(d: det.Detected) -> bool:
         return False
 
 
+def _java_upgrade_only(d: det.Detected, t: TargetSpec) -> bool:
+    """True when a Java 1.13+ world goes to its own version or a newer one (the game upgrades it)."""
+    from .java.modern import chunk_data_version, level_data_version
+
+    try:
+        target_dv = ab.java_data_version(t.version or ab.latest("java"))
+        dvs = [v for v in (chunk_data_version(d.path), level_data_version(d.path)) if v]
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(dvs) and max(dvs) <= target_dv
+
+
 def _write_version(platform: str, version, blend: bool, old_source: bool):
     """Version actually written by Amulet (pre-1.18 when the game must blend)."""
     v = tuple(version)
@@ -578,10 +590,11 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
             progress.log(tr("{n} chunks the game had not finished (at the edge of the explored area: only planned or "
                             "bare rock) are not converted: the game or the ring generates them properly.", n=n))
         old_source = _source_is_pre118(d)
+        same_edition = (not sel.biomes and sel.move_to is None and target.family in ("java", "bedrock")
+                        and d.kind == ("bedrock" if target.family == "bedrock" else "java_modern")
+                        and (target.family != "java" or target.java_mode in ("auto", "amulet", "dfu")))
         # ---- same edition, old world -> newer version: the game upgrades (and blends) it itself
-        if (target.blend and old_source and not sel.biomes and sel.move_to is None and target.family in ("java", "bedrock")
-                and d.kind == ("bedrock" if target.family == "bedrock" else "java_modern")
-                and (target.family != "java" or target.java_mode in ("auto", "amulet", "dfu"))
+        if (same_edition and target.blend and old_source
                 and tuple(target.version or ab.latest("bedrock" if target.family == "bedrock" else "java")) >= CAVES_CLIFFS):
             progress.stage(tr("Copying the world (Minecraft will upgrade it with its own blending)"), 0.05, 0.95)
             shutil.copytree(d.path, out_dir, dirs_exist_ok=True)
@@ -589,6 +602,19 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
                 _edit_copy(d, out_dir, target, sel, progress)
             progress.log(tr("The world is pre-1.18: it is kept as it is; when it is opened, Minecraft runs its own "
                             "upgrade, blending terrain and biomes."))
+            progress.update(1.0, tr("Completed"))
+            return ConversionResult(out_dir, 0, time.time() - t0, list(progress.warnings))
+        # ---- Java 1.13+ -> the same or a newer Java: the game's own upgrade keeps every block, item
+        # component, book, mob and setting, which no translation does as well (before 1.18 the game
+        # does not blend the border: there the ring needs the translation route)
+        if (same_edition and target.family == "java" and _java_upgrade_only(d, target)
+                and (not target.ring or tuple(target.version or ab.latest("java")) >= CAVES_CLIFFS)):
+            progress.stage(tr("Copying the world (Minecraft will upgrade it when it is opened)"), 0.05, 0.95)
+            shutil.copytree(d.path, out_dir, dirs_exist_ok=True)
+            if sel.active:
+                _edit_copy(d, out_dir, target, sel, progress)
+            progress.log(tr("The target version is the same as the world's or newer: the world is kept as it is, and "
+                            "Minecraft upgrades it with its own upgrade when it is opened."))
             progress.update(1.0, tr("Completed"))
             return ConversionResult(out_dir, 0, time.time() - t0, list(progress.warnings))
 
@@ -999,7 +1025,7 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
         ab.write_bedrock_level_dat(out_dir, info, wver)
     else:
         ab.write_java_level_dat(out_dir, info, target.version)
-    direct_extras(d, out_dir, target, info, progress, wver)
+    direct_extras(d, out_dir, target, info, progress, wver, move if move.active else None)
     if sel.filters:  # entities/block entities are only attached to written chunks, but be sure
         (prune_bedrock if platform == "bedrock" else prune_java)(out_dir, sel)
     # the ring comes last: the selection would remove it, and the source's entities and block

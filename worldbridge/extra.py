@@ -203,17 +203,17 @@ def _tidy_java_entities(out_dir: str, target) -> None:
     tidy_entity_regions(out_dir)
 
 
-def direct_extras(d, out_dir: str, target, info: WorldInfo, progress: Progress, version=None) -> None:
-    """Amulet -> Amulet conversions (Java 1.13+ <-> Bedrock)."""
+def direct_extras(d, out_dir: str, target, info: WorldInfo, progress: Progress, version=None, move=None) -> None:
+    """Amulet -> Amulet conversions (Java 1.13+ <-> Bedrock); ``move``: the chunks moved (relocate)."""
     try:
         if target.family == "bedrock" and d.kind == "java_modern":
             from .bedrock.extra import inject_from_java_modern
 
-            inject_from_java_modern(d.path, out_dir, version or target.version, info, progress)
+            inject_from_java_modern(d.path, out_dir, version or target.version, info, progress, move)
         elif target.family == "java" and d.kind == "bedrock":
             from .java.modern import inject_from_bedrock
 
-            inject_from_bedrock(d.path, out_dir, info, progress)
+            inject_from_bedrock(d.path, out_dir, info, progress, move)
             for name, blob in info.extra_files.items():  # maps
                 if name.startswith("data/map_"):
                     os.makedirs(os.path.join(out_dir, "data"), exist_ok=True)
@@ -222,7 +222,7 @@ def direct_extras(d, out_dir: str, target, info: WorldInfo, progress: Progress, 
         elif target.family == "java" and d.kind == "java_modern":
             from .java.modern import inject_from_java
 
-            inject_from_java(d.path, out_dir, info, progress)
+            inject_from_java(d.path, out_dir, info, progress, move)
             _copy_java_side_files(d.path, out_dir, bool(info.player_links))
         elif target.family == "bedrock" and d.kind == "bedrock":
             from .bedrock.extra import copy_bedrock_extras

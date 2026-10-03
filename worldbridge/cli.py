@@ -25,8 +25,23 @@ from .i18n import tr
 from .model import ConversionCancelled, ConversionError, Progress
 
 
-def _parse_version(s: str):
-    return tuple(int(x) for x in s.split("."))
+def _parse_version(s: str, family: str = "java"):
+    """--version as the version actually written (26.3 -> 26.3.0; 1.21.11 -> the newest known before it)."""
+    try:
+        v = tuple(int(x) for x in s.strip().split("."))
+    except ValueError:
+        raise SystemExit(tr("--version: '{version}' is not a version number (e.g. 1.20.1 or 26.3)", version=s))
+    if family not in ("java", "bedrock"):
+        return v
+    try:
+        got, exact = ab.resolve_version(family, v)
+    except ValueError:
+        raise SystemExit(tr("--version: {version} is not a {edition} version WorldBridge knows "
+                            "(see 'worldbridge versions')", version=s, edition=family.capitalize()))
+    if not exact:
+        print(tr("Note: {version} is written as {known}, the newest version WorldBridge knows before it; "
+                 "the game upgrades it when the world is opened.", version=s, known=ab.version_str(got)))
+    return got
 
 
 def _selection(args):
@@ -266,7 +281,7 @@ def main(argv=None) -> int:
         fam = {"pe-old": "pe_old"}.get(args.to, args.to)
         ox, oz = (int(v) for v in args.offset.split(","))
         t = TargetSpec(family=fam, java_mode=args.java_mode, java_version_limit=args.java_limit,
-                       version=_parse_version(args.version) if args.version else None, lce_platform=args.platform,
+                       version=_parse_version(args.version, fam) if args.version else None, lce_platform=args.platform,
                        lce_profile=args.profile, lce_world_size=args.size, lce_offset=(ox, oz),
                        lce_center_on_spawn=args.center_on_spawn, lce_player_id=args.player_id, world_name=args.name,
                        y_offset=args.y_offset, blend=not args.no_blend, ring=not args.no_ring, bta_palette=args.bta_palette,

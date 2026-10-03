@@ -46,6 +46,8 @@ LEGACY_ENCH = {0: "protection", 1: "fire_protection", 2: "feather_falling", 3: "
                61: "luck_of_the_sea", 62: "lure", 70: "mending", 71: "vanishing_curse"}
 LEGACY_ENCH_INV = {v: k for k, v in LEGACY_ENCH.items()}
 LEGACY_ENCH_INV["sweeping_edge"] = 22
+# enchantment ids Java renamed: (DataVersion of the rename, old name, new name)
+_JAVA_ENCH_RENAMES = ((3837, "sweeping", "sweeping_edge"),)  # 1.20.5
 BEDROCK_ENCH = ["protection", "fire_protection", "feather_falling", "blast_protection", "projectile_protection",
                 "thorns", "respiration", "depth_strider", "aqua_affinity", "sharpness", "smite",
                 "bane_of_arthropods", "knockback", "fire_aspect", "looting", "efficiency", "silk_touch",
@@ -54,7 +56,7 @@ BEDROCK_ENCH = ["protection", "fire_protection", "feather_falling", "blast_prote
                 "channeling", "multishot", "piercing", "quick_charge", "soul_speed", "swift_sneak", "wind_burst",
                 "density", "breach"]
 BEDROCK_ENCH_INV = {n: i for i, n in enumerate(BEDROCK_ENCH)}
-BEDROCK_ENCH_INV["sweeping"] = None
+BEDROCK_ENCH_INV["sweeping"] = BEDROCK_ENCH_INV["sweeping_edge"] = None
 
 # legacy potion damage low bits -> effect name
 LEGACY_POTION_EFFECT = {1: "regeneration", 2: "swiftness", 3: "fire_resistance", 4: "poison", 5: "healing",
@@ -69,7 +71,7 @@ BEDROCK_POTIONS = ["water", "mundane", "long_mundane", "thick", "awkward", "nigh
                    "regeneration", "long_regeneration", "strong_regeneration", "strength", "long_strength",
                    "strong_strength", "weakness", "long_weakness", "wither", "turtle_master",
                    "long_turtle_master", "strong_turtle_master", "slow_falling", "long_slow_falling",
-                   "strong_slowness"]
+                   "strong_slowness", "wind_charged", "weaving", "oozing", "infested"]
 BEDROCK_POTIONS_INV = {n: i for i, n in enumerate(BEDROCK_POTIONS)}
 
 # legacy spawn egg damage (Java numeric entity id) -> entity name
@@ -86,7 +88,9 @@ LEGACY_EGG_INV["zombie_pigman"] = 57
 # Java flattened name -> Bedrock item name (non-block items that differ)
 JAVA_TO_BEDROCK_NAME = {"nether_brick": "netherbrick", "oak_sign": "oak_sign", "firework_rocket": "firework_rocket",
                         "tipped_arrow": "arrow", "enchanted_golden_apple": "enchanted_golden_apple",
-                        "snowball": "snowball", "turtle_scute": "turtle_scute", "scute": "turtle_scute"}
+                        "snowball": "snowball", "turtle_scute": "turtle_scute", "scute": "turtle_scute",
+                        "oak_door": "wooden_door", "item_frame": "frame", "glow_item_frame": "glow_frame",
+                        "map": "empty_map", "zombified_piglin_spawn_egg": "zombie_pigman_spawn_egg"}
 BEDROCK_TO_JAVA_NAME = {"netherbrick": "nether_brick", "appleenchanted": "enchanted_golden_apple",
                         "appleEnchanted": "enchanted_golden_apple", "clownfish": "tropical_fish",
                         "cooked_fish": "cooked_cod", "fish": "cod", "reeds": "sugar_cane", "speckled_melon":
@@ -94,7 +98,12 @@ BEDROCK_TO_JAVA_NAME = {"netherbrick": "nether_brick", "appleenchanted": "enchan
                         "fireworkscharge": "firework_star", "boat": "oak_boat", "wooden_door": "oak_door",
                         "sign": "oak_sign", "turtle_shell_piece": "turtle_scute", "chorus_fruit_popped":
                         "popped_chorus_fruit", "map": "filled_map", "emptymap": "map", "empty_map": "map",
-                        "muttoncooked": "cooked_mutton", "muttonraw": "mutton", "short_grass": "grass"}
+                        "muttoncooked": "cooked_mutton", "muttonraw": "mutton", "short_grass": "grass",
+                        "frame": "item_frame", "glow_frame": "glow_item_frame",
+                        "zombie_pigman_spawn_egg": "zombified_piglin_spawn_egg"}
+# 1.11 entity ids (spawn eggs of Java 1.11 - 1.12) -> 1.13+ names
+_ENTITY_113 = {"vindication_illager": "vindicator", "evocation_illager": "evoker", "illusion_illager": "illusioner",
+               "zombie_pigman": "zombified_piglin", "villager_golem": "iron_golem", "snowman": "snow_golem"}
 
 log = logging.getLogger(__name__)
 
@@ -192,7 +201,7 @@ def legacy_to_flat(iid: int, dmg: int) -> Optional[str]:
         return SKULLS[min(dmg, 5)]
     if iid == 383:
         e = LEGACY_EGG.get(dmg)
-        return f"{e}_spawn_egg" if e else None
+        return f"{e}_spawn_egg" if e else "spawn_egg"  # Java 1.9+: the mob is in tag.EntityTag
     n = LEGACY_ITEM_RENAMES.get((iid, dmg)) or LEGACY_ITEM_RENAMES.get((iid, None))
     if n:
         return n
@@ -307,7 +316,8 @@ def _is_damageable(name: str) -> bool:
     return name.endswith(("_sword", "_shovel", "_pickaxe", "_axe", "_hoe", "_helmet", "_chestplate", "_leggings",
                           "_boots")) or name in ("bow", "fishing_rod", "flint_and_steel", "shears", "shield",
                                                  "elytra", "carrot_on_a_stick", "trident", "crossbow", "mace",
-                                                 "warped_fungus_on_a_stick", "brush")
+                                                 "warped_fungus_on_a_stick", "brush", "wolf_armor") \
+        or name.endswith("_spear")
 
 
 def from_legacy(t: nbt.CompoundTag) -> Optional[Item]:
@@ -338,6 +348,8 @@ def from_legacy(t: nbt.CompoundTag) -> Optional[Item]:
     tag = nbt.get_tag(t, "tag")
     if tag is not None:
         _read_java_tag(it, tag, LEGACY_ENCH)
+    if it["name"] == "spawn_egg":  # an egg without its mob spawns nothing
+        return None
     return it
 
 
@@ -363,7 +375,8 @@ def _read_java_tag(it: Item, tag: nbt.CompoundTag, ench_table):
     ent = nbt.get_tag(tag, "EntityTag")
     if ent is not None and it["name"] == "spawn_egg":
         e = str(nbt.get(ent, "id", "pig")).split(":", 1)[-1]
-        it["name"] = f"{ids.ENTITY_OLD_TO_NEW.get(e, e)}_spawn_egg"
+        e = ids.ENTITY_OLD_TO_NEW.get(e, e)
+        it["name"] = f"{_ENTITY_113.get(e, e)}_spawn_egg"
 
 
 def to_legacy(it: Item) -> Optional[nbt.CompoundTag]:
@@ -416,7 +429,9 @@ def to_legacy(it: Item) -> Optional[nbt.CompoundTag]:
 
 # ------------------------------------------------------------------ Java 1.13+
 # older Java names of items (see _JAVA_RENAMES) that no later version uses for anything else
-_JAVA_OLD_NAMES = {"sign": "oak_sign", "grass_path": "dirt_path", "scute": "turtle_scute",
+_JAVA_OLD_NAMES = {"sign": "oak_sign", "grass_path": "dirt_path", "scute": "turtle_scute", "rose_red": "red_dye",
+                   "cactus_green": "green_dye", "dandelion_yellow": "yellow_dye",
+                   "zombie_pigman_spawn_egg": "zombified_piglin_spawn_egg",
                    "semi_weathered_cut_copper": "weathered_cut_copper",
                    "semi_weathered_cut_copper_slab": "weathered_cut_copper_slab",
                    "semi_weathered_cut_copper_stairs": "weathered_cut_copper_stairs"}
@@ -459,12 +474,34 @@ def _read_components(it: Item, c: nbt.CompoundTag):
         p = pc.py_data if isinstance(pc, nbt.StringTag) else nbt.get(pc, "potion")
         if p:
             it["potion"] = str(p).split(":", 1)[-1]
+    lore = g("lore")
+    if lore is not None:
+        it["lore"] = [_component_text(x) for x in lore]
+    for key in ("written_book_content", "writable_book_content"):
+        book = g(key)
+        if book is not None:
+            it["pages"] = [_component_text(nbt.get_tag(p, "raw") if isinstance(p, nbt.CompoundTag) else p)
+                           for p in (nbt.get_tag(book, "pages") or [])]
+            if key == "written_book_content":
+                title = nbt.get_tag(book, "title")
+                it["title"] = str(nbt.get(title, "raw", "") if isinstance(title, nbt.CompoundTag) else
+                                  (title.py_data if title is not None else ""))
+                it["author"] = str(nbt.get(book, "author", "") or "")
     dc = g("dyed_color")
     if dc is not None:
         it["color"] = int(dc.py_data) if not isinstance(dc, nbt.CompoundTag) else int(nbt.get(dc, "rgb", 0))
     mid = g("map_id")
     if mid is not None:
         it["map"] = int(mid.py_data)
+
+
+def _component_text(tag) -> str:
+    """Plain text of a text component: a JSON string (1.20.5 - 1.21.4) or NBT (1.21.5+)."""
+    if tag is None:
+        return ""
+    if isinstance(tag, nbt.StringTag):
+        return plain_text(tag.py_data)
+    return plain_text(json.dumps(_snbt_text(tag)))
 
 
 def _snbt_text(tag):
@@ -478,7 +515,10 @@ def _snbt_text(tag):
 # Item renames of Minecraft's data fixers after 1.13: (data version, old name, new name).  Data
 # older than that version is renamed when the game upgrades it, data as new or newer must carry
 # the new name: an item is written with the name that, once upgraded, is the intended one.
-_JAVA_RENAMES = ((2680, "grass_path", "dirt_path"),
+_JAVA_RENAMES = ((1901, "rose_red", "red_dye"), (1901, "cactus_green", "green_dye"),  # 1.14
+                 (1901, "dandelion_yellow", "yellow_dye"),
+                 (2509, "zombie_pigman_spawn_egg", "zombified_piglin_spawn_egg"),  # 1.16
+                 (2680, "grass_path", "dirt_path"),
                  # a 1.17 snapshot shifted the copper names: semi_weathered -> weathered -> oxidized
                  (2690, "semi_weathered_cut_copper", "weathered_cut_copper"),
                  (2690, "semi_weathered_cut_copper_slab", "weathered_cut_copper_slab"),
@@ -486,16 +526,34 @@ _JAVA_RENAMES = ((2680, "grass_path", "dirt_path"),
                  (3692, "grass", "short_grass"), (3800, "scute", "turtle_scute"), (4541, "chain", "iron_chain"))
 
 
+def java_ench_name(name: str, data_version: int) -> str:
+    """An enchantment's name as Java data of ``data_version`` names it."""
+    for dv, old, new in _JAVA_ENCH_RENAMES:
+        if data_version >= dv and name == old:
+            return new
+        if data_version < dv and name == new:
+            return old
+    return name
+
+
 def java_item_name(name: str, data_version: int) -> str:
     """``name`` (a WorldBridge name, 1.13 - 1.21) as Java data of ``data_version`` names it."""
     if data_version < 1952 and name == "oak_sign":  # before 1.14
         return "sign"
+    if data_version < 1952 and name == "smooth_stone_slab":  # 1.13's stone slab is the smooth one
+        return "stone_slab"
     for dv, old, new in _JAVA_RENAMES:
         if data_version >= dv and name == old:
             name = new
         elif data_version < dv and name == new:
             name = old
     return name
+
+
+# PyMCTranslate's Java 1.21.5 (the DataVersion its chunks are written with): every DataFixer step of
+# 1.21.5 (text components as NBT, flattened enchantments, dyed_color as a number) lies below it, so
+# data written with it must already be in the 1.21.5 format
+TEXT_NBT_DV = 4324
 
 
 def to_java_modern(it: Item, data_version: int) -> nbt.CompoundTag:
@@ -510,11 +568,29 @@ def to_java_modern(it: Item, data_version: int) -> nbt.CompoundTag:
             comps["minecraft:damage"] = nbt.IntTag(int(it["damage"]))
         for key, src in (("minecraft:enchantments", "ench"), ("minecraft:stored_enchantments", "stored")):
             if it.get(src):
-                lv = nbt.CompoundTag({"minecraft:" + n: nbt.IntTag(l) for n, l in it[src]})
-                comps[key] = lv if data_version >= 4325 else nbt.CompoundTag({"levels": lv})  # 1.21.5 flattened
+                lv = nbt.CompoundTag({"minecraft:" + java_ench_name(n, data_version): nbt.IntTag(l) for n, l in it[src]})
+                comps[key] = lv if data_version >= TEXT_NBT_DV else nbt.CompoundTag({"levels": lv})  # 1.21.5 flattened
+        nbt_text = data_version >= TEXT_NBT_DV  # 1.21.5: text components are NBT, a plain string is plain text
+
+        def text(s):
+            return nbt.StringTag(s if nbt_text else json_text(s))
+
         if it.get("custom_name"):
-            comps["minecraft:custom_name"] = (nbt.StringTag(it["custom_name"]) if data_version >= 4325
-                                              else nbt.StringTag(json_text(it["custom_name"])))
+            comps["minecraft:custom_name"] = text(it["custom_name"])
+        if it.get("lore"):
+            comps["minecraft:lore"] = nbt.ListTag([text(x) for x in it["lore"]], 8)
+        if it.get("color") is not None:
+            comps["minecraft:dyed_color"] = (nbt.IntTag(int(it["color"])) if nbt_text
+                                             else nbt.CompoundTag({"rgb": nbt.IntTag(int(it["color"]))}))
+        if it.get("pages") is not None and name in ("written_book", "writable_book"):
+            if name == "written_book":
+                comps["minecraft:written_book_content"] = nbt.CompoundTag({
+                    "pages": nbt.ListTag([nbt.CompoundTag({"raw": text(p)}) for p in it["pages"]], 10),
+                    "title": nbt.CompoundTag({"raw": nbt.StringTag(it.get("title") or "")}),
+                    "author": nbt.StringTag(it.get("author") or "")})
+            else:
+                comps["minecraft:writable_book_content"] = nbt.CompoundTag({
+                    "pages": nbt.ListTag([nbt.CompoundTag({"raw": nbt.StringTag(p)}) for p in it["pages"]], 10)})
         if it.get("potion"):
             comps["minecraft:potion_contents"] = nbt.CompoundTag({"potion": nbt.StringTag("minecraft:" + it["potion"])})
         if it.get("map") is not None and name == "filled_map":
@@ -527,10 +603,12 @@ def to_java_modern(it: Item, data_version: int) -> nbt.CompoundTag:
     if it.get("damage"):
         tag["Damage"] = nbt.IntTag(int(it["damage"]))
     if it.get("ench"):
-        tag["Enchantments"] = nbt.ListTag([nbt.CompoundTag({"id": nbt.StringTag("minecraft:" + n), "lvl": nbt.ShortTag(l)})
+        tag["Enchantments"] = nbt.ListTag([nbt.CompoundTag({"id": nbt.StringTag("minecraft:" + java_ench_name(n, data_version)),
+                                                             "lvl": nbt.ShortTag(l)})
                                            for n, l in it["ench"]], 10)
     if it.get("stored"):
-        tag["StoredEnchantments"] = nbt.ListTag([nbt.CompoundTag({"id": nbt.StringTag("minecraft:" + n), "lvl": nbt.ShortTag(l)})
+        tag["StoredEnchantments"] = nbt.ListTag([nbt.CompoundTag({"id": nbt.StringTag("minecraft:" + java_ench_name(n, data_version)),
+                                                                   "lvl": nbt.ShortTag(l)})
                                                  for n, l in it["stored"]], 10)
     disp = nbt.CompoundTag()
     if it.get("custom_name"):
