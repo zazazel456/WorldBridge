@@ -143,9 +143,9 @@ class JavaNumericWorld(WorldSource):
         icon = os.path.join(self.path, "icon.png")
         if os.path.exists(icon):
             info.thumbnail_png = open(icon, "rb").read()
-        names = {"anvil": "Java Edition 1.2 – 1.12 (Anvil)", "mcregion": "Java Edition Beta 1.3 – 1.1 (McRegion)",
-                 "alpha": "Java Edition Infdev/Alpha – Beta 1.2"}
-        info.source_description = names.get(self.kind, "Java Edition")
+        from ..detect import numeric_label
+
+        info.source_description = numeric_label(self.kind, info.level)
         return info
 
     def _dim_dir(self, dim: int) -> str:

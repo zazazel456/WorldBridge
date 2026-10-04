@@ -318,6 +318,13 @@ def split_compress(data: bytes) -> bytes:
 # ---------------------------------------------------------------- detection
 
 MAIN_NAMES = ("saveData.ms", "savegame.dat", "GAMEDATA", "GAMEDATA.bin", "SAVEDATA")
+# Wii U (Cemu): the save is named after its date, e.g. 250703210031, next to 250703210031.ext (its name)
+_WIIU_RE = re.compile(r"\d{8,14}")
+MAIN_PATTERNS = (
+    re.compile(r"savegame[-_. \w]*\.(dat|wii)", re.I),   # savegame.wii (Wii U), savegame-first.dat, …
+    re.compile(r"GAMEDATA-\d+\.bin", re.I),              # PS Vita saves copied as GAMEDATA-2.bin, …
+    _WIIU_RE,
+)
 
 
 def _has_split_files(folder: str) -> bool:
@@ -336,6 +343,15 @@ def find_main_file(path: str) -> Optional[str]:
     for cand in MAIN_NAMES:
         if cand.lower() in names:
             return os.path.join(path, names[cand.lower()])
+    # other names the saves get (one save per folder: with several the user picks the file)
+    for pattern in MAIN_PATTERNS:
+        found = [n for n in sorted(names.values()) if pattern.fullmatch(n) and os.path.isfile(os.path.join(path, n))]
+        if pattern is _WIIU_RE:
+            found = [n for n in found if n + ".ext" in names.values()] or found
+        if len(found) == 1:
+            return os.path.join(path, found[0])
+        if found:
+            return None
     # Xbox 360 CON packages / single unknown file
     for n in sorted(os.listdir(path)):
         p = os.path.join(path, n)

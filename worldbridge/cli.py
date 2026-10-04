@@ -16,13 +16,16 @@ import argparse
 import os
 import re
 import sys
+import zlib
 
 from . import APP_NAME, __version__, i18n
 from . import amulet_bridge as ab
 from .convert import TargetSpec, convert
 from .detect import detect
 from .i18n import tr
+from .lce.container import LCEFormatError
 from .model import ConversionCancelled, ConversionError, Progress
+from .nbt import NBTError
 
 
 def _parse_version(s: str, family: str = "java"):
@@ -241,6 +244,18 @@ def _early_language(argv) -> None:
 def main(argv=None) -> int:
     _early_language(argv)
     args = build_parser().parse_args(argv)
+    try:
+        return _run(args)
+    except ConversionCancelled:
+        print("\n" + tr("Cancelled"))
+        return 2
+    except (ConversionError, LCEFormatError, NBTError, OSError, EOFError, zlib.error) as ex:
+        # a world that cannot be read: a message, not a traceback
+        print(tr("Error: {error}", error=str(ex) or type(ex).__name__))
+        return 1
+
+
+def _run(args) -> int:
     if args.cmd == "info":
         d = detect(args.path)
         if not d:
