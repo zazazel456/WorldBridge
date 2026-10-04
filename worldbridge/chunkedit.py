@@ -266,7 +266,7 @@ def java_paint(raw: bytes, bid: int) -> Optional[bytes]:
         old = nbt.get_tag(lvl, "Biomes")
         if isinstance(old, nbt.IntArrayTag) and bid < 1000:  # 1.13 - 1.17
             lvl["Biomes"] = nbt.IntArrayTag(np.full(len(old), bid, np.int32))
-        elif bid in bio.JAVA_17 and bid < 256 and (isinstance(old, nbt.ByteArrayTag) or
+        elif bid in bio.JAVA_19 and bid < 256 and (isinstance(old, nbt.ByteArrayTag) or
                                                    "DataVersion" not in root and "Sections" in lvl):
             lvl["Biomes"] = nbt.ByteArrayTag(np.full(256, bid, np.uint8).astype(np.int8))   # 1.2 - 1.12
         else:

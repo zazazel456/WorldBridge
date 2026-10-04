@@ -100,6 +100,23 @@ class Relocation:
             if (x >> 4, z >> 4) == (chunk.cx, chunk.cz):
                 self.top = _amulet_top(chunk, x & 15, z & 15)
 
+    # ------------------------------------------------------------------ canonical block entities / entities
+    def canon_chunk(self, dim: int, cx: int, cz: int, tl: list, el: list) -> Chunk:
+        """Moves the canonical block entities and entities of a source chunk (see tiles / entities);
+        returns where the chunk went."""
+        dx, dz = self.delta(dim)
+        if not (dx or dz):
+            return cx, cz
+        bx, bz = dx * 16, dz * 16
+        for c in list(tl) + list(el):
+            if not isinstance(c, dict):
+                continue
+            for key in ("pos", "tile"):
+                p = c.get(key)
+                if p is not None and len(p) == 3:
+                    c[key] = type(p)((p[0] + bx, p[1], p[2] + bz)) if isinstance(p, (tuple, list)) else p
+        return cx + dx, cz + dz
+
     # ------------------------------------------------------------------ spawn and players
     def _moved(self, dim: int, x: float, z: float) -> Optional[Tuple[float, float]]:
         """Where a point of a moved chunk goes (None: its chunk was not selected)."""

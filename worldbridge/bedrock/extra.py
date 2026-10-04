@@ -404,7 +404,7 @@ class BedrockInjector:
             keys = []
             for c in ent_canon:
                 key, uid = self.ids.next()
-                e = ent.to_bedrock(c, uid, self.player_uid)
+                e = ent.to_bedrock(c, uid, self.player_uid, self.version)
                 if e is None:
                     continue
                 actors.append((key, e))
@@ -530,7 +530,7 @@ def inject_from_hub(hub_dir: str, out_dir: str, version, info: WorldInfo, progre
     _log_injector(inj, progress)
 
 
-def inject_from_java_modern(src: str, out_dir: str, version, info: WorldInfo, progress: Progress):
+def inject_from_java_modern(src: str, out_dir: str, version, info: WorldInfo, progress: Progress, move=None):
     from ..java.modern import iter_modern_extras
 
     inj = BedrockInjector(out_dir, version, progress)
@@ -539,6 +539,8 @@ def inject_from_java_modern(src: str, out_dir: str, version, info: WorldInfo, pr
             tl = [x for x in (t if isinstance(t, dict) else tiles.from_java_modern(t) for t in tiles_raw) if x is not None]
             el = ent.read_list(ents_raw, "java")
             if tl or el:
+                if move is not None:
+                    cx, cz = move.canon_chunk(dim, cx, cz, tl, el)
                 inj.put_chunk(dim, cx, cz, tl, el)
         if info.players:
             inj.put_player(next(iter(info.players.values())), _game_type(info))

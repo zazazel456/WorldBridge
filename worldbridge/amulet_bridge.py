@@ -114,6 +114,26 @@ def latest(platform: str) -> Tuple[int, ...]:
     return versions(platform)[-1]
 
 
+def resolve_version(platform: str, v) -> Tuple[Tuple[int, ...], bool]:
+    """The known ``platform`` version a requested one is written as: (version, exact).
+
+    "26.3" and "1.21" mean 26.3.0 and 1.21.0 (PyMCTranslate would take (26, 3) for the newest
+    version before 26.3.0); a release PyMCTranslate does not list (1.21.11, 1.21.51) is written as
+    the newest one before it, whose data the game upgrades.  ValueError: no such version."""
+    v = tuple(int(x) for x in v)
+    if platform == "bedrock":
+        v = gv.bedrock(v)
+    if len(v) < 3:
+        v = (v + (0, 0, 0))[:3]
+    known = versions(platform)
+    if v in known:
+        return v, True
+    older = [k for k in known if k <= v and k[:2] == v[:2]]
+    if not older:
+        raise ValueError(version_str(v))
+    return older[-1], False
+
+
 def version_str(v) -> str:
     return ".".join(str(x) for x in v)
 

@@ -5,6 +5,12 @@ _SECTIONS = {
     'worldbridge/cli.py': {
         '--move-to moves the selected chunks: give --chunks too':
             '--move-to sposta i chunk selezionati: indica anche --chunks',
+        "--version: '{version}' is not a version number (e.g. 1.20.1 or 26.3)":
+            "--version: '{version}' non è un numero di versione (es. 1.20.1 o 26.3)",
+        "--version: {version} is not a {edition} version WorldBridge knows (see 'worldbridge versions')":
+            "--version: {version} non è una versione {edition} che WorldBridge conosce (vedi 'worldbridge versions')",
+        'Note: {version} is written as {known}, the newest version WorldBridge knows before it; the game upgrades it when the world is opened.':
+            'Nota: {version} viene scritta come {known}, la versione più recente che WorldBridge conosce prima di essa; il gioco la aggiorna all\'apertura del mondo.',
         'DURATION':
             'DURATA',
         'minimum time spent near a chunk to keep it (e.g. 30s, 1m, 5m, 2h or ticks; default 1m)':
@@ -163,6 +169,10 @@ _SECTIONS = {
             "{n} chunk non ancora completati dal gioco (ai margini dell'area esplorata: solo pianificati o roccia nuda) non vengono convertiti: il gioco o il raccordo li generano come si deve.",
         'Copying the world (Minecraft will upgrade it with its own blending)':
             'Copia del mondo (Minecraft lo aggiornerà con il blending ufficiale)',
+        'Copying the world (Minecraft will upgrade it when it is opened)':
+            "Copia del mondo (Minecraft lo aggiornerà all'apertura)",
+        "The target version is the same as the world's or newer: the world is kept as it is, and Minecraft upgrades it with its own upgrade when it is opened.":
+            "La versione di destinazione è uguale a quella del mondo o più recente: il mondo viene mantenuto così com'è e Minecraft lo aggiorna con il proprio aggiornamento all'apertura.",
         'The world is pre-1.18: it is kept as it is; when it is opened, Minecraft runs its own upgrade, blending terrain and biomes.':
             "Il mondo è pre-1.18: viene mantenuto così com'è; all'apertura Minecraft esegue l'aggiornamento ufficiale con blending di terreno e biomi.",
         'Completed':

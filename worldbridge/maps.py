@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from typing import Dict, Iterator, Optional, Tuple
@@ -9,6 +10,8 @@ from typing import Dict, Iterator, Optional, Tuple
 import numpy as np
 
 from . import items, nbt
+
+log = logging.getLogger(__name__)
 
 # Java map base colours (index = colour id; 0 = transparent), in registration order
 BASE_COLORS = [
@@ -139,6 +142,42 @@ def bedrock_maps_as_java(db) -> Dict[str, bytes]:
 
 
 
+def java_map_colors(version) -> int:
+    """How many base map colours (MapColor / MaterialColor) a Java version registers: a colour id past
+    them is a null slot and crashes the game when the map is drawn.  ``version`` is a numeric-era
+    label ("b1.6", "1.8"; None = the 1.12 hub) or a version tuple."""
+    if version is None:
+        return 52
+    if isinstance(version, str):
+        from . import blocks as blk
+
+        r = blk.version_rank(version)
+        return 14 if r < blk.version_rank("1.7") else 36 if r < blk.version_rank("1.12") else 52
+    v = tuple(version)
+    if v < (1, 7):
+        return 14                              # Beta 1.6 - 1.6.4
+    if v < (1, 12):
+        return 36
+    if v < (1, 16):
+        return 52                              # terracotta colours (1.12)
+    if v < (1, 17):
+        return 59                              # crimson / warped (1.16)
+    return len(BASE_COLORS)                    # deepslate, raw iron, glow lichen (1.17)
+
+
+def cap_colors(colors, max_base: int) -> np.ndarray:
+    """Map colour bytes with every colour id from ``max_base`` on replaced by the nearest older one."""
+    cols = np.asarray(colors).astype(np.uint8)
+    bad = (cols >> 2) >= max_base
+    if bad.any():
+        cols = cols.copy()
+        pal = PALETTE[4: max_base * 4].astype(np.int32)
+        px = PALETTE[cols[bad]].astype(np.int32)
+        d = ((px[:, None, :3] - pal[None, :, :3]) ** 2).sum(axis=2)
+        cols[bad] = d.argmin(axis=1).astype(np.uint8) + 4
+    return cols
+
+
 def legacy_map_data(data: nbt.CompoundTag, max_base: int = 52) -> nbt.CompoundTag:
     """A map ``data`` compound readable by old games: numeric dimension, only the first ``max_base``
     base colours (Java 1.12 has 52, Java 1.7 - 1.11 and LCE 36; a newer colour id crashes them)."""
@@ -153,15 +192,30 @@ def legacy_map_data(data: nbt.CompoundTag, max_base: int = 52) -> nbt.CompoundTa
     out.setdefault("scale", nbt.ByteTag(0))
     out.setdefault("width", nbt.ShortTag(128))
     out.setdefault("height", nbt.ShortTag(128))
-    cols = np.asarray(data["colors"], np.uint8).copy()
-    bad = (cols >> 2) >= max_base
-    if bad.any():
-        pal = PALETTE[4: max_base * 4].astype(np.int32)
-        px = PALETTE[cols[bad]].astype(np.int32)
-        d = ((px[:, None, :3] - pal[None, :, :3]) ** 2).sum(axis=2)
-        cols[bad] = d.argmin(axis=1).astype(np.uint8) + 4
-    out["colors"] = nbt.ByteArrayTag(cols.view(np.int8))
+    out["colors"] = nbt.ByteArrayTag(cap_colors(data["colors"], max_base).view(np.int8))
     return out
+
+
+def capped_map_file(blob: bytes, max_base: int, legacy: bool = False) -> bytes:
+    """A ``data/map_<n>.dat`` file whose colours the target game knows (``max_base`` base colours).
+    ``legacy``: also rebuilt for a numeric-era game (see legacy_map_data).  The file is returned as
+    it is when nothing needs to change or it cannot be read."""
+    try:
+        named = nbt.load(blob, compressed=None)
+        root = named.tag
+        data = nbt.get_tag(root, "data")
+        if not isinstance(data, nbt.CompoundTag) or "colors" not in data:
+            return blob
+        if legacy:
+            return java_map_file(legacy_map_data(data, max_base))
+        cols = np.asarray(data["colors"]).astype(np.uint8)
+        if not ((cols >> 2) >= max_base).any():
+            return blob
+        data["colors"] = nbt.ByteArrayTag(cap_colors(cols, max_base).view(np.int8))
+        return nbt.dump(root, named.name or "", compressed=True)
+    except Exception:  # noqa: BLE001
+        log.debug("map file not capped", exc_info=True)
+        return blob
 
 
 def legacy_map_files(world: str, max_base: int = 52) -> Dict[str, bytes]:

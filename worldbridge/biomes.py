@@ -1,9 +1,9 @@
 """The biomes WorldBridge lets the user paint on a selection of chunks (map tab: "Bioma dei chunk
 selezionati"), and which of them each game has.
 
-A biome is kept as its numeric id: the ids of Java 1.12 (0 - 39 and the "mutated" 129 - 167), the ones
-Java 1.13 - 1.17 added (40 - 50, 127, 168 - 175) and, for the biomes that only exist from 1.18 on and
-never had a number, ids from 1000.  The list offered, and the names shown, follow the game of the
+A biome is kept as its numeric id: the ids of Java 1.12 (0 - 39, the "mutated" 129 - 167 and the void,
+127, from 1.9), the ones Java 1.13 - 1.17 added (40 - 50, 168 - 175) and, for the biomes that only exist
+from 1.18 on and never had a number, ids from 1000.  The list offered, and the names shown, follow the game of the
 world being edited or of the conversion's target: LCE and Java up to 1.12 with their English names
 ("Swampland", "Extreme Hills"...), Java 1.13 - 1.17 with the 1.13 ids, 1.18+ with the current ones.
 """
@@ -80,6 +80,7 @@ LEGACY_NAMES: Dict[int, str] = {
     151: "Jungle Edge M", 155: "Birch Forest M", 156: "Birch Forest Hills M", 157: "Roofed Forest M",
     158: "Cold Taiga M", 160: "Mega Spruce Taiga", 161: "Mega Spruce Taiga Hills", 162: "Extreme Hills+ M",
     163: "Savanna M", 164: "Savanna Plateau M", 165: "Mesa (Bryce)", 166: "Mesa Plateau F M", 167: "Mesa Plateau M",
+    127: "The Void",
 }
 LCE_NAMES = {**LEGACY_NAMES, 8: "Hell", 9: "Sky", 129: "Sunflowers Plains", 140: "Ice Spikes"}
 
@@ -91,7 +92,8 @@ MODERN_NAMES: Dict[int, str] = {
 }
 _MUTATED = (129, 130, 131, 132, 133, 134, 140, 149, 151, 155, 156, 157, 158, 160, 161, 162, 163, 164, 165, 166, 167)
 JAVA_12 = tuple(range(0, 23))                                         # Java 1.2 - 1.6
-JAVA_17 = tuple(range(0, 40)) + _MUTATED                              # Java 1.7 - 1.12
+JAVA_17 = tuple(range(0, 40)) + _MUTATED                              # Java 1.7 - 1.8
+JAVA_19 = JAVA_17 + (127,)                                            # Java 1.9 - 1.12: the void
 JAVA_113 = JAVA_17 + tuple(range(40, 51)) + (127,)
 JAVA_114 = JAVA_113 + (168, 169)
 JAVA_116 = JAVA_114 + (170, 171, 172, 173)
@@ -108,8 +110,10 @@ def _java_list(version: Sequence[int]) -> Tuple[int, ...]:
         return ()                                     # McRegion and older: the biomes are not stored
     if v < (1, 7):
         return JAVA_12
-    if v < (1, 13):
+    if v < (1, 9):
         return JAVA_17
+    if v < (1, 13):
+        return JAVA_19
     if v < (1, 14):
         return JAVA_113
     if v < (1, 16):

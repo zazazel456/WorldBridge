@@ -25,6 +25,7 @@ from .. import ids, items, nbt
 from ..lce.chunk import array_to_nibbles, java128_to_yzx, nibbles_to_array, yzx_to_java128
 from ..model import NETHER, OVERWORLD, THE_END, NumericChunk, Progress, WorldInfo, WorldSource
 from ..entities import hanging_to_modern
+from ..maps import capped_map_file, java_map_colors
 from . import oldcontent
 from .oldcontent import OldContent
 from .region import ChunkIndex, JavaRegion, RegionWriter
@@ -521,8 +522,11 @@ class JavaNumericWriter:
             with open(os.path.join(self.out, "icon.png"), "wb") as f:
                 f.write(info.thumbnail_png)
         data_dir = os.path.join(self.out, "data")
+        max_base = java_map_colors(self.opt.old_version())  # colour ids the target registers
         for name, blob in info.extra_files.items():
             if name.startswith("data/map_") or name == "data/idcounts.dat":
+                if name.startswith("data/map_"):
+                    blob = capped_map_file(blob, max_base)
                 os.makedirs(data_dir, exist_ok=True)
                 with open(os.path.join(self.out, name), "wb") as f:
                     f.write(blob)

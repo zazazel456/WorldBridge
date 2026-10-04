@@ -19,11 +19,21 @@ TO_BEDROCK = {"zombified_piglin": "zombie_pigman", "zombie_pigman": "zombie_pigm
               "commandblock_minecart": "command_block_minecart", "command_block_minecart": "command_block_minecart",
               "ender_crystal": "ender_crystal", "end_crystal": "ender_crystal", "tnt": "tnt", "falling_block": "falling_block",
               "evocation_illager": "evocation_illager", "evoker": "evocation_illager", "vindication_illager": "vindicator",
-              "item_frame": None, "glow_item_frame": None, "leash_knot": "leash_knot", "fireworks_rocket": "fireworks_rocket"}
+              "item_frame": None, "glow_item_frame": None, "leash_knot": "leash_knot", "fireworks_rocket": "fireworks_rocket",
+              "firework_rocket": "fireworks_rocket", "tropical_fish": "tropicalfish", "trident": "thrown_trident",
+              "potion": "splash_potion", "experience_bottle": "xp_bottle", "eye_of_ender": "eye_of_ender_signal",
+              "evoker_fangs": "evocation_fang", "fishing_bobber": "fishing_hook"}
 FROM_BEDROCK = {"zombie_pigman": "zombified_piglin", "villager_v2": "villager", "villager": "villager",
                 "zombie_villager_v2": "zombie_villager", "xp_orb": "experience_orb", "evocation_illager": "evoker",
                 "command_block_minecart": "command_block_minecart", "ender_crystal": "end_crystal",
-                "iron_golem": "iron_golem", "snow_golem": "snow_golem"}
+                "iron_golem": "iron_golem", "snow_golem": "snow_golem", "tropicalfish": "tropical_fish",
+                "thrown_trident": "trident", "splash_potion": "potion", "lingering_potion": "potion",
+                "xp_bottle": "experience_bottle", "eye_of_ender_signal": "eye_of_ender", "evocation_fang": "evoker_fangs",
+                "fishing_hook": "fishing_bobber", "fireworks_rocket": "firework_rocket", "vindicator": "vindicator"}
+# boats: Java <= 1.21.1 "boat" + Type, Java 1.21.2+ one id per wood, Bedrock "boat" + Variant
+BOAT_WOODS = ("oak", "spruce", "birch", "jungle", "acacia", "dark_oak", "mangrove", "bamboo", "cherry", "pale_oak")
+_BOAT_IDS = {f"{w}_{k}": (k if k in ("boat", "chest_boat") else k.replace("raft", "boat"), w)
+             for w in BOAT_WOODS for k in (("raft", "chest_raft") if w == "bamboo" else ("boat", "chest_boat"))}
 # 1.13 -> 1.11 names for the legacy writer
 TO_OLDNEW = {"zombified_piglin": "zombie_pigman", "iron_golem": "villager_golem", "snow_golem": "snowman",
              "experience_orb": "xp_orb", "end_crystal": "ender_crystal", "evoker": "evocation_illager",
@@ -43,6 +53,8 @@ PAINT_SIZE = {"Pool": (2, 1), "Courbet": (2, 1), "Sea": (2, 1), "Sunset": (2, 1)
               "Wanderer": (1, 2), "Graham": (1, 2), "Match": (2, 2), "Bust": (2, 2), "Stage": (2, 2), "Void": (2, 2),
               "SkullAndRoses": (2, 2), "Wither": (2, 2), "Fighters": (4, 2), "Pointer": (4, 4), "Pigscene": (4, 4),
               "BurningSkull": (4, 4), "Skeleton": (4, 3), "DonkeyKong": (4, 3)}
+
+_FROM_OLDNEW = {v: k for k, v in TO_OLDNEW.items()}
 
 # ------------------------------------------------------------------ hanging entities
 # Paintings and item frames are stored in two layouts:
@@ -128,7 +140,44 @@ def hanging_to_old(e: nbt.CompoundTag) -> nbt.CompoundTag:
 
 
 MOB_KEEP = ("Age", "InLove", "Sheared", "Color", "Size", "powered", "Saddle", "Sitting", "CollarColor", "Variant",
-            "Profession", "CatType", "Type", "IsChickenJockey", "Anger", "PlayerCreated", "Tame", "Temper")
+            "Profession", "CatType", "Type", "IsChickenJockey", "Anger", "PlayerCreated", "Tame", "Temper", "VillagerData",
+            "Career", "CareerLevel")
+
+
+# ------------------------------------------------------------------ villager professions
+# Java <= 1.13 (and LCE): Profession + Career numbers; Java 1.14+: VillagerData.  The mapping is the
+# game's own upgrade (VillagerProfessionFix / VillagerDataFix).
+_PROFESSIONS = {0: {2: "fisherman", 3: "shepherd", 4: "fletcher", None: "farmer"},
+                1: {2: "cartographer", None: "librarian"}, 2: {None: "cleric"},
+                3: {2: "weaponsmith", 3: "toolsmith", None: "armorer"}, 4: {2: "leatherworker", None: "butcher"},
+                5: {None: "nitwit"}}
+_PROFESSION_OLD = {name: (p, car if car is not None else 1) for p, cars in _PROFESSIONS.items() for car, name in cars.items()}
+
+
+def villager_data(extra: dict) -> Optional[nbt.CompoundTag]:
+    """VillagerData (Java 1.14+) of a villager's kept data: its own, or one from Profession / Career."""
+    vd = extra.get("VillagerData")
+    if isinstance(vd, nbt.CompoundTag):
+        return nbt.copy(vd)
+    if "Profession" not in extra:
+        return None
+    prof = int(extra["Profession"].py_data)
+    career = int(extra["Career"].py_data) if "Career" in extra else None
+    cars = _PROFESSIONS.get(prof)
+    name = (cars.get(career) or cars[None]) if cars else "none"
+    level = int(extra["CareerLevel"].py_data) if "CareerLevel" in extra else 1
+    return nbt.CompoundTag({"profession": nbt.StringTag("minecraft:" + name), "level": nbt.IntTag(max(1, min(5, level))),
+                            "type": nbt.StringTag("minecraft:plains")})
+
+
+def legacy_profession(vd: nbt.CompoundTag) -> dict:
+    """Profession / Career / CareerLevel (Java <= 1.13) of a VillagerData."""
+    name = str(nbt.get(vd, "profession", "")).split(":", 1)[-1]
+    if name not in _PROFESSION_OLD:
+        return {}
+    prof, career = _PROFESSION_OLD[name]
+    return {"Profession": nbt.IntTag(prof), "Career": nbt.IntTag(career),
+            "CareerLevel": nbt.IntTag(int(nbt.get(vd, "level", 1) or 1))}
 
 
 # ------------------------------------------------------------------ owners of tamed animals
@@ -245,6 +294,7 @@ def from_legacy(e: nbt.CompoundTag) -> Optional[dict]:
     c["name"] = FROM_BEDROCK.get(n, n) if n in ("zombie_pigman", "villager_golem", "snowman", "xp_orb", "ender_crystal") else n
     c["name"] = {"villager_golem": "iron_golem", "snowman": "snow_golem", "xp_orb": "experience_orb",
                  "ender_crystal": "end_crystal", "zombie_pigman": "zombified_piglin"}.get(c["name"], c["name"])
+    c["name"] = _FROM_OLDNEW.get(c["name"], c["name"])  # 1.11 ids (vindication_illager...) -> 1.13
     _read_java_specific(c, e, "legacy")
     _read_owner(c, e)
     return c
@@ -304,9 +354,73 @@ def _read_java_specific(c: dict, e: nbt.CompoundTag, src: str):
     for key in ("Items",):
         if key in e:
             c["items"] = [it for it in (reader(t) for t in e[key]) if it]
-    for key in ("Equipment", "ArmorItems", "HandItems"):
-        if key in e:
-            c.setdefault("equipment", {})[key] = [reader(t) if len(t) else None for t in e[key]]
+    _read_java_equipment(c, e, reader)
+
+
+# Canonical equipment: c["equip"] = {"hand": [main, off], "armor": [feet, legs, chest, head],
+# "saddle": item, "body": item} (canonical items or None), read from every Java layout:
+#   Java <= 1.8 and LCE: "Equipment" [hand, feet, legs, chest, head]
+#   Java 1.9 - 1.21.4:   "HandItems" [main, off], "ArmorItems" [feet .. head]; horses "SaddleItem" and
+#                        "ArmorItem" (1.20.5: "body_armor_item"), llamas "DecorItem"
+#   Java 1.21.5+:        "equipment" {mainhand, offhand, feet, legs, chest, head, body, saddle}
+_EQUIP_121 = (("mainhand", "hand", 0), ("offhand", "hand", 1), ("feet", "armor", 0), ("legs", "armor", 1),
+              ("chest", "armor", 2), ("head", "armor", 3))
+
+
+def _read_java_equipment(c: dict, e: nbt.CompoundTag, reader) -> None:
+    def item(t):
+        return reader(t) if isinstance(t, nbt.CompoundTag) and len(t) and "id" in t else None
+
+    eq = {"hand": [None, None], "armor": [None, None, None, None], "saddle": None, "body": None}
+    old = nbt.get_tag(e, "Equipment")
+    if isinstance(old, nbt.ListTag) and len(old):
+        lst = [item(t) for t in old]
+        eq["hand"][0] = lst[0]
+        for i, it in enumerate(lst[1:5]):
+            eq["armor"][i] = it
+    for key, slot in (("HandItems", "hand"), ("ArmorItems", "armor")):
+        lst = nbt.get_tag(e, key)
+        if isinstance(lst, nbt.ListTag):
+            for i, t in enumerate(list(lst)[:len(eq[slot])]):
+                eq[slot][i] = item(t)
+    new = nbt.get_tag(e, "equipment")
+    if isinstance(new, nbt.CompoundTag):
+        for key, slot, i in _EQUIP_121:
+            eq[slot][i] = item(nbt.get_tag(new, key))
+        eq["body"] = item(nbt.get_tag(new, "body"))
+        eq["saddle"] = item(nbt.get_tag(new, "saddle"))
+    eq["saddle"] = eq["saddle"] or item(nbt.get_tag(e, "SaddleItem"))
+    eq["body"] = eq["body"] or item(nbt.get_tag(e, "body_armor_item")) or item(nbt.get_tag(e, "ArmorItem")) or \
+        item(nbt.get_tag(e, "DecorItem"))
+    if any(eq["hand"]) or any(eq["armor"]) or eq["saddle"] or eq["body"]:
+        c["equip"] = eq
+
+
+def _write_java_equipment(e: nbt.CompoundTag, c: dict, write) -> None:
+    """Equipment in the Java 1.9 - 1.20.4 layout (the game upgrades it); ``write``: item writer."""
+    eq = c.get("equip")
+    if not eq:
+        return
+
+    def stack(it):
+        t = write(it) if it else None
+        if t is None:
+            return nbt.CompoundTag()
+        t.pop("Slot", None)
+        return t
+
+    if any(eq["hand"]) or any(eq["armor"]):
+        e["HandItems"] = nbt.ListTag([stack(it) for it in eq["hand"]], 10)
+        e["ArmorItems"] = nbt.ListTag([stack(it) for it in eq["armor"]], 10)
+    if c["name"] in RIDEABLE or c["name"] in ("horse", "donkey", "mule", "skeleton_horse", "zombie_horse"):
+        if eq.get("saddle"):
+            saddle = stack(eq["saddle"])
+            if len(saddle):
+                e["SaddleItem"] = saddle
+        if eq.get("body"):
+            body = stack(eq["body"])
+            if len(body):
+                e["DecorItem" if c["name"] in ("llama", "trader_llama") else "ArmorItem"] = body
 
 
 def from_java_modern(e: nbt.CompoundTag) -> Optional[dict]:
@@ -319,7 +433,10 @@ def from_java_modern(e: nbt.CompoundTag) -> Optional[dict]:
     if n == "player":
         return None
     c = _common(e)
-    c["name"] = n
+    c["name"] = _FROM_OLDNEW.get(n, n)
+    if n in _BOAT_IDS:  # Java 1.21.2+: oak_boat... -> boat + Type (the game splits it again)
+        c["name"], wood = _BOAT_IDS[n]
+        c["extra"]["Type"] = nbt.StringTag(wood)
     _read_java_specific(c, e, "java")
     _read_owner(c, e)
     return c
@@ -349,6 +466,9 @@ def from_bedrock(e: nbt.CompoundTag) -> Optional[dict]:
         c["extra"]["Color"] = nbt.ByteTag(int(nbt.get(e, "Color")))
     if nbt.get(e, "Sheared"):
         c["extra"]["Sheared"] = nbt.ByteTag(1)
+    if n in ("boat", "chest_boat"):
+        v = int(nbt.get(e, "Variant", 0) or 0)
+        c["extra"]["Type"] = nbt.StringTag(BOAT_WOODS[v] if 0 <= v < len(BOAT_WOODS) else "oak")
     if nbt.get(e, "IsTamed"):
         c["tamed"] = True
         owner = int(nbt.get(e, "OwnerNew", nbt.get(e, "OwnerID", -1)) or -1)
@@ -372,6 +492,15 @@ def from_bedrock(e: nbt.CompoundTag) -> Optional[dict]:
         c["xp"] = int(nbt.get(e, "experience value", 1) or 1)
     if "Items" in e:
         c["items"] = [it for it in (items.from_bedrock(t) for t in e["Items"]) if it]
+
+    def stack(t):
+        return items.from_bedrock(t) if isinstance(t, nbt.CompoundTag) and str(nbt.get(t, "Name", "") or "") else None
+
+    hand = [stack((nbt.get_tag(e, k) or [None])[0]) for k in ("Mainhand", "Offhand")]
+    armor = [stack(t) for t in list(nbt.get_tag(e, "Armor") or [])[:4]]
+    armor = (armor + [None] * 4)[:4][::-1]                  # Bedrock: head .. feet; canonical: feet .. head
+    if any(hand) or any(armor):
+        c["equip"] = {"hand": hand, "armor": armor, "saddle": None, "body": None}
     return c
 
 
@@ -408,7 +537,10 @@ def to_legacy(c: dict, allowed: Optional[set] = None) -> Optional[nbt.CompoundTa
         e["CustomName"] = nbt.StringTag(c["custom_name"])
         e["CustomNameVisible"] = nbt.ByteTag(1 if c.get("name_visible") else 0)
     for k, v in (c.get("extra") or {}).items():
-        e[k] = v
+        if k != "VillagerData":
+            e[k] = v
+    if "VillagerData" in (c.get("extra") or {}) and "Profession" not in e:
+        e.update(legacy_profession(c["extra"]["VillagerData"]))
     _write_owner_java(e, c, None)
     if c.get("item") is not None:
         it = items.to_legacy(c["item"])
@@ -439,6 +571,7 @@ def to_legacy(c: dict, allowed: Optional[set] = None) -> Optional[nbt.CompoundTa
         e["Value"] = nbt.ShortTag(c.get("xp", 1))
     if c.get("items"):
         e["Items"] = nbt.ListTag([t for t in (items.to_legacy(it) for it in c["items"]) if t is not None], 10)
+    _write_java_equipment(e, c, items.to_legacy)
     return e
 
 
@@ -462,6 +595,12 @@ def to_java_modern(c: dict, data_version: int) -> Optional[nbt.CompoundTag]:
     for k, v in (c.get("extra") or {}).items():
         if k in ("Age", "Sheared", "Color", "Size", "Saddle", "CollarColor", "Variant", "Sitting", "Tame", "Temper"):
             e[k] = v
+    if name in ("boat", "chest_boat") and "Type" in (c.get("extra") or {}):
+        e["Type"] = c["extra"]["Type"]
+    if name in ("villager", "zombie_villager") and data_version >= 1952:  # 1.14: VillagerData
+        vd = villager_data(c.get("extra") or {})
+        if vd is not None:
+            e["VillagerData"] = vd
     _write_owner_java(e, c, data_version)
     if c.get("item") is not None:
         e["Item"] = items.to_java_modern(c["item"], data_version)
@@ -491,6 +630,7 @@ def to_java_modern(c: dict, data_version: int) -> Optional[nbt.CompoundTag]:
         e["Value"] = nbt.ShortTag(c.get("xp", 1))
     if c.get("items"):
         e["Items"] = nbt.ListTag([items.to_java_modern(it, data_version) for it in c["items"]], 10)
+    _write_java_equipment(e, c, lambda it: items.to_java_modern(it, data_version))
     return e
 
 
@@ -508,8 +648,10 @@ class ActorIds:
         return key, uid
 
 
-def to_bedrock(c: dict, uid: int, owner_uid: Optional[int] = None) -> Optional[nbt.CompoundTag]:
-    """owner_uid: UniqueID of the world's player - a single player world has only one possible owner."""
+def to_bedrock(c: dict, uid: int, owner_uid: Optional[int] = None, version=(1, 21, 0)) -> Optional[nbt.CompoundTag]:
+    """owner_uid: UniqueID of the world's player - a single player world has only one possible owner;
+    version: the Bedrock version written (block items carry its names)."""
+    version = tuple(version)
     if c.get("skip"):
         return None
     name = c["name"]
@@ -540,6 +682,9 @@ def to_bedrock(c: dict, uid: int, owner_uid: Optional[int] = None) -> Optional[n
         e["Color"] = nbt.ByteTag(int(extra["Color"].py_data))
     if "Sheared" in extra:
         e["Sheared"] = nbt.ByteTag(int(extra["Sheared"].py_data))
+    if bname in ("boat", "chest_boat"):
+        wood = str(extra["Type"].py_data) if "Type" in extra else "oak"
+        e["Variant"] = nbt.IntTag(BOAT_WOODS.index(wood) if wood in BOAT_WOODS else 0)
     if c.get("tamed"):
         e["IsTamed"] = nbt.ByteTag(1)
         if owner_uid is not None:
@@ -557,7 +702,7 @@ def to_bedrock(c: dict, uid: int, owner_uid: Optional[int] = None) -> Optional[n
                                                         "DefaultMax": nbt.FloatTag(max(h, 1.0)), "DefaultMin": nbt.FloatTag(0),
                                                         "Min": nbt.FloatTag(0)})], 10)
     if bname == "item":
-        it = items.to_bedrock(c["item"], (1, 21, 0)) if c.get("item") else None
+        it = items.to_bedrock(c["item"], version) if c.get("item") else None
         if it is None:
             return None
         if "Slot" in it:
@@ -573,7 +718,20 @@ def to_bedrock(c: dict, uid: int, owner_uid: Optional[int] = None) -> Optional[n
     if bname == "xp_orb":
         e["experience value"] = nbt.IntTag(c.get("xp", 1))
     if c.get("items"):
-        e["Items"] = nbt.ListTag([t for t in (items.to_bedrock(it, (1, 21, 0)) for it in c["items"]) if t is not None], 10)
+        e["Items"] = nbt.ListTag([t for t in (items.to_bedrock(it, version) for it in c["items"]) if t is not None], 10)
+    eq = c.get("equip")
+    if eq and (any(eq["hand"]) or any(eq["armor"])):
+        def stack(it):
+            t = items.to_bedrock(it, version) if it else None
+            if t is None:
+                return nbt.CompoundTag({"Name": nbt.StringTag(""), "Count": nbt.ByteTag(0), "Damage": nbt.ShortTag(0),
+                                        "WasPickedUp": nbt.ByteTag(0)})
+            t.pop("Slot", None)
+            return t
+
+        e["Mainhand"] = nbt.ListTag([stack(eq["hand"][0])], 10)
+        e["Offhand"] = nbt.ListTag([stack(eq["hand"][1])], 10)
+        e["Armor"] = nbt.ListTag([stack(it) for it in reversed(eq["armor"])], 10)  # head, chest, legs, feet
     return e
 
 

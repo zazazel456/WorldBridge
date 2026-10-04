@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased – review against real worlds (alpha)
+
+A full review of the code with 110 real worlds downloaded from the web (Java Classic → 26.3, Bedrock
+1.1 → 1.26.40, PE 0.x, LCE on PS3 / PS4 / Vita / Wii U / Xbox 360). Fixed so far:
+
+**Java, by version**
+- **Java 1.13+ → the same or a newer Java lost book text, lore, leather dye** and other item data,
+  on the default route too: the world is now copied and upgraded by the game itself (1.18+ targets,
+  or without the ring).
+- **1.20.5+ items**: lore, dyed colour, written and writable books are written and read.
+- **Java 1.21.5**: names, enchantments and sign text were written in the old format under the
+  1.21.5 DataVersion (shown as raw JSON, enchantments invalid); named chests showed `{"text": …}`
+  on every version from 1.21.5.
+- **Mob equipment was never written to Java 1.13+**: armour, held items, saddles, horse armour,
+  llama decor and villager professions now go through every route (Java of every era, LCE, Bedrock).
+- **Java 1.13 – 1.16 targets got every entity twice**; `--move-to` lost the entities and block
+  entities on the Java 1.13+ and Bedrock routes.
+- **LZ4-compressed regions** (`region-file-compression=lz4`, 1.20.5+) lost chests, signs and mobs;
+  chunks over 1 MiB were dropped instead of written to `.mcc` files.
+- **`--version 26.3` wrote 26.2** (and `1.21` wrote 1.20.5): short versions now mean x.y.0;
+  releases WorldBridge does not list (1.21.11) are written as the nearest earlier one with a note,
+  unknown versions are refused with a clear message.
+
+**Content tables**
+- 1.13 dye and stone-slab names, 1.13 – 1.15 zombie pigman eggs, Java 1.9 – 1.12 spawn eggs (were
+  dropped), 1.11 mob ids (evokers, vindicators, illusioners vanished), `sweeping` /
+  `sweeping_edge` by version, Bedrock ids that differ (`frame`, `wooden_door`, `empty_map`,
+  `tropicalfish`, `thrown_trident`…), Bedrock 1.21 potions, 1.21.2+ boats and Bedrock boat
+  variants, items inside Bedrock entities written for the target version.
+- Status effects too new for Java 1.0 – 1.5 players, map colours too new for the target version
+  (crash in old games), the void biome on 1.9 – 1.12, tall grass and dead bush from Beta 1.6, the
+  inverted daylight detector, old Bedrock bucket / boat / horse armour items.
+
+**Tools**
+- `tools/matrix.py`: the probe read only numeric item ids and failed every route since 0.2.1.
+
 ## 0.2.1 – bug fix (alpha)
 
 Items lost or changed in the players' inventories on the way to Java (found in game: Bedrock 26.50 →

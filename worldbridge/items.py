@@ -46,6 +46,8 @@ LEGACY_ENCH = {0: "protection", 1: "fire_protection", 2: "feather_falling", 3: "
                61: "luck_of_the_sea", 62: "lure", 70: "mending", 71: "vanishing_curse"}
 LEGACY_ENCH_INV = {v: k for k, v in LEGACY_ENCH.items()}
 LEGACY_ENCH_INV["sweeping_edge"] = 22
+# enchantment ids Java renamed: (DataVersion of the rename, old name, new name)
+_JAVA_ENCH_RENAMES = ((3837, "sweeping", "sweeping_edge"),)  # 1.20.5
 BEDROCK_ENCH = ["protection", "fire_protection", "feather_falling", "blast_protection", "projectile_protection",
                 "thorns", "respiration", "depth_strider", "aqua_affinity", "sharpness", "smite",
                 "bane_of_arthropods", "knockback", "fire_aspect", "looting", "efficiency", "silk_touch",
@@ -54,7 +56,7 @@ BEDROCK_ENCH = ["protection", "fire_protection", "feather_falling", "blast_prote
                 "channeling", "multishot", "piercing", "quick_charge", "soul_speed", "swift_sneak", "wind_burst",
                 "density", "breach"]
 BEDROCK_ENCH_INV = {n: i for i, n in enumerate(BEDROCK_ENCH)}
-BEDROCK_ENCH_INV["sweeping"] = None
+BEDROCK_ENCH_INV["sweeping"] = BEDROCK_ENCH_INV["sweeping_edge"] = None
 
 # legacy potion damage low bits -> effect name
 LEGACY_POTION_EFFECT = {1: "regeneration", 2: "swiftness", 3: "fire_resistance", 4: "poison", 5: "healing",
@@ -69,7 +71,7 @@ BEDROCK_POTIONS = ["water", "mundane", "long_mundane", "thick", "awkward", "nigh
                    "regeneration", "long_regeneration", "strong_regeneration", "strength", "long_strength",
                    "strong_strength", "weakness", "long_weakness", "wither", "turtle_master",
                    "long_turtle_master", "strong_turtle_master", "slow_falling", "long_slow_falling",
-                   "strong_slowness"]
+                   "strong_slowness", "wind_charged", "weaving", "oozing", "infested"]
 BEDROCK_POTIONS_INV = {n: i for i, n in enumerate(BEDROCK_POTIONS)}
 
 # legacy spawn egg damage (Java numeric entity id) -> entity name
@@ -86,7 +88,9 @@ LEGACY_EGG_INV["zombie_pigman"] = 57
 # Java flattened name -> Bedrock item name (non-block items that differ)
 JAVA_TO_BEDROCK_NAME = {"nether_brick": "netherbrick", "oak_sign": "oak_sign", "firework_rocket": "firework_rocket",
                         "tipped_arrow": "arrow", "enchanted_golden_apple": "enchanted_golden_apple",
-                        "snowball": "snowball", "turtle_scute": "turtle_scute", "scute": "turtle_scute"}
+                        "snowball": "snowball", "turtle_scute": "turtle_scute", "scute": "turtle_scute",
+                        "oak_door": "wooden_door", "item_frame": "frame", "glow_item_frame": "glow_frame",
+                        "map": "empty_map", "zombified_piglin_spawn_egg": "zombie_pigman_spawn_egg"}
 BEDROCK_TO_JAVA_NAME = {"netherbrick": "nether_brick", "appleenchanted": "enchanted_golden_apple",
                         "appleEnchanted": "enchanted_golden_apple", "clownfish": "tropical_fish",
                         "cooked_fish": "cooked_cod", "fish": "cod", "reeds": "sugar_cane", "speckled_melon":
@@ -94,9 +98,116 @@ BEDROCK_TO_JAVA_NAME = {"netherbrick": "nether_brick", "appleenchanted": "enchan
                         "fireworkscharge": "firework_star", "boat": "oak_boat", "wooden_door": "oak_door",
                         "sign": "oak_sign", "turtle_shell_piece": "turtle_scute", "chorus_fruit_popped":
                         "popped_chorus_fruit", "map": "filled_map", "emptymap": "map", "empty_map": "map",
-                        "muttoncooked": "cooked_mutton", "muttonraw": "mutton", "short_grass": "grass"}
+                        "muttoncooked": "cooked_mutton", "muttonraw": "mutton", "short_grass": "grass",
+                        "frame": "item_frame", "glow_frame": "glow_item_frame",
+                        "zombie_pigman_spawn_egg": "zombified_piglin_spawn_egg"}
+# 1.11 entity ids (spawn eggs of Java 1.11 - 1.12) -> 1.13+ names
+_ENTITY_113 = {"vindication_illager": "vindicator", "evocation_illager": "evoker", "illusion_illager": "illusioner",
+               "zombie_pigman": "zombified_piglin", "villager_golem": "iron_golem", "snowman": "snow_golem"}
 
 log = logging.getLogger(__name__)
+
+# Bedrock before 1.16.100 (its item flattening) named many items differently and told variants apart
+# by Damage.  Newer games still read these names (they upgrade them), older ones know only them.
+BEDROCK_ITEM_FLATTENING = (1, 16, 100)
+BEDROCK_NEW_DYES = (1, 10, 0)            # black / brown / blue / white dye (dye 16 - 19); before: the old dyes
+OLD_BEDROCK_BUCKETS = {"bucket": 0, "milk_bucket": 1, "cod_bucket": 2, "salmon_bucket": 3,
+                       "tropical_fish_bucket": 4, "pufferfish_bucket": 5, "water_bucket": 8, "lava_bucket": 10}
+OLD_BEDROCK_BOATS = ("oak", "spruce", "birch", "jungle", "acacia", "dark_oak")       # boat + Damage
+OLD_BEDROCK_PATTERNS = {"creeper_banner_pattern": 0, "skull_banner_pattern": 1, "flower_banner_pattern": 2,
+                        "mojang_banner_pattern": 3, "piglin_banner_pattern": 6}     # banner_pattern + Damage
+OLD_BEDROCK_NEW_DYES = {"black_dye": (16, "ink_sac"), "brown_dye": (17, "cocoa_beans"),
+                        "blue_dye": (18, "lapis_lazuli"), "white_dye": (19, "bone_meal")}
+# Java name -> Bedrock name before 1.16.100 (items without a Damage variant)
+OLD_BEDROCK_NAMES = {
+    "cod": "fish", "tropical_fish": "clownfish", "cooked_cod": "cooked_fish", "melon_slice": "melon",
+    "glistering_melon_slice": "speckled_melon", "sugar_cane": "reeds", "firework_rocket": "fireworks",
+    "firework_star": "fireworksCharge", "enchanted_golden_apple": "appleEnchanted", "mutton": "muttonRaw",
+    "cooked_mutton": "muttonCooked", "popped_chorus_fruit": "chorus_fruit_popped", "nether_star": "netherstar",
+    "fire_charge": "fireball", "carrot_on_a_stick": "carrotOnAStick", "totem_of_undying": "totem",
+    "turtle_scute": "turtle_shell_piece", "scute": "turtle_shell_piece", "oak_sign": "sign",
+    "dark_oak_sign": "darkoak_sign", "map": "emptyMap", "filled_map": "map", "lodestone_compass": "lodestonecompass",
+    "leather_horse_armor": "horsearmorleather", "iron_horse_armor": "horsearmoriron",
+    "golden_horse_armor": "horsearmorgold", "diamond_horse_armor": "horsearmordiamond",
+    **{f"music_disc_{r}": f"record_{r}" for r in RECORDS + ["pigstep"]},
+}
+# Bedrock's numeric entity types: the Damage of an old "spawn_egg" (Java entity name -> number)
+BEDROCK_ENTITY_IDS = {
+    "chicken": 10, "cow": 11, "pig": 12, "sheep": 13, "wolf": 14, "villager": 115, "mooshroom": 16, "squid": 17,
+    "rabbit": 18, "bat": 19, "iron_golem": 20, "snow_golem": 21, "ocelot": 22, "horse": 23, "donkey": 24,
+    "mule": 25, "skeleton_horse": 26, "zombie_horse": 27, "polar_bear": 28, "llama": 29, "parrot": 30,
+    "dolphin": 31, "zombie": 32, "creeper": 33, "skeleton": 34, "spider": 35, "zombified_piglin": 36,
+    "slime": 37, "enderman": 38, "silverfish": 39, "cave_spider": 40, "ghast": 41, "magma_cube": 42,
+    "blaze": 43, "zombie_villager": 116, "witch": 45, "stray": 46, "husk": 47, "wither_skeleton": 48,
+    "guardian": 49, "elder_guardian": 50, "shulker": 54, "endermite": 55, "vindicator": 57, "phantom": 58,
+    "ravager": 59, "turtle": 74, "cat": 75, "evoker": 104, "vex": 105, "pufferfish": 108, "salmon": 109,
+    "drowned": 110, "tropical_fish": 111, "cod": 112, "panda": 113, "pillager": 114, "wandering_trader": 118,
+    "fox": 121, "bee": 122, "piglin": 123, "hoglin": 124, "strider": 125, "zoglin": 126, "piglin_brute": 127,
+}
+BEDROCK_ENTITY_NAMES = {v: k for k, v in BEDROCK_ENTITY_IDS.items()}
+BEDROCK_ENTITY_NAMES.update({15: "villager", 44: "zombie_villager"})  # before villager_v2 (Bedrock 1.11)
+_OLD_BEDROCK_TO_JAVA = {v.lower(): k for k, v in OLD_BEDROCK_NAMES.items() if k != "scute"}
+
+
+def old_bedrock_item(name: str, version: Tuple[int, ...]) -> Optional[Tuple[str, int]]:
+    """(Bedrock name, Damage) of Java item ``name`` for a Bedrock ``version`` before the 1.16.100 item
+    flattening, or None when the item kept its name there."""
+    v = tuple(version)
+    if v >= BEDROCK_ITEM_FLATTENING:
+        return None
+    if name in DYE_ITEMS:
+        return "dye", DYE_ITEMS.index(name)
+    if name in OLD_BEDROCK_NEW_DYES:
+        aux, older = OLD_BEDROCK_NEW_DYES[name]
+        return "dye", aux if v >= BEDROCK_NEW_DYES else DYE_ITEMS.index(older)
+    if name in OLD_BEDROCK_BUCKETS:
+        return "bucket", OLD_BEDROCK_BUCKETS[name]
+    if name.endswith("_boat") and name[:-5] in OLD_BEDROCK_BOATS:
+        return "boat", OLD_BEDROCK_BOATS.index(name[:-5])
+    if name in OLD_BEDROCK_PATTERNS:
+        return "banner_pattern", OLD_BEDROCK_PATTERNS[name]
+    if name.endswith("_spawn_egg"):
+        e = _ENTITY_113.get(name[:-10], name[:-10])
+        eid = BEDROCK_ENTITY_IDS.get(e)
+        if eid is None:
+            return None
+        if v < (1, 11) and e in ("villager", "zombie_villager"):
+            eid = 15 if e == "villager" else 44
+        return "spawn_egg", eid
+    if name in OLD_BEDROCK_NAMES:
+        return OLD_BEDROCK_NAMES[name], 0
+    return None
+
+
+def bedrock_item_name(name: str, version: Tuple[int, ...]) -> str:
+    """The Bedrock name of a Java item that is not one of the numeric era's blocks."""
+    v = tuple(version)
+    if name in ("turtle_scute", "scute"):
+        return "turtle_scute" if v >= (1, 20, 80) else "scute"    # renamed with the armadillo
+    if name in ("iron_chain", "chain"):
+        return "iron_chain" if v >= (1, 21, 110) else "chain"
+    return JAVA_TO_BEDROCK_NAME.get(name, name)
+
+
+def from_old_bedrock(name: str, dmg: int) -> Optional[str]:
+    """The Java name of an item saved with a Bedrock name of before 1.16.100 (in any case), else None."""
+    k = name.lower()
+    if k == "bucket":
+        return next((n for n, d in OLD_BEDROCK_BUCKETS.items() if d == dmg), "bucket")
+    if k == "boat":
+        return f"{OLD_BEDROCK_BOATS[dmg if 0 <= dmg < len(OLD_BEDROCK_BOATS) else 0]}_boat"
+    if k == "dye":
+        if 0 <= dmg < 16:
+            return DYE_ITEMS[dmg]
+        return next((n for n, (d, _o) in OLD_BEDROCK_NEW_DYES.items() if d == dmg), "ink_sac")
+    if k == "banner_pattern":
+        return next((n for n, d in OLD_BEDROCK_PATTERNS.items() if d == dmg), None)
+    if k == "spawn_egg":
+        e = BEDROCK_ENTITY_NAMES.get(dmg & 0xFF)
+        return f"{e}_spawn_egg" if e else None
+    if k.startswith("record_"):
+        return "music_disc_" + k[7:]
+    return _OLD_BEDROCK_TO_JAVA.get(k)
 
 
 # ------------------------------------------------------------------ PyMCTranslate helpers
@@ -192,7 +303,7 @@ def legacy_to_flat(iid: int, dmg: int) -> Optional[str]:
         return SKULLS[min(dmg, 5)]
     if iid == 383:
         e = LEGACY_EGG.get(dmg)
-        return f"{e}_spawn_egg" if e else None
+        return f"{e}_spawn_egg" if e else "spawn_egg"  # Java 1.9+: the mob is in tag.EntityTag
     n = LEGACY_ITEM_RENAMES.get((iid, dmg)) or LEGACY_ITEM_RENAMES.get((iid, None))
     if n:
         return n
@@ -307,7 +418,8 @@ def _is_damageable(name: str) -> bool:
     return name.endswith(("_sword", "_shovel", "_pickaxe", "_axe", "_hoe", "_helmet", "_chestplate", "_leggings",
                           "_boots")) or name in ("bow", "fishing_rod", "flint_and_steel", "shears", "shield",
                                                  "elytra", "carrot_on_a_stick", "trident", "crossbow", "mace",
-                                                 "warped_fungus_on_a_stick", "brush")
+                                                 "warped_fungus_on_a_stick", "brush", "wolf_armor") \
+        or name.endswith("_spear")
 
 
 def from_legacy(t: nbt.CompoundTag) -> Optional[Item]:
@@ -338,6 +450,8 @@ def from_legacy(t: nbt.CompoundTag) -> Optional[Item]:
     tag = nbt.get_tag(t, "tag")
     if tag is not None:
         _read_java_tag(it, tag, LEGACY_ENCH)
+    if it["name"] == "spawn_egg":  # an egg without its mob spawns nothing
+        return None
     return it
 
 
@@ -363,7 +477,8 @@ def _read_java_tag(it: Item, tag: nbt.CompoundTag, ench_table):
     ent = nbt.get_tag(tag, "EntityTag")
     if ent is not None and it["name"] == "spawn_egg":
         e = str(nbt.get(ent, "id", "pig")).split(":", 1)[-1]
-        it["name"] = f"{ids.ENTITY_OLD_TO_NEW.get(e, e)}_spawn_egg"
+        e = ids.ENTITY_OLD_TO_NEW.get(e, e)
+        it["name"] = f"{_ENTITY_113.get(e, e)}_spawn_egg"
 
 
 def to_legacy(it: Item) -> Optional[nbt.CompoundTag]:
@@ -416,7 +531,9 @@ def to_legacy(it: Item) -> Optional[nbt.CompoundTag]:
 
 # ------------------------------------------------------------------ Java 1.13+
 # older Java names of items (see _JAVA_RENAMES) that no later version uses for anything else
-_JAVA_OLD_NAMES = {"sign": "oak_sign", "grass_path": "dirt_path", "scute": "turtle_scute",
+_JAVA_OLD_NAMES = {"sign": "oak_sign", "grass_path": "dirt_path", "scute": "turtle_scute", "rose_red": "red_dye",
+                   "cactus_green": "green_dye", "dandelion_yellow": "yellow_dye",
+                   "zombie_pigman_spawn_egg": "zombified_piglin_spawn_egg",
                    "semi_weathered_cut_copper": "weathered_cut_copper",
                    "semi_weathered_cut_copper_slab": "weathered_cut_copper_slab",
                    "semi_weathered_cut_copper_stairs": "weathered_cut_copper_stairs"}
@@ -459,12 +576,34 @@ def _read_components(it: Item, c: nbt.CompoundTag):
         p = pc.py_data if isinstance(pc, nbt.StringTag) else nbt.get(pc, "potion")
         if p:
             it["potion"] = str(p).split(":", 1)[-1]
+    lore = g("lore")
+    if lore is not None:
+        it["lore"] = [_component_text(x) for x in lore]
+    for key in ("written_book_content", "writable_book_content"):
+        book = g(key)
+        if book is not None:
+            it["pages"] = [_component_text(nbt.get_tag(p, "raw") if isinstance(p, nbt.CompoundTag) else p)
+                           for p in (nbt.get_tag(book, "pages") or [])]
+            if key == "written_book_content":
+                title = nbt.get_tag(book, "title")
+                it["title"] = str(nbt.get(title, "raw", "") if isinstance(title, nbt.CompoundTag) else
+                                  (title.py_data if title is not None else ""))
+                it["author"] = str(nbt.get(book, "author", "") or "")
     dc = g("dyed_color")
     if dc is not None:
         it["color"] = int(dc.py_data) if not isinstance(dc, nbt.CompoundTag) else int(nbt.get(dc, "rgb", 0))
     mid = g("map_id")
     if mid is not None:
         it["map"] = int(mid.py_data)
+
+
+def _component_text(tag) -> str:
+    """Plain text of a text component: a JSON string (1.20.5 - 1.21.4) or NBT (1.21.5+)."""
+    if tag is None:
+        return ""
+    if isinstance(tag, nbt.StringTag):
+        return plain_text(tag.py_data)
+    return plain_text(json.dumps(_snbt_text(tag)))
 
 
 def _snbt_text(tag):
@@ -478,7 +617,10 @@ def _snbt_text(tag):
 # Item renames of Minecraft's data fixers after 1.13: (data version, old name, new name).  Data
 # older than that version is renamed when the game upgrades it, data as new or newer must carry
 # the new name: an item is written with the name that, once upgraded, is the intended one.
-_JAVA_RENAMES = ((2680, "grass_path", "dirt_path"),
+_JAVA_RENAMES = ((1901, "rose_red", "red_dye"), (1901, "cactus_green", "green_dye"),  # 1.14
+                 (1901, "dandelion_yellow", "yellow_dye"),
+                 (2509, "zombie_pigman_spawn_egg", "zombified_piglin_spawn_egg"),  # 1.16
+                 (2680, "grass_path", "dirt_path"),
                  # a 1.17 snapshot shifted the copper names: semi_weathered -> weathered -> oxidized
                  (2690, "semi_weathered_cut_copper", "weathered_cut_copper"),
                  (2690, "semi_weathered_cut_copper_slab", "weathered_cut_copper_slab"),
@@ -486,16 +628,34 @@ _JAVA_RENAMES = ((2680, "grass_path", "dirt_path"),
                  (3692, "grass", "short_grass"), (3800, "scute", "turtle_scute"), (4541, "chain", "iron_chain"))
 
 
+def java_ench_name(name: str, data_version: int) -> str:
+    """An enchantment's name as Java data of ``data_version`` names it."""
+    for dv, old, new in _JAVA_ENCH_RENAMES:
+        if data_version >= dv and name == old:
+            return new
+        if data_version < dv and name == new:
+            return old
+    return name
+
+
 def java_item_name(name: str, data_version: int) -> str:
     """``name`` (a WorldBridge name, 1.13 - 1.21) as Java data of ``data_version`` names it."""
     if data_version < 1952 and name == "oak_sign":  # before 1.14
         return "sign"
+    if data_version < 1952 and name == "smooth_stone_slab":  # 1.13's stone slab is the smooth one
+        return "stone_slab"
     for dv, old, new in _JAVA_RENAMES:
         if data_version >= dv and name == old:
             name = new
         elif data_version < dv and name == new:
             name = old
     return name
+
+
+# PyMCTranslate's Java 1.21.5 (the DataVersion its chunks are written with): every DataFixer step of
+# 1.21.5 (text components as NBT, flattened enchantments, dyed_color as a number) lies below it, so
+# data written with it must already be in the 1.21.5 format
+TEXT_NBT_DV = 4324
 
 
 def to_java_modern(it: Item, data_version: int) -> nbt.CompoundTag:
@@ -510,11 +670,29 @@ def to_java_modern(it: Item, data_version: int) -> nbt.CompoundTag:
             comps["minecraft:damage"] = nbt.IntTag(int(it["damage"]))
         for key, src in (("minecraft:enchantments", "ench"), ("minecraft:stored_enchantments", "stored")):
             if it.get(src):
-                lv = nbt.CompoundTag({"minecraft:" + n: nbt.IntTag(l) for n, l in it[src]})
-                comps[key] = lv if data_version >= 4325 else nbt.CompoundTag({"levels": lv})  # 1.21.5 flattened
+                lv = nbt.CompoundTag({"minecraft:" + java_ench_name(n, data_version): nbt.IntTag(l) for n, l in it[src]})
+                comps[key] = lv if data_version >= TEXT_NBT_DV else nbt.CompoundTag({"levels": lv})  # 1.21.5 flattened
+        nbt_text = data_version >= TEXT_NBT_DV  # 1.21.5: text components are NBT, a plain string is plain text
+
+        def text(s):
+            return nbt.StringTag(s if nbt_text else json_text(s))
+
         if it.get("custom_name"):
-            comps["minecraft:custom_name"] = (nbt.StringTag(it["custom_name"]) if data_version >= 4325
-                                              else nbt.StringTag(json_text(it["custom_name"])))
+            comps["minecraft:custom_name"] = text(it["custom_name"])
+        if it.get("lore"):
+            comps["minecraft:lore"] = nbt.ListTag([text(x) for x in it["lore"]], 8)
+        if it.get("color") is not None:
+            comps["minecraft:dyed_color"] = (nbt.IntTag(int(it["color"])) if nbt_text
+                                             else nbt.CompoundTag({"rgb": nbt.IntTag(int(it["color"]))}))
+        if it.get("pages") is not None and name in ("written_book", "writable_book"):
+            if name == "written_book":
+                comps["minecraft:written_book_content"] = nbt.CompoundTag({
+                    "pages": nbt.ListTag([nbt.CompoundTag({"raw": text(p)}) for p in it["pages"]], 10),
+                    "title": nbt.CompoundTag({"raw": nbt.StringTag(it.get("title") or "")}),
+                    "author": nbt.StringTag(it.get("author") or "")})
+            else:
+                comps["minecraft:writable_book_content"] = nbt.CompoundTag({
+                    "pages": nbt.ListTag([nbt.CompoundTag({"raw": nbt.StringTag(p)}) for p in it["pages"]], 10)})
         if it.get("potion"):
             comps["minecraft:potion_contents"] = nbt.CompoundTag({"potion": nbt.StringTag("minecraft:" + it["potion"])})
         if it.get("map") is not None and name == "filled_map":
@@ -527,10 +705,12 @@ def to_java_modern(it: Item, data_version: int) -> nbt.CompoundTag:
     if it.get("damage"):
         tag["Damage"] = nbt.IntTag(int(it["damage"]))
     if it.get("ench"):
-        tag["Enchantments"] = nbt.ListTag([nbt.CompoundTag({"id": nbt.StringTag("minecraft:" + n), "lvl": nbt.ShortTag(l)})
+        tag["Enchantments"] = nbt.ListTag([nbt.CompoundTag({"id": nbt.StringTag("minecraft:" + java_ench_name(n, data_version)),
+                                                             "lvl": nbt.ShortTag(l)})
                                            for n, l in it["ench"]], 10)
     if it.get("stored"):
-        tag["StoredEnchantments"] = nbt.ListTag([nbt.CompoundTag({"id": nbt.StringTag("minecraft:" + n), "lvl": nbt.ShortTag(l)})
+        tag["StoredEnchantments"] = nbt.ListTag([nbt.CompoundTag({"id": nbt.StringTag("minecraft:" + java_ench_name(n, data_version)),
+                                                                   "lvl": nbt.ShortTag(l)})
                                                  for n, l in it["stored"]], 10)
     disp = nbt.CompoundTag()
     if it.get("custom_name"):
@@ -574,6 +754,30 @@ def _bedrock_block_for_flat(name: str, version: Tuple[int, ...]) -> Optional[Tup
         return None
 
 
+@functools.lru_cache(maxsize=1)
+def _bedrock_variant_blocks() -> frozenset:
+    """Bedrock blocks of the numeric era that several items share, told apart by the item's Damage
+    (wool, planks, log, fence, stone_slab, shulker_box...)."""
+    seen: Dict[str, set] = {}
+    for n, (bid, _d) in _flat_to_legacy().items():
+        if bid < 256:
+            b = _bedrock_block_for_flat(n, (1, 12, 0))
+            if b is not None:
+                seen.setdefault(b[0], set()).add(n)
+    return frozenset(k for k, v in seen.items() if len(v) > 1)
+
+
+def _bedrock_block_item_aux(name: str, bname: str) -> Optional[int]:
+    """The Damage of a Bedrock block item that shares its block with other variants: the variant's
+    data value (red wool 14, birch planks 2, Bedrock's own order for slabs and fences).  Bedrock
+    saves it next to the Block states, and before 1.13 the item is only its name and Damage."""
+    b12 = _bedrock_block_for_flat(name, (1, 12, 0))
+    if b12 is None or b12[0] != bname or bname not in _bedrock_variant_blocks():
+        return None
+    bd = b12[1].get("block_data")
+    return None if bd is None else int(getattr(bd, "py_data", bd))
+
+
 def to_bedrock(it: Item, version: Tuple[int, ...]) -> Optional[nbt.CompoundTag]:
     name = it["name"]
     dmg = int(it.get("damage", 0))
@@ -589,13 +793,19 @@ def to_bedrock(it: Item, version: Tuple[int, ...]) -> Optional[nbt.CompoundTag]:
         bname, dmg = "minecraft:" + name, BEDROCK_POTIONS_INV.get(it.get("potion", "water"), 0)
     elif name == "tipped_arrow":
         bname, dmg = "minecraft:arrow", BEDROCK_POTIONS_INV.get(it.get("potion", "water"), 0) + 1
+    elif old_bedrock_item(name, version) is not None:  # before 1.16.100: old names, variants by Damage
+        bname, dmg = old_bedrock_item(name, version)
+        bname = "minecraft:" + bname
     else:
         b = _bedrock_block_for_flat(name, tuple(version))
         if b is not None:
             bname = b[0]
             block = b
+            aux = _bedrock_block_item_aux(name, b[0])
+            if aux is not None:
+                dmg = aux
         else:
-            bname = "minecraft:" + JAVA_TO_BEDROCK_NAME.get(name, name)
+            bname = "minecraft:" + bedrock_item_name(name, version)
     out = nbt.CompoundTag({"Name": nbt.StringTag(bname), "Count": nbt.ByteTag(max(1, min(127, int(it.get("count", 1))))),
                            "Damage": nbt.ShortTag(dmg), "WasPickedUp": nbt.ByteTag(0)})
     if it.get("slot") is not None:
@@ -691,8 +901,10 @@ def from_bedrock(t: nbt.CompoundTag) -> Optional[Item]:
         it["name"] = f"{WOOL[15 - (dmg & 15)]}_banner"
     elif n == "skull":
         it["name"] = SKULLS[min(dmg, 6)]
-    elif n == "spawn_egg":
-        return None
+    elif n == "spawn_egg":  # before 1.16.100: the mob is the Damage
+        it["name"] = from_old_bedrock(n, dmg)
+        if it["name"] is None:
+            return None
     else:
         blk = nbt.get_tag(t, "Block")
         flat = None
@@ -700,6 +912,8 @@ def from_bedrock(t: nbt.CompoundTag) -> Optional[Item]:
             states = nbt.get_tag(blk, "states") or nbt.CompoundTag()
             flat = _bedrock_block_to_flat(str(nbt.get(blk, "name")), tuple(sorted(states.items(), key=lambda kv: kv[0])),
                                           bedrock_block_version(blk))
+        if flat is None:  # names of before 1.16.100 (bucket / boat / dye + Damage, horsearmoriron...)
+            flat = from_old_bedrock(n, dmg)
         # pre-1.19 Bedrock names are the numeric-era ones ("log", "wool" + Damage), also with Damage 0
         if flat is None and ids.item_id_from_name(n) is not None:
             leg = legacy_to_flat(ids.item_id_from_name(n), dmg)

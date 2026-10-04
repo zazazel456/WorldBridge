@@ -30,6 +30,16 @@ def rank(version: str) -> int:
     return blk.version_rank(version)
 
 
+def _effect_known(eid: int, r: int) -> bool:
+    """Whether a status effect id is registered by the game of rank ``r``: old games index
+    Potion.potionTypes[id] without a null check, so an effect they lack crashes them when it ticks.
+    1.0 - 1.3 have 1 - 19 without invisibility (14) and night vision (16), which came with
+    wither (20) in 1.4.2; health boost, absorption and saturation (21 - 23) came in 1.6."""
+    if r < rank("1.4"):
+        return 1 <= eid <= 19 and eid not in (14, 16)
+    return 1 <= eid <= (20 if r < rank("1.6") else 23)
+
+
 def version_label(version: str) -> str:
     if version == "alpha":
         return "Alpha 1.2"
@@ -477,7 +487,7 @@ class OldContent:
                         c = nbt.CompoundTag({"Id": _coerce(e["Id"], "b"),
                                              "Amplifier": _coerce(nbt.get_tag(e, "Amplifier", nbt.ByteTag(0)), "b") or nbt.ByteTag(0),
                                              "Duration": _coerce(nbt.get_tag(e, "Duration", nbt.IntTag(0)), "i") or nbt.IntTag(0)})
-                        if 1 <= int(c["Id"].py_data) <= (20 if r < rank("1.4") else 23):
+                        if _effect_known(int(c["Id"].py_data), r):
                             lst.append(c)
                 if len(lst):
                     out["ActiveEffects"] = lst

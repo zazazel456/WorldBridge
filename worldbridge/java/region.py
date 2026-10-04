@@ -104,22 +104,52 @@ class JavaRegion:
             if ctype == 3:
                 return body
             if ctype == 4:
-                try:
-                    import lz4.block  # type: ignore
-
-                    return lz4.block.decompress(body)
-                except Exception:  # noqa: BLE001
-                    return None
-        except (OSError, zlib.error):
+                return decompress_lz4(body)
+        except (OSError, zlib.error, ValueError):
             return None
         return None
 
 
-class RegionWriter:
-    """Accumulates chunks and writes one region file."""
+_LZ4_HEADER = struct.Struct("<8sBiii")  # magic, token, compressed length, original length, checksum
 
-    def __init__(self):
+
+def decompress_lz4(data: bytes) -> Optional[bytes]:
+    """A chunk saved with ``region-file-compression=lz4`` (Java 1.20.5+): the LZ4 block stream of
+    lz4-java (``LZ4BlockOutputStream``), not a bare LZ4 block."""
+    try:
+        import lz4.block  # type: ignore
+    except ImportError:
+        return None
+    out = []
+    i = 0
+    while i + _LZ4_HEADER.size <= len(data):
+        magic, token, clen, olen, _check = _LZ4_HEADER.unpack_from(data, i)
+        i += _LZ4_HEADER.size
+        method = token & 0xF0
+        if magic != b"LZ4Block" or clen < 0 or olen < 0:
+            raise ValueError("corrupted LZ4 block")
+        if olen == 0:                       # the stream's end mark
+            break
+        if method == 0x10:                  # stored
+            out.append(data[i : i + olen])
+        elif method == 0x20:
+            out.append(lz4.block.decompress(data[i : i + clen], uncompressed_size=olen))
+        else:
+            raise ValueError("corrupted LZ4 block")
+        i += clen
+    return b"".join(out)
+
+
+class RegionWriter:
+    """Accumulates chunks and writes one region file.
+
+    ``external``: a chunk over 1 MiB goes to its own ``c.X.Z.mcc`` file, as Java 1.15+ stores it;
+    older games cannot read those, and such a chunk is left out (listed in ``dropped``)."""
+
+    def __init__(self, external: bool = False):
         self.chunks: Dict[Tuple[int, int], bytes] = {}
+        self.external = external
+        self.dropped: list = []
 
     def put(self, lx: int, lz: int, nbt_bytes: bytes):
         self.chunks[(lx, lz)] = zlib.compress(nbt_bytes, 6)
@@ -137,8 +167,15 @@ class RegionWriter:
         for (lx, lz), comp in sorted(self.chunks.items(), key=lambda kv: (kv[0][1], kv[0][0])):
             blob = struct.pack(">IB", len(comp) + 1, 2) + comp
             count = (len(blob) + SECTOR - 1) // SECTOR
-            if count > 255:
-                continue  # too large for the classic format
+            if count > 255:  # too large for a region file
+                if not self.external:
+                    self.dropped.append((lx, lz))
+                    continue
+                rx, rz = (int(v) for v in os.path.basename(path).split(".")[1:3])
+                with open(os.path.join(os.path.dirname(path) or ".", f"c.{rx * 32 + lx}.{rz * 32 + lz}.mcc"), "wb") as m:
+                    m.write(comp)
+                blob = struct.pack(">IB", 1, 2 | 0x80)
+                count = 1
             blob += b"\x00" * (count * SECTOR - len(blob))
             i = lx + lz * 32
             offsets[i] = (sector << 8) | count
