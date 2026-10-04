@@ -21,6 +21,7 @@ from amulet_nbt import (  # noqa: F401  (re-exported)
     LongArrayTag,
     LongTag,
     NamedTag,
+    NBTError,
     ShortTag,
     StringTag,
 )

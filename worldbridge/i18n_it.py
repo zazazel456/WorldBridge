@@ -487,6 +487,18 @@ _SECTIONS = {
             'Archivio mondo (.mcworld / .zip)',
         'Better than Adventure (Beta 1.7.3 mod, BTA 8.0.1)':
             'Better than Adventure (mod di Beta 1.7.3, BTA 8.0.1)',
+        '{file} is a Git LFS pointer (a small text file standing for the real one): fetch the real files with “git lfs pull” or download the world as an archive.':
+            '{file} è un puntatore Git LFS (un piccolo file di testo al posto di quello vero): scarica i file veri con «git lfs pull» oppure scarica il mondo come archivio.',
+        'level.dat is not a valid NBT file: the world is damaged or incomplete ({error}).':
+            'level.dat non è un file NBT valido: il mondo è danneggiato o incompleto ({error}).',
+        'New Nintendo 3DS Edition worlds are not supported: their chunks are not kept in a LevelDB database (db/cdb, db/vdb) like those of the other Bedrock worlds.':
+            'I mondi di New Nintendo 3DS Edition non sono supportati: i loro chunk non stanno in un database LevelDB (db/cdb, db/vdb) come quelli degli altri mondi Bedrock.',
+        'The db folder of this Bedrock world holds no LevelDB database (CURRENT is missing): the world is incomplete.':
+            'La cartella db di questo mondo Bedrock non contiene un database LevelDB (manca CURRENT): il mondo è incompleto.',
+        'The level.dat of this Bedrock world is not valid: the world is damaged or incomplete.':
+            'Il level.dat di questo mondo Bedrock non è valido: il mondo è danneggiato o incompleto.',
+        'This Bedrock world has no terrain: the db folder with its chunks is missing (only level.dat and the add-ons were saved, the game generates the terrain when the world is first opened), so there is nothing to convert. Open it once in Minecraft and convert the saved world.':
+            "Questo mondo Bedrock non ha terreno: manca la cartella db con i suoi chunk (sono stati salvati solo level.dat e gli add-on, il gioco genera il terreno alla prima apertura del mondo), quindi non c'è niente da convertire. Aprilo una volta in Minecraft e converti il mondo salvato.",
     },
     'worldbridge/bta/world.py': {
         'No level.dat in {path}':

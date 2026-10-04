@@ -842,23 +842,27 @@ def open_map(path: str, progress: Optional[Progress] = None) -> MapSource:
     if d is None:
         raise ConversionError(tr("World format not recognised."))
     tmp = None
-    if d.kind == "archive":
-        tmp = tempfile.mkdtemp(prefix="worldbridge_map_")
-        folder = det.extract_archive(d.path, tmp)
-        d = det.detect(folder)
-        if d is None:
-            shutil.rmtree(tmp, ignore_errors=True)
-            raise ConversionError(tr("The archive does not contain a recognised world."))
-    if d.kind == "java_modern":
-        src: MapSource = JavaModernMapSource(d.path, d.description)
-    elif d.kind == "bta":
-        src = BtaMapSource(d.path, d.description)
-    elif d.kind == "bedrock":
-        src = BedrockMapSource(d.path, d.description)
-    else:
-        from .convert import open_source
+    try:
+        if d.kind == "archive":
+            tmp = tempfile.mkdtemp(prefix="worldbridge_map_")
+            folder = det.extract_archive(d.path, tmp)
+            d = det.detect(folder)
+            if d is None:
+                raise ConversionError(tr("The archive does not contain a recognised world."))
+        if d.kind == "java_modern":
+            src: MapSource = JavaModernMapSource(d.path, d.description)
+        elif d.kind == "bta":
+            src = BtaMapSource(d.path, d.description)
+        elif d.kind == "bedrock":
+            src = BedrockMapSource(d.path, d.description)
+        else:
+            from .convert import open_source
 
-        world = open_source(d, progress or Progress(), tmp or "")
-        src = HubMapSource(d.path, d.kind, world, d.description)
+            world = open_source(d, progress or Progress(), tmp or "")
+            src = HubMapSource(d.path, d.kind, world, d.description)
+    except BaseException:
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
+        raise
     src.tmp = tmp
     return src

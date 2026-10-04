@@ -416,6 +416,8 @@ def open_world(path: str) -> WorldDocs:
     from . import detect as det
 
     d = det.detect(path)
+    if d is None:
+        raise ValueError(tr("World format not recognised."))
     if d.kind == "lce":
         return _open_lce(d.path)
     if d.kind in ("bedrock", "pe_old"):

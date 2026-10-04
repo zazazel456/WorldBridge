@@ -58,7 +58,10 @@ def world_game(path: str) -> Tuple[str, Optional[Tuple[int, ...]]]:
     """(family, version) of a world, to know its biomes: "java" / "lce" / "bedrock" / "pe_old"."""
     from . import detect as det
 
-    d = det.detect(path)
+    try:
+        d = det.detect(path)
+    except ConversionError:
+        return "", None
     if d is None:
         return "", None
     if d.kind == "lce":
