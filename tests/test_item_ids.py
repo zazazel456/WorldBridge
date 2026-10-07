@@ -197,3 +197,30 @@ def test_hub_chests_and_entities_are_named():
                                                      "Damage": nbt.ShortTag(4)})})
     (e,) = _legacy_entities([drop], named=True)
     assert e["Item"]["id"].py_data == "minecraft:banner" and int(e["Item"]["Damage"].py_data) == 4
+
+
+def _old_block_item(name, dmg, states, version):
+    """A block item as Bedrock before 1.13 saves it: Block compound of that version, Damage as variant."""
+    v = version[0] << 24 | version[1] << 16 | version[2] << 8 | 1
+    return nbt.CompoundTag({"Name": nbt.StringTag("minecraft:" + name), "Count": nbt.ByteTag(1), "Damage": nbt.ShortTag(dmg),
+                            "Block": nbt.CompoundTag({"name": nbt.StringTag("minecraft:" + name), "version": nbt.IntTag(v),
+                                                      "states": nbt.CompoundTag(states)})})
+
+
+def test_bedrock_block_items_of_before_1_13_get_java_names():
+    S, B = nbt.StringTag, nbt.ByteTag
+    for name, dmg, states, flat in (
+            ("planks", 2, {"wood_type": S("birch")}, "birch_planks"),
+            ("log", 1, {"old_log_type": S("spruce"), "pillar_axis": S("y")}, "spruce_log"),
+            ("stonebrick", 1, {"stone_brick_type": S("mossy")}, "mossy_stone_bricks"),
+            ("fence_gate", 0, {"open_bit": B(0), "in_wall_bit": B(0)}, "oak_fence_gate"),
+            ("trapdoor", 0, {"open_bit": B(0), "upside_down_bit": B(0)}, "oak_trapdoor"),
+            ("lit_pumpkin", 0, {}, "jack_o_lantern"), ("monster_egg", 0, {}, "infested_stone"),
+            ("stone_slab2", 0, {"stone_slab_type_2": S("red_sandstone")}, "red_sandstone_slab"),
+            ("wool", 14, {"color": S("red")}, "red_wool")):
+        for ver in ((1, 10, 0), (1, 12, 0)):
+            it = items.from_bedrock(_old_block_item(name, dmg, states, ver))
+            assert it["name"] == flat, (name, ver, it["name"])
+    # 1.13+ block compounds still translate through the states
+    it = items.from_bedrock(_old_block_item("planks", 0, {"wood_type": S("oak")}, (1, 13, 0)))
+    assert it["name"] == "oak_planks"

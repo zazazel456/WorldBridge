@@ -866,6 +866,15 @@ def bedrock_block_version(blk: nbt.CompoundTag) -> Tuple[int, ...]:
     return ver if ver[0] >= 1 else _latest("bedrock")
 
 
+@functools.lru_cache(maxsize=1)
+def _java_block_names() -> frozenset:
+    """The block names of the newest Java version: what a block item of a Java target may be called."""
+    try:
+        return frozenset(_tm().get_version("java", _latest("java")).block.base_names("minecraft"))
+    except Exception:  # noqa: BLE001
+        return frozenset(_flat_to_legacy())
+
+
 @functools.lru_cache(maxsize=None)
 def _bedrock_block_to_flat(name: str, states_key: tuple, version: Optional[Tuple[int, ...]] = None) -> Optional[str]:
     try:
@@ -910,8 +919,12 @@ def from_bedrock(t: nbt.CompoundTag) -> Optional[Item]:
         flat = None
         if blk is not None and "name" in blk:
             states = nbt.get_tag(blk, "states") or nbt.CompoundTag()
-            flat = _bedrock_block_to_flat(str(nbt.get(blk, "name")), tuple(sorted(states.items(), key=lambda kv: kv[0])),
-                                          bedrock_block_version(blk))
+            bver = bedrock_block_version(blk)
+            if bver >= (1, 13, 0):  # before it the translation tables return Bedrock's own numeric-era name
+                flat = _bedrock_block_to_flat(str(nbt.get(blk, "name")),
+                                              tuple(sorted(states.items(), key=lambda kv: kv[0])), bver)
+                if flat is not None and flat not in _java_block_names():
+                    flat = None  # not a Java id ("planks"): the numeric id and Damage name it
         if flat is None:  # names of before 1.16.100 (bucket / boat / dye + Damage, horsearmoriron...)
             flat = from_old_bedrock(n, dmg)
         # pre-1.19 Bedrock names are the numeric-era ones ("log", "wool" + Damage), also with Damage 0
