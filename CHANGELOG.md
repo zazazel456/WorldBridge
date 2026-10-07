@@ -31,6 +31,15 @@ A full review of the code with 110 real worlds downloaded from the web (Java Cla
 - **Xbox 360 conversions of big worlds took more than 15 minutes** in "Writing the final files":
   above 1 MiB the container is stored in LZX uncompressed blocks (seconds), the real compressor is
   kept for small ones.
+- **The End was cut to 18 × 18 chunks in every LCE target**, losing the outer islands of real saves
+  (End cities, banners, chests, shulkers: 64 of 96 chunks of a PS3 save). The End is 18 × 18 up to TU43
+  and TU46+ saves have chunks at x −6..5, z −6..30: TU46 / TU54+ targets keep a 64 × 64 End (chunks −32..31,
+  the four `DIM1` region files), TU31 / neoLegacy 18 × 18, and an LCE → LCE conversion keeps every End
+  chunk of the source.
+- **Ender chests of TU69+ saves** (block entity id `minecraft:ender_Chest`) lost their block entity in
+  every conversion that rewrites the chunks (LCE → LCE, numeric Java).
+- **Mobs the target version does not have (salmon, drowned … in TU54) were removed without a word** from
+  the LCE → LCE conversion: they are now listed in the "does not have … removed" warning.
 
 **Caves & Cliffs worlds into games that start at y 0 (Java ≤ 1.17, LCE, Bedrock ≤ 1.17, older)**
 - **Block entities and entities followed the old height, not their blocks**: with `--depth keep`
