@@ -476,7 +476,7 @@ def shift_entity(e: nbt.CompoundTag, dx: float, dz: float) -> Optional[nbt.Compo
     if dx or dz:
         pos = nbt.get_tag(e, "Pos")
         if pos is not None and len(pos) == 3:
-            e["Pos"] = nbt.ListTag([nbt.DoubleTag(float(pos[0].py_data) + dx), pos[1], nbt.DoubleTag(float(pos[2].py_data) + dz)], 6)
+            e["Pos"] = nbt.pos_list(float(pos[0].py_data) + dx, pos[1], float(pos[2].py_data) + dz)
         for k in ("TileX", "TileZ"):
             if k in e:
                 e[k] = nbt.IntTag(int(e[k].py_data) + (dx if k == "TileX" else dz))
@@ -635,7 +635,7 @@ def legacy_player(p: nbt.CompoundTag, opt: LCEWriteOptions, mapper) -> nbt.Compo
                 del p[k]
         else:
             dx, dz = (t[0] - cx) * 16, (t[1] - cz) * 16
-            p["Pos"] = nbt.ListTag([nbt.DoubleTag(float(pos[0].py_data) + dx), pos[1], nbt.DoubleTag(float(pos[2].py_data) + dz)], 6)
+            p["Pos"] = nbt.pos_list(float(pos[0].py_data) + dx, pos[1], float(pos[2].py_data) + dz)
     return p
 
 

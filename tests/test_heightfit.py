@@ -77,6 +77,15 @@ def test_players_and_mobs_follow_their_ground():
     assert fit.shift_at(8.5, 201.0, 8.5) == ground + 1
 
 
+def test_float_positions_move_with_the_ground():
+    from worldbridge.heightfit import _move_entity
+    chunks = _column_world({(0, 0): 200, (1, 0): 200})
+    fit = _fit(chunks)
+    e = nbt.CompoundTag({"id": nbt.StringTag("Pig"), "Pos": nbt.ListTag([nbt.FloatTag(8.5), nbt.FloatTag(201.0), nbt.FloatTag(8.5)], 5)})
+    _move_entity(e, fit)
+    assert e["Pos"].list_data_type == 6 and float(e["Pos"][1].py_data) < 201.0
+
+
 def _hub(tmp_path, heights):
     hub = str(tmp_path / "hub")
     w = JavaNumericWriter(hub, JavaWriteOptions(kind="anvil"), Progress())

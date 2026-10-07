@@ -154,7 +154,7 @@ class Relocation:
             dim = dimension_of(p)
             new = self._moved(dim, x, z)
             if new is not None:
-                p["Pos"] = nbt.ListTag([nbt.DoubleTag(new[0]), pos[1], nbt.DoubleTag(new[1])], 6)
+                p["Pos"] = nbt.pos_list(new[0], pos[1], new[1])
                 continue
             old = nbt.get(p, "Dimension", 0)
             p["Dimension"] = nbt.StringTag("minecraft:overworld") if isinstance(old, str) else nbt.IntTag(0)
@@ -193,8 +193,7 @@ def shift_entity(e, bx: int, bz: int):
         return e
     pos = nbt.get_tag(e, "Pos")
     if pos is not None and len(pos) == 3:
-        e["Pos"] = nbt.ListTag([nbt.DoubleTag(float(pos[0].py_data) + bx), pos[1],
-                                nbt.DoubleTag(float(pos[2].py_data) + bz)], 6)
+        e["Pos"] = nbt.pos_list(float(pos[0].py_data) + bx, pos[1], float(pos[2].py_data) + bz)
     for kx, kz in (("TileX", "TileZ"), ("xTile", "zTile"), ("HomePosX", "HomePosZ"), ("BoundX", "BoundZ")):
         if kx in e and kz in e:
             for k, d in ((kx, bx), (kz, bz)):

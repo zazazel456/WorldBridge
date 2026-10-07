@@ -181,7 +181,7 @@ def shift_info_y(info, dy: int) -> None:
         seen.add(id(p))
         pos = _nbt.get_tag(p, "Pos")
         if pos is not None and len(pos) == 3:
-            p["Pos"] = _nbt.ListTag([pos[0], _nbt.DoubleTag(float(pos[1].py_data) + dy), pos[2]], 6)
+            p["Pos"] = _nbt.pos_list(pos[0], float(pos[1].py_data) + dy, pos[2])
     if "SpawnY" in lvl:
         lvl["SpawnY"] = _nbt.IntTag(int(_nbt.get(lvl, "SpawnY")) + dy)
     sp = _nbt.get_tag(lvl, "spawn")
@@ -1065,7 +1065,7 @@ def _depth_players(info, depth, progress: Progress) -> None:
         if pos is None or len(pos) != 3 or dimension_of(p) != OVERWORLD:
             continue
         x, y, z = (float(v.py_data) for v in pos)
-        p["Pos"] = ab.nbt.ListTag([pos[0], ab.nbt.DoubleTag(depth.point(x, y, z)), pos[2]], 6)
+        p["Pos"] = ab.nbt.pos_list(x, depth.point(x, y, z), z)
 
 
 def _regen_players(info, regen, progress: Progress) -> None:

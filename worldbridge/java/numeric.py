@@ -569,7 +569,7 @@ def _shift_chunk_y(c: NumericChunk, dy: int):
     for e in c.entities:
         pos = nbt.get_tag(e, "Pos")
         if pos is not None and len(pos) == 3:
-            e["Pos"] = nbt.ListTag([pos[0], nbt.DoubleTag(float(pos[1].py_data) + dy), pos[2]], 6)
+            e["Pos"] = nbt.pos_list(pos[0], float(pos[1].py_data) + dy, pos[2])
         if "TileY" in e:                                              # paintings, item frames
             e["TileY"] = nbt.IntTag(int(nbt.get(e, "TileY")) + dy)
 
@@ -707,7 +707,7 @@ def java_player_nbt(player: nbt.CompoundTag, opt: JavaWriteOptions) -> nbt.Compo
         p["Dimension"] = nbt.IntTag({"minecraft:the_nether": -1, "minecraft:the_end": 1}.get(nbt.get(p, "Dimension"), 0))
     if opt.y_offset and "Pos" in p and len(p["Pos"]) == 3:
         pos = p["Pos"]
-        p["Pos"] = nbt.ListTag([pos[0], nbt.DoubleTag(float(pos[1].py_data) + opt.y_offset), pos[2]], 6)
+        p["Pos"] = nbt.pos_list(pos[0], float(pos[1].py_data) + opt.y_offset, pos[2])
     return java_entity_nbt(p)
 
 

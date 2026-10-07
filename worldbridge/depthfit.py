@@ -189,7 +189,7 @@ class DepthFit:
             ny = self._new_y(cx, cz, x, y, z)
             if ny is None:
                 continue
-            e["Pos"] = nbt.ListTag([pos[0], nbt.DoubleTag(float(ny)), pos[2]], 6)
+            e["Pos"] = nbt.pos_list(x, ny, z)
             ents.append(e)
         c.entities = ents
 

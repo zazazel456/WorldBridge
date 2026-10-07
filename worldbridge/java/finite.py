@@ -58,6 +58,14 @@ class FiniteWorld(WorldSource):
 # ------------------------------------------------------------------ Indev
 
 
+def _doubles(e) -> None:
+    """Indev stores Pos / Motion as floats; later formats (and our rebuilt positions) use doubles."""
+    for k in ("Pos", "Motion"):
+        v = nbt.get_tag(e, k)
+        if isinstance(v, nbt.ListTag) and len(v) == 3 and not isinstance(v[0], nbt.DoubleTag):
+            e[k] = nbt.pos_list(*v)
+
+
 def load_indev(path: str) -> FiniteWorld:
     root = nbt.load(open(path, "rb").read()).tag
     m = root["Map"]
@@ -86,6 +94,8 @@ def load_indev(path: str) -> FiniteWorld:
     for e in nbt.get_tag(root, "Entities") or []:
         if nbt.get(e, "id") == "LocalPlayer":
             info.players["host"] = e
+    for e in ents + list(info.players.values()):
+        _doubles(e)
     info.source_description = "Java Edition Indev"
     return FiniteWorld(blocks, data, info, tiles, ents)
 
