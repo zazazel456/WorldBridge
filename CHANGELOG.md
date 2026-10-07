@@ -96,6 +96,21 @@ the count is now reported.
 - **Loot tables** (`LootTable` / `LootTableSeed`) of chests, barrels, dispensers, hoppers and shulker
   boxes are carried between Java and Bedrock; copper chests keep the id of their block in Java 1.21.9+.
 
+**Bedrock ↔ Java: frames, items, mobs**
+- **Bedrock item frames became stone blocks in Java** (PyMCTranslate maps the frame block to stone),
+  so Java dropped every frame and the way back to Bedrock lost them all (je2be b2j: 2364): the block is
+  air in Java, and frames are written in the palette of each Bedrock version (with the photo bit from
+  1.17.30, `{name, val}` before 1.13, numeric before 1.2.13); those an old version cannot hold are
+  reported.
+- **Items of Bedrock worlds before 1.13** got Bedrock names Java does not know (54,009 `planks`,
+  `log`, `stonebrick`, `fence_gate`…): they get the Java names. **PE 0.9 – 0.16 worlds** lost every
+  item and mob (numeric ids): they are read.
+- Java `stone_stairs` became cobblestone stairs in Bedrock; block items carried an invalid
+  `block_data` state on Bedrock 1.13+.
+- **Mob details between Bedrock and Java**: horse colour and markings, llama, parrot, axolotl, cat,
+  rabbit, fox and mooshroom variants, saddles, horse armour and villager professions are written and
+  read both ways. Spectator stays Spectator (Creative in Bedrock before 1.21.40).
+
 **Bedrock → older Bedrock, versions and spawn**
 - **Entities were stored twice** (Bedrock 1.18.30+ → 1.12 – 1.18.29: a `0x32` list from Amulet next to
   the source's `digp` / `actorprefix`; offroaders 108 → 216) and `actorprefix` records no chunk
