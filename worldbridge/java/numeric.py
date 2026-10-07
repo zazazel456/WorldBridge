@@ -84,7 +84,29 @@ def detect_java_numeric(path: str) -> Optional[str]:
             full = os.path.join(base, entry)
             if os.path.isdir(full) and re.fullmatch(r"-?[0-9a-z]{1,2}", entry):
                 return "alpha"
-    return None
+    return _level_only_kind(path)
+
+
+def _level_only_kind(path: str) -> Optional[str]:
+    """The kind of a world folder that holds a level.dat but no chunks at all (what a conversion of a world
+    without a non-empty chunk writes): from the level.dat's version field, as the writers set it (19133 Anvil,
+    19132 McRegion, none Alpha / Infdev).  None when the level.dat is no Java ``Data`` compound, or
+    belongs to a 1.13+ world."""
+    try:
+        with open(os.path.join(path, "level.dat"), "rb") as f:
+            root = nbt.load(f.read()).tag
+        data = nbt.get_tag(root, "Data")
+        if not isinstance(data, nbt.CompoundTag):
+            return None
+        dv = nbt.get(data, "DataVersion")
+        if dv is not None and int(dv) >= 1444:
+            return None
+        version = nbt.get(data, "version")
+        if version is not None and int(version) not in (19132, 19133):
+            return None
+        return {19133: "anvil", 19132: "mcregion"}.get(int(version)) if version is not None else "alpha"
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _sniff_anvil(reg_dir: str, files: List[str]) -> Optional[bool]:

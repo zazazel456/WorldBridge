@@ -66,6 +66,9 @@ class LCEProfile:
     tiles: Optional[frozenset] = None  # allowed block entity ids (None = any)
     entities: Optional[frozenset] = None  # allowed entity ids (None = any)
     end_size: int = END_SIZE_OLD  # chunks across the End the game keeps (centred on 0, 0)
+    # the game names its entities and block entities the Java 1.11 way ("minecraft:zombie_pigman",
+    # "minecraft:chest"): the saves from X360 TU54 on; the older games write "PigZombie" / "Chest"
+    modern_ids: bool = False
 
 
 def _profiles() -> Dict[str, LCEProfile]:
@@ -74,7 +77,8 @@ def _profiles() -> Dict[str, LCEProfile]:
         for p in (
             LCEProfile("tu31", N_("TU31 – 1.8 blocks (neoLegacy on PC, Bountiful consoles)"), 9, 9, blk.java_upto("1.8")),
             LCEProfile("tu46", N_("TU46 – 1.9 blocks (Elytra Update)"), 9, 9, blk.java_upto("1.9"), end_size=END_SIZE_NEW),
-            LCEProfile("tu54", N_("TU54+ – 1.12 blocks (World of Color)"), 9, 9, blk.java_upto("1.12"), end_size=END_SIZE_NEW),
+            LCEProfile("tu54", N_("TU54+ – 1.12 blocks (World of Color)"), 9, 9, blk.java_upto("1.12"), end_size=END_SIZE_NEW,
+                       modern_ids=True),
         )
     }
 
@@ -462,6 +466,8 @@ class LCEWriter:
         if self.profile.entities is not None:
             ents = [e for e in (_restrict_entity(x, self.profile.entities) for x in ents) if e is not None]
         c.entities = [x for x in (self.compat.entity(e) for e in ents) if x is not None]
+        if self.profile.modern_ids:                    # after every id-based filter above
+            c.entities = [_compat.modern_entity(e) for e in c.entities]
         split_ents = None
         if self.platform.split:
             # PS4 / Xbox One keep the entities in entities.dat, as the game writes them (it reads them
@@ -471,6 +477,8 @@ class LCEWriter:
             c.entities = None
         c.tile_entities = [self.compat.holder(t) for t in
                            sanitize_tiles(chunk.tile_entities, c.blocks, dx, dz, self.profile.tiles, lce=True)]
+        if self.profile.modern_ids:
+            c.tile_entities = [_compat.modern_tile(t) for t in c.tile_entities]
         c.tile_ticks = []
         for tk in chunk.tile_ticks:
             if not isinstance(nbt.get(tk, "i"), int):
