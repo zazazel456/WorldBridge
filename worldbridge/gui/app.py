@@ -738,7 +738,7 @@ class MainWindow(QMainWindow):
             self.bed_ver: fam == "bedrock",
             self.lce_plat: fam == "lce", self.lce_prof: fam == "lce", self.lce_size: fam == "lce",
             self.lce_area_row: fam == "lce", self.lce_hint: fam == "lce",
-            self.lce_xuid_row: fam == "lce" and self.lce_plat.currentData() in ("win64", "xbox360", "xboxone"),
+            self.lce_xuid_row: fam == "lce" and self.lce_plat.currentData() in ("win64", "xbox360", "xboxone", "wiiu", "switch"),
             self.pe_hint: fam == "pe_old",
             self.bta_heading: self._bta_on, self.bta_pal_row: self._bta_on, self.bta_y_row: self._bta_on,
             self.bta_note: self._bta_on,
@@ -808,7 +808,7 @@ class MainWindow(QMainWindow):
 
     def _xuid_from_save(self):
         """The XUID of the user, from a world already played with it (players/<XUID>.dat, named inside)."""
-        from ..lce.world import save_players
+        from ..lce.world import player_id_ok, save_players
 
         f, _ = QFileDialog.getOpenFileName(self, tr("Choose one of your played worlds (saveData.ms, savegame.dat…)"),
                                            self.out_edit.text() or os.path.expanduser("~"),
@@ -816,7 +816,8 @@ class MainWindow(QMainWindow):
         if not f:
             return
         try:
-            players = {n: x for n, x in save_players(f).items() if x.isdigit()}
+            plat = self.lce_plat.currentData()
+            players = {n: x for n, x in save_players(f).items() if player_id_ok(plat, x) is not False}
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(self, tr("Player ID"), tr("Cannot read the save:") + f"\n{e}")
             return

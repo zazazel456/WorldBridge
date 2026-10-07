@@ -40,6 +40,24 @@ A full review of the code with 110 real worlds downloaded from the web (Java Cla
   every conversion that rewrites the chunks (LCE → LCE, numeric Java).
 - **Mobs the target version does not have (salmon, drowned … in TU54) were removed without a word** from
   the LCE → LCE conversion: they are now listed in the "does not have … removed" warning.
+- **PS4 and Xbox One saves lost every mob, item and minecart**: the game keeps their entities in
+  `entities.dat`, `DIM-1entities.dat` and `DIM1/entities.dat` (one `{Entities}` record per chunk), which were
+  never read. They are read now, and written the same way for the PS4 and Xbox One targets.
+- **LCE targets that are not Sony consoles wrote the host as `players/host.dat`** without a word, and no
+  console loads it: a warning now asks for `--player-id` (a XUID on Windows64 / Xbox, 32 hex digits on Wii U).
+
+**Pocket Edition 0.x**
+- **pe-old → pe-old was not an identity**: the 16 × 16 map was centred on the spawn, so most chunks, all signs
+  and the player could be lost. A PE 0.x source now keeps its chunks where they are.
+- **Mobs and block entities PE 0.8 does not have (wolves, squid, mob spawners …) were dropped silently**: they
+  are counted in the "does not exist in …" warning, and the entity ids of 1.11+ (`minecraft:chicken`, as the
+  LCE hub gives them) are accepted next to the old ones.
+- **Sign text was JSON and `Health` a float** in what Java and LCE worlds wrote: plain lines of at most 15
+  characters and a short now, as in real saves; `chunks.dat` records have the length of real saves (82180).
+- **PE 0.1 – 0.2 worlds**: the binary `level.dat` (storage version 1) and `player.dat` are read.
+
+**Java targets**: players beyond the host that are not linked to a Java account (`--player`) are not written;
+the count is now reported.
 
 **Caves & Cliffs worlds into games that start at y 0 (Java ≤ 1.17, LCE, Bedrock ≤ 1.17, older)**
 - **Block entities and entities followed the old height, not their blocks**: with `--depth keep`

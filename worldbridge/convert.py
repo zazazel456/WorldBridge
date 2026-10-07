@@ -1435,6 +1435,15 @@ def _warn_single_player(info, target: TargetSpec, sel: Selection, progress: Prog
     if sel.players is not None and len(info.players) > 1 and target.family in ("bedrock", "pe_old"):
         progress.warn(tr("{target}: only the main player ({player}) is transferred; the other selected players are "
                          "ignored.", target=target.describe(), player=next(iter(info.players))))
+    if target.family == "java" and len(info.players) > 1:
+        # the first player is the one of level.dat; the others get a playerdata file only when linked to a
+        # Java account (--player KEY=NICKNAME, "Players" tab)
+        links = getattr(info, "player_links", None) or {}
+        kept = {k for k in info.players if getattr(links.get(k), "uuid", None) or getattr(links.get(k), "nickname", None)}
+        lost = len(set(info.players) - kept - {next(iter(info.players))})
+        if lost:
+            progress.warn(tr("{n} players were not written: a Java world keeps one player in level.dat and a file "
+                             "for each player linked to a Java account (--player KEY=NICKNAME, “Players” tab).", n=lost))
 
 
 def _edit_copy(d: det.Detected, out_dir: str, target: TargetSpec, sel: Selection, progress: Progress) -> None:

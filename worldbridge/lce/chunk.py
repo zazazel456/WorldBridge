@@ -442,13 +442,11 @@ def _decode_aquatic(payload: bytes, version: int) -> LCEChunk:
 
 
 def _tail_nbt(c: LCEChunk) -> bytes:
-    root = nbt.CompoundTag(
-        {
-            "Entities": nbt.compound_list(c.entities),
-            "TileEntities": nbt.compound_list(c.tile_entities),
-            "TileTicks": nbt.compound_list(c.tile_ticks),
-        }
-    )
+    root = nbt.CompoundTag()
+    if c.entities is not None:  # None: kept elsewhere (entities.dat of the PS4 / Xbox One split saves)
+        root["Entities"] = nbt.compound_list(c.entities)
+    root["TileEntities"] = nbt.compound_list(c.tile_entities)
+    root["TileTicks"] = nbt.compound_list(c.tile_ticks)
     return nbt.dump(root, "")
 
 
@@ -518,7 +516,7 @@ def _encode_nbt(c: LCEChunk) -> bytes:
                                                           else _heightmap(c)).astype(np.uint8).tobytes(), np.int8)),
             "TerrainPopulatedFlags": nbt.ShortTag(c.terrain_populated),
             "Biomes": nbt.ByteArrayTag(np.frombuffer(bio.astype(np.uint8).tobytes(), np.int8)),
-            "Entities": nbt.compound_list(c.entities),
+            "Entities": nbt.compound_list(c.entities or []),
             "TileEntities": nbt.compound_list(c.tile_entities),
             "TileTicks": nbt.compound_list(c.tile_ticks),
         }
