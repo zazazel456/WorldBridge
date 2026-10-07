@@ -400,14 +400,15 @@ def amulet_convert(src_path: str, dst_path: str, platform: str, version, progres
         level.level_wrapper.all_chunk_coords = only_selected
     _install_legacy_fallback()
     # a world that goes down to y -64 written to a game whose world starts at y 0: the cut ground gets
-    # the bedrock floor the old games have
+    # the bedrock floor the old games have (not when everything is kept: its own bedrock moved to y 0)
     try:
         deep = level.level_wrapper.bounds("minecraft:overworld").min[1] < 0
     except Exception:  # noqa: BLE001
         deep = False
-    floor = deep and tuple(version)[:2] < (1, 18)
-    if depth is not None and not (deep and floor):
+    old_game = deep and tuple(version)[:2] < (1, 18)
+    if depth is not None and not old_game:
         depth = None
+    floor = old_game and not (depth is not None and depth.bottom <= depth.low)
     if depth is not None:
         depth.used = True
     painted = {AMULET_DIMS[d]: v for d, v in (getattr(selection, "biomes", None) or {}).items() if v}
@@ -471,7 +472,7 @@ class _AmuletJob:
 
     def hook(self, level) -> None:
         depth, floor, painted, move = self.depth, self.floor, self.painted, self.move
-        if not (floor or painted or move is not None):
+        if not (depth is not None or floor or painted or move is not None):
             return
         by_dim = {name: dim for dim, name in AMULET_DIMS.items()}
         load = level.level_wrapper.load_chunk
@@ -558,7 +559,8 @@ def _amulet_part(k: int):
         if depth is not None and depth.fit is not None:
             starts, moved_d = depth.fit._starts, depth.fit.moved_columns - moved
         top = job.move.top if job.move is not None else _UNSET
-        return total, starts, moved_d, (None if top is _UNSET else (top,))
+        emptied = depth.emptied if depth is not None else None
+        return total, starts, moved_d, (None if top is _UNSET else (top,)), emptied
     finally:
         level.close()
 
@@ -654,12 +656,14 @@ def _amulet_parts(job, parts, coords, total, dst_path, progress, views) -> int:
     out = tempfile.mkdtemp(prefix=".worldbridge_parts_", dir=parent)
     try:
         saved = 0
-        for k, (n, starts, moved, top) in enumerate(_run_parts(job, parts, "save", out, progress, total,
-                                                               N_("Translating blocks (Amulet)"), views)):
+        for k, (n, starts, moved, top, emptied) in enumerate(_run_parts(job, parts, "save", out, progress, total,
+                                                                         N_("Translating blocks (Amulet)"), views)):
             saved += n
             if starts:
                 depth.fit._starts.update(starts)
                 depth.fit.moved_columns += moved
+            if emptied:
+                depth.emptied.update(emptied)
             if top is not None:
                 job.move.top = top[0]
         if job.platform == "bedrock":

@@ -23,6 +23,22 @@ A full review of the code with 110 real worlds downloaded from the web (Java Cla
   releases WorldBridge does not list (1.21.11) are written as the nearest earlier one with a note,
   unknown versions are refused with a clear message.
 
+**Caves & Cliffs worlds into games that start at y 0 (Java ≤ 1.17, LCE, Bedrock ≤ 1.17, older)**
+- **Block entities and entities followed the old height, not their blocks**: with `--depth keep`
+  (or a compressed mountain) chests, signs, mobs and item frames under y 0 were dropped and the
+  others stayed 64 blocks too low; they now end exactly where their blocks went, on every route
+  (also Java ↔ Bedrock and Bedrock → Bedrock, players included). Those whose blocks were cut are
+  counted and reported.
+- **Flat or low worlds lost the whole Overworld by default** (superflat 1.18+ has its surface at
+  y -61): the new default `--depth auto` looks at the surface of a sample of chunks and keeps the
+  underground when its median is under y 0, otherwise cuts as before; the log says which.
+- The chunks emptied by the cut were reported as "unreadable (damaged or truncated)": they have their
+  own message now, which points to `--depth keep`.
+- Numeric Java worlds with no Overworld (only DIM-1 / DIM1) are recognised again.
+- `--depth keep` put the old games' ragged bedrock floor over the moved world (it overwrote the grass
+  of flat worlds), and the air of a chunk was taken to be palette index 0, which depends on the order
+  of the chunk's blocks: the cut sometimes left sections of "air" that were stone.
+
 **Content tables**
 - 1.13 dye and stone-slab names, 1.13 – 1.15 zombie pigman eggs, Java 1.9 – 1.12 spawn eggs (were
   dropped), 1.11 mob ids (evokers, vindicators, illusioners vanished), `sweeping` /

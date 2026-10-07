@@ -263,20 +263,21 @@ class JavaModernExtras:
             self.data[(dim, cx, cz)] = (te, en)
 
     def chunk_extras(self, dim: int, cx: int, cz: int):
+        """At their height in the source world: extra._wrap_reader moves them with the blocks (depthfit)
+        and drops those that end out of 0 - 255."""
         te, en = self.data.get((dim, cx, cz), ([], []))
         canon, seen = [], set()
         for t in te:
             c = t if isinstance(t, dict) else tiles.from_java_modern(t)
-            if c is not None and 0 <= c["pos"][1] < 256 and tuple(c["pos"]) not in seen:
+            if c is not None and tuple(c["pos"]) not in seen:
                 seen.add(tuple(c["pos"]))
                 canon.append(c)
         tl = tiles.write_list(canon, "legacy")
         el = []
         for c in ent.read_list(en, "java"):
-            if 0 <= c["pos"][1] < 256:
-                e = ent.to_legacy(c)
-                if e is not None:
-                    el.append(e)
+            e = ent.to_legacy(c)
+            if e is not None:
+                el.append(e)
         return el, tl
 
 
@@ -331,21 +332,25 @@ def _moved_key(move, dim: int, cx: int, cz: int, tl: list, el: list):
     return (dim,) + tuple(move.canon_chunk(dim, cx, cz, tl, el))
 
 
-def inject_from_bedrock(src: str, out_dir: str, info: WorldInfo, progress: Progress, move=None):
+def inject_from_bedrock(src: str, out_dir: str, info: WorldInfo, progress: Progress, move=None, depth=None):
     canon = {}
     for (dim, cx, cz), (te, en) in _bedrock_chunks(src).items():
         tl = [c for c in (tiles.from_bedrock(t) for t in te) if c is not None]
         el = [e for e in en if isinstance(e, dict)] + ent.read_list([e for e in en if not isinstance(e, dict)], "bedrock")
+        if depth is not None and dim == OVERWORLD:
+            tl, el = depth.move_canon(cx, cz, tl, el)           # with their blocks (worldbridge.depthfit)
         if tl or el:
             canon[_moved_key(move, dim, cx, cz, tl, el)] = (tl, el)
     inject_canon(out_dir, canon, progress)
 
 
-def inject_from_java(src: str, out_dir: str, info: WorldInfo, progress: Progress, move=None):
+def inject_from_java(src: str, out_dir: str, info: WorldInfo, progress: Progress, move=None, depth=None):
     canon = {}
     for dim, cx, cz, te, en in iter_modern_extras(src, progress):
         tl = [c for c in (tiles.from_java_modern(t) for t in te) if c is not None]
         el = ent.read_list(en, "java")
+        if depth is not None and dim == OVERWORLD:
+            tl, el = depth.move_canon(cx, cz, tl, el)
         if tl or el:
             canon[_moved_key(move, dim, cx, cz, tl, el)] = (tl, el)
     inject_canon(out_dir, canon, progress)

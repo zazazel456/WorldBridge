@@ -316,7 +316,7 @@ worldbridge convert saveData.ms <output> --to java --trim        # convert only 
 | `--no-blend` | Java / Bedrock 1.18+: no game blending |
 | `--no-ring` | no ring (Java Alpha 1.2 – 1.17, neoLegacy, Nether and End) and no fill of finite maps (PE 0.x, LCE 54 / 64 chunks) |
 | `--tall-terrain compress\|cut` | 128-block targets: compress tall mountains (default) or cut them at y 127 |
-| `--depth cut\|keep\|Y` | 1.18+ worlds to games that start at y 0: `cut` below y 0 (default), `keep` everything (the world rises by 64), or keep from a negative Y |
+| `--depth auto\|cut\|keep\|Y` | 1.18+ worlds to games that start at y 0: `auto` (default) keeps the underground of flat or low worlds (superflat 1.18+ has its surface at y -61) and cuts normal ones, `cut` below y 0, `keep` everything (the world rises by 64), or keep from a negative Y |
 | `--regen nether\|end` | do not convert that dimension: the game generates it anew (repeatable) |
 | `--chunks [DIM:]FILE` | convert only the chunks of an MCA Selector CSV (DIM = overworld, nether, end; repeatable); dimensions without a file are left out |
 | `--biome BIOME=[DIM:]FILE` | give a biome (name or number) to the chunks of a CSV; repeatable |

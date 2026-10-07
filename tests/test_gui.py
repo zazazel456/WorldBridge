@@ -124,6 +124,12 @@ def test_rows_follow_the_target(win):
     assert not _shown(win, win.bta_pal_row)
 
 
+def test_the_underground_choice_starts_on_automatic(win):
+    assert win.depth.itemData(0) == "auto" and win.depth.currentData() == "auto"
+    assert win.depth.itemText(0).startswith("Automatic")
+    assert win._target().depth == "auto"
+
+
 def test_target_spec(win):
     win._on_detected([("title", "x")], "java_numeric", "Mio")
     _pick(win.edition, "lce")

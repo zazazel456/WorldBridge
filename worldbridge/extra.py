@@ -8,7 +8,7 @@ from typing import Optional
 
 from . import amulet_bridge as ab
 from . import nbt
-from .model import Progress, WorldInfo
+from .model import OVERWORLD, Progress, WorldInfo
 from .i18n import tr
 
 
@@ -140,8 +140,9 @@ def read_amulet_info(d) -> WorldInfo:
     return info
 
 
-def attach_source_extras(world, d, progress: Progress) -> None:
-    """Called after an Amulet-native world was converted into the numeric hub."""
+def attach_source_extras(world, d, progress: Progress, depth=None) -> None:
+    """Called after an Amulet-native world was converted into the numeric hub.  ``depth``: the
+    depthfit.DepthFit that moved the Overworld's blocks into 0 - 255 (None: they did not move)."""
     info = read_amulet_info(d)
     world.info = info
     try:
@@ -153,14 +154,16 @@ def attach_source_extras(world, d, progress: Progress) -> None:
             from .java.modern import JavaModernExtras
 
             world.extras = JavaModernExtras(d.path, progress)
-        _wrap_reader(world)
+        _wrap_reader(world, depth)
     except Exception as ex:  # noqa: BLE001
         progress.warn(tr("Entities / containers not transferred: {error}", error=ex))
 
 
-def _wrap_reader(world) -> None:
-    """Replace block entities & entities of every chunk read from the hub with
-    the ones translated directly from the original world."""
+def _wrap_reader(world, depth=None) -> None:
+    """Replace block entities & entities of every chunk read from the hub with the ones translated
+    directly from the original world.  They come at their height there: in an Overworld moved into
+    0 - 255 (depthfit) they follow their blocks, and what is still out of 0 - 255 (its blocks were
+    cut) is dropped; ``NumericChunk.cut_extras`` counts it."""
     orig = world.read_chunk
 
     def read_chunk(dim, cx, cz):
@@ -168,13 +171,42 @@ def _wrap_reader(world) -> None:
         if c is None:
             return None
         ents, tiles = world.extras.chunk_extras(dim, cx, cz)
-        if tiles is not None:
-            c.tile_entities = tiles
-        if ents is not None:
-            c.entities = ents
+        if tiles is None or ents is None:
+            return c                                          # unreadable: the hub's own (already moved)
+        c.tile_entities, c.entities = tiles, ents
+        lost_t = lost_e = 0
+        if depth is not None and depth.active and dim == OVERWORLD:
+            lost_t, lost_e = depth.move_numeric(c)
+        kept = [t for t in c.tile_entities if 0 <= _int(nbt.get(t, "y")) < 256]
+        lost_t += len(c.tile_entities) - len(kept)
+        c.tile_entities = kept
+        kept = [e for e in c.entities if _entity_inside(e)]
+        lost_e += len(c.entities) - len(kept)
+        c.entities = kept
+        c.cut_extras = (lost_t, lost_e)
         return c
 
+    def emptied_extras(dim, cx, cz):
+        """Block entities and entities of a chunk whose blocks were all cut: all of them are lost."""
+        ents, tiles = world.extras.chunk_extras(dim, cx, cz)
+        return len(tiles or ()), len(ents or ())
+
     world.read_chunk = read_chunk
+    world.emptied_extras = emptied_extras
+
+
+def _int(v) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _entity_inside(e) -> bool:
+    pos = nbt.get_tag(e, "Pos")
+    if pos is None or len(pos) != 3:
+        return True
+    return 0 <= float(pos[1].py_data) < 256
 
 
 def inject_target_extras(hub_dir: str, out_dir: str, target, info: WorldInfo, progress: Progress, version=None) -> None:
@@ -203,17 +235,19 @@ def _tidy_java_entities(out_dir: str, target) -> None:
     tidy_entity_regions(out_dir)
 
 
-def direct_extras(d, out_dir: str, target, info: WorldInfo, progress: Progress, version=None, move=None) -> None:
-    """Amulet -> Amulet conversions (Java 1.13+ <-> Bedrock); ``move``: the chunks moved (relocate)."""
+def direct_extras(d, out_dir: str, target, info: WorldInfo, progress: Progress, version=None, move=None,
+                  depth=None) -> None:
+    """Amulet -> Amulet conversions (Java 1.13+ <-> Bedrock); ``move``: the chunks moved (relocate);
+    ``depth``: the depthfit.DepthFit that moved the blocks of the Overworld (they go with them)."""
     try:
         if target.family == "bedrock" and d.kind == "java_modern":
             from .bedrock.extra import inject_from_java_modern
 
-            inject_from_java_modern(d.path, out_dir, version or target.version, info, progress, move)
+            inject_from_java_modern(d.path, out_dir, version or target.version, info, progress, move, depth)
         elif target.family == "java" and d.kind == "bedrock":
             from .java.modern import inject_from_bedrock
 
-            inject_from_bedrock(d.path, out_dir, info, progress, move)
+            inject_from_bedrock(d.path, out_dir, info, progress, move, depth)
             for name, blob in info.extra_files.items():  # maps
                 if name.startswith("data/map_"):
                     os.makedirs(os.path.join(out_dir, "data"), exist_ok=True)
@@ -222,12 +256,12 @@ def direct_extras(d, out_dir: str, target, info: WorldInfo, progress: Progress, 
         elif target.family == "java" and d.kind == "java_modern":
             from .java.modern import inject_from_java
 
-            inject_from_java(d.path, out_dir, info, progress, move)
+            inject_from_java(d.path, out_dir, info, progress, move, depth)
             _copy_java_side_files(d.path, out_dir, bool(info.player_links), _map_colors(target, version))
         elif target.family == "bedrock" and d.kind == "bedrock":
             from .bedrock.extra import copy_bedrock_extras
 
-            copy_bedrock_extras(d.path, out_dir, progress)
+            copy_bedrock_extras(d.path, out_dir, progress, depth)
     except Exception as ex:  # noqa: BLE001
         progress.warn(tr("Entities / containers not fully transferred: {error}", error=ex))
     _tidy_java_entities(out_dir, target)

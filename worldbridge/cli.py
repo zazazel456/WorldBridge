@@ -188,9 +188,10 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--tall-terrain", choices=("compress", "cut"), default="compress",
                    help=tr("128-block-high worlds (Alpha, Beta, Java 1.0 – 1.1, PE 0.x): taller mountains are "
                            "compressed (default: the surface comes down whole) or cut at y 127"))
-    c.add_argument("--depth", default="cut", metavar="cut|keep|Y",
-                   help=tr("1.18+ worlds to games that start at y 0: cut = the underground below y 0 is dropped "
-                           "(default), keep = everything kept (the world rises by 64), negative Y = kept from that y"))
+    c.add_argument("--depth", default="auto", metavar="auto|cut|keep|Y",
+                   help=tr("1.18+ worlds to games that start at y 0: auto = flat or low worlds keep their underground, "
+                           "the others are cut (default); cut = the underground below y 0 is dropped, keep = everything "
+                           "kept (the world rises by 64), negative Y = kept from that y"))
     c.add_argument("--regen", action="append", default=[], choices=("nether", "end"),
                    help=tr("do not convert the Nether / the End: the game generates them anew when first entered "
                            "(repeatable)"))
@@ -302,7 +303,7 @@ def _run(args) -> int:
                        y_offset=args.y_offset, blend=not args.no_blend, ring=not args.no_ring, bta_palette=args.bta_palette,
                        bta_y_offset=args.bta_y_offset, tall_terrain=args.tall_terrain,
                        regen=tuple({"nether": -1, "end": 1}[d] for d in dict.fromkeys(args.regen)),
-                       depth=args.depth if args.depth in ("cut", "keep") else int(args.depth))
+                       depth=args.depth if args.depth in ("auto", "cut", "keep") else int(args.depth))
         t.selection = _selection(args)
         if args.trim:
             t.trim = _trim_options(args, "trim_")
