@@ -298,6 +298,9 @@ class JavaWriteOptions:
     # (the game upgrades them from there) instead of being downgraded; 0 = none.  It must not
     # be newer than the data version the game upgrades them from (level.dat: the level's)
     player_dv: int = 0
+    # the Java release of the target (Amulet routes) and the newcontent.Tally that counts what it lacks
+    target: Optional[Tuple[int, ...]] = None
+    tally: Optional[object] = None
 
     def old_version(self) -> Optional[str]:
         """The Java version whose content (items, mobs, block entities) the output is limited to."""
@@ -693,6 +696,10 @@ def java_player_nbt(player: nbt.CompoundTag, opt: JavaWriteOptions) -> nbt.Compo
     if 1451 <= dv <= opt.player_dv:
         # already a Java 1.13+ player (Java or Bedrock source): keep it untouched, the game
         # upgrades it from its own DataVersion
+        if opt.target is not None:        # a Bedrock player carries items newer than an older target has
+            from ..newcontent import clean_player
+
+            clean_player(p, opt.target, opt.tally)
         return p
     from ..lce.world import legacy_items
 

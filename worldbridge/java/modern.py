@@ -10,7 +10,8 @@ from collections import defaultdict
 from typing import Dict, Iterator, List, Optional, Tuple
 
 from .. import entities as ent
-from .. import nbt, tiles
+from .. import gameversion as gv
+from .. import nbt, newcontent, tiles
 from ..model import NETHER, OVERWORLD, THE_END, Progress, WorldInfo
 from .region import JavaRegion, RegionWriter
 from ..i18n import tr
@@ -479,6 +480,8 @@ def inject_canon(out_dir: str, canon, progress: Progress):
     for (dim, cx, cz), (tl, el) in canon.items():
         by_region[(dim, cx >> 5, cz >> 5)].append((cx, cz, tl, el))
     n_t = n_e = 0
+    tally = newcontent.tally_of(progress)
+    jver = None                                   # (data version, its Java release) of the last chunk
     for (dim, rx, rz), entries in by_region.items():
         path = os.path.join(_folder(out_dir, dim, "region"), f"r.{rx}.{rz}.mca")
         if not os.path.exists(path):
@@ -505,6 +508,10 @@ def inject_canon(out_dir: str, canon, progress: Progress):
             dv = int(nbt.get(root, "DataVersion", 3465))
             dv_seen = dv
             tl, el = todo[(lx, lz)]
+            if jver is None or jver[0] != dv:
+                jver = (dv, gv.java_from_data_version(dv))
+            if jver[1] is not None:        # what a target older than the source does not have goes (and is counted)
+                tl, el = newcontent.clean_extras(tl, el, jver[1], tally)
             resolve_kinds(root, tl)
             apply_state_tiles(root, tl)
             new_tiles = tiles.write_list(tl, "java", data_version=dv)
@@ -515,6 +522,7 @@ def inject_canon(out_dir: str, canon, progress: Progress):
             for c in tl:  # a block entity the target version does not have: Amulet's copy of the other game's one goes too
                 if not tiles.exists_in_java(c["kind"], dv):
                     existing.pop(tuple(c["pos"]), None)
+                    tally.tiles += 1
             for t in new_tiles:
                 existing[(int(t["x"].py_data), int(t["y"].py_data), int(t["z"].py_data))] = t
                 n_t += 1
