@@ -50,6 +50,13 @@ def bedrock_120(tmp_path_factory):
         pkey = struct.pack(">ii", 8, 8)
         db.put(b"actorprefix" + pkey, nbt.dump(pig, "", little_endian=True, escape=True))
         db.put(b"digp" + struct.pack("<ii", -1, 0), pkey)       # cx = -1: its key goes on with 0xff
+        for n, (cx, cz) in enumerate(((255, -1), (-1, -300), (4, -2)), 9):    # 0xff again, negative cz, a plain negative chunk
+            k2 = struct.pack(">ii", n, n)
+            e2 = nbt.CompoundTag({"identifier": nbt.StringTag("minecraft:cow"), "UniqueID": nbt.LongTag(-4294967290 - n),
+                                  "Pos": nbt.ListTag([nbt.FloatTag(cx * 16 + 1.5), nbt.FloatTag(5.0), nbt.FloatTag(cz * 16 + 1.5)], 5),
+                                  "definitions": nbt.ListTag([], 8)})
+            db.put(b"actorprefix" + k2, nbt.dump(e2, "", little_endian=True, escape=True))
+            db.put(b"digp" + struct.pack("<ii", cx, cz), k2)
         db.put(b"actorprefix" + b"orphan!!!", nbt.dump(arm, "", little_endian=True, escape=True))
         java_player = nbt.CompoundTag({
             "DataVersion": nbt.IntTag(3700), "Pos": nbt.pos_list(5.5, 5.0, 5.5),
@@ -198,6 +205,41 @@ def test_other_targets_leave_them_out_and_say_what_they_held(tmp_path, unfinishe
     assert (0, 0) not in set(reg.chunks()) and len(list(reg.chunks())) == len(_finalized(unfinished)) - 1
     warn = [m for m in res.warnings if "had not finished" in m]
     assert warn and "block entities" in warn[0]
+
+
+def _all_actors(path):
+    """(unique id, identifier) of every actor reachable from a digp list or a 0x32 list; a digp entry whose actor
+    record is gone counts as ('missing',)."""
+    db = _db(path)
+    try:
+        out = []
+        for k, v in db.iterate():
+            k, v = bytes(k), bytes(v)
+            if k.startswith(b"digp"):
+                for i in range(0, len(v), 8):
+                    raw = _get(db, b"actorprefix" + v[i:i + 8])
+                    out.extend((int(nbt.get(a, "UniqueID")), str(nbt.get(a, "identifier"))) for a in read_nbt_list(raw)) if raw \
+                        else out.append(("missing",))
+            elif len(k) in (9, 13) and k[-1] == ENTITY_TAG:
+                out.extend((int(nbt.get(a, "UniqueID")), str(nbt.get(a, "identifier"))) for a in read_nbt_list(v))
+        return sorted(out, key=str)
+    finally:
+        db.close()
+
+
+def test_every_actor_survives_bedrock_to_bedrock_latest(tmp_path, bedrock_120):
+    """Chunks with negative coordinates and digp keys that go on with 0xff (cx = -1, 255) lost their actors to an orphan
+    sweep that iterated the digp keys with a too short range (offroaders: 25 of 108)."""
+    src = _all_actors(bedrock_120)
+    assert len(src) == 6 and ("missing",) not in src
+    out = str(tmp_path / "latest")
+    convert(bedrock_120, out, TargetSpec(family="bedrock", version=(1, 21, 0), ring=False))
+    assert _all_actors(out) == src
+    old = str(tmp_path / "old")
+    res = convert(bedrock_120, old, TargetSpec(family="bedrock", version=(1, 16, 220), ring=False))
+    got = _all_actors(old)
+    assert len(got) == len(src) - 1 and ("missing",) not in got                  # all but the armadillo, which 1.16 lacks
+    assert any("1 entities" in m for m in res.warnings)
 
 
 def test_actors_of_a_chunk_with_a_negative_x_are_not_taken_for_orphans(tmp_path, bedrock_120):
