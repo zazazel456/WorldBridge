@@ -39,6 +39,17 @@ WORLD_SIZES = {
     320: ("Large 5120×5120", 8),
 }
 
+# The End of the LCE games is a fixed square centred on chunk 0, 0 (the same on every platform).
+# Up to TU43 it is 18 x 18 chunks: ChunkSource.h of the game's source has END_LEVEL_MAX_WIDTH = END_LEVEL_MIN_WIDTH
+# = 18 ("fix the size of the end for all platforms, 54 / 3"), and every save from TU12 to TU43 has exactly
+# 324 End chunks in x, z -9..8.  The saves from TU46 on (the End with its outer islands and cities) have End
+# chunks at x -6..5, z -6..30: no centred square of 18 holds them (the game's chunk cache is a centred square,
+# index = chunk + size / 2), and no constant for it is in the source we have.  64 x 64 (chunks -32..31, the four
+# region files DIM1/r.{-1,0}.{-1,0}) is the smallest region-aligned square that holds them, and the window
+# je2be's LCE reader scans for the End (kLengthEndRegions = 1).
+END_SIZE_OLD = 18
+END_SIZE_NEW = 64
+
 # LCE profiles: which numeric blocks the target game knows and which formats it writes
 @dataclass(frozen=True)
 class LCEProfile:
@@ -49,6 +60,7 @@ class LCEProfile:
     allowed: frozenset
     tiles: Optional[frozenset] = None  # allowed block entity ids (None = any)
     entities: Optional[frozenset] = None  # allowed entity ids (None = any)
+    end_size: int = END_SIZE_OLD  # chunks across the End the game keeps (centred on 0, 0)
 
 
 def _profiles() -> Dict[str, LCEProfile]:
@@ -56,8 +68,8 @@ def _profiles() -> Dict[str, LCEProfile]:
         p.key: p
         for p in (
             LCEProfile("tu31", N_("TU31 – 1.8 blocks (neoLegacy on PC, Bountiful consoles)"), 9, 9, blk.java_upto("1.8")),
-            LCEProfile("tu46", N_("TU46 – 1.9 blocks (Elytra Update)"), 9, 9, blk.java_upto("1.9")),
-            LCEProfile("tu54", N_("TU54+ – 1.12 blocks (World of Color)"), 9, 9, blk.java_upto("1.12")),
+            LCEProfile("tu46", N_("TU46 – 1.9 blocks (Elytra Update)"), 9, 9, blk.java_upto("1.9"), end_size=END_SIZE_NEW),
+            LCEProfile("tu54", N_("TU54+ – 1.12 blocks (World of Color)"), 9, 9, blk.java_upto("1.12"), end_size=END_SIZE_NEW),
         )
     }
 
@@ -78,14 +90,15 @@ def platform_sizes(platform: str) -> Tuple[int, ...]:
     return (54,) if platform in OLD_GEN else tuple(WORLD_SIZES)
 
 
-def map_area(dim: int, size: int, offset_x: int, offset_z: int) -> Tuple[int, int, int, int]:
+def map_area(dim: int, size: int, offset_x: int, offset_z: int, end_size: int = END_SIZE_OLD) -> Tuple[int, int, int, int]:
     """The source chunks ``[x0, x1) × [z0, z1)`` that land in an LCE map of ``size`` chunks whose chunk
-    0 is the source chunk ``(offset_x, offset_z)`` (``LCEWriter.target_coords`` keeps exactly these)."""
+    0 is the source chunk ``(offset_x, offset_z)`` (``LCEWriter.target_coords`` keeps exactly these);
+    ``end_size``: the End of the target's profile (``LCEProfile.end_size``)."""
     scale = WORLD_SIZES.get(size, ("", 3))[1]
     if dim == NETHER:
         size, ox, oz = max(18, size // scale), offset_x // scale, offset_z // scale
     elif dim == THE_END:
-        size, ox, oz = 18, 0, 0
+        size, ox, oz = end_size, 0, 0
     else:
         ox, oz = offset_x, offset_z
     lo, hi = -(size // 2), size - size // 2
@@ -270,6 +283,9 @@ class LCEWriteOptions:
     chunk_format: Optional[int] = None  # override chunk version (7 = NBT)
     world_name: Optional[str] = None
     host_player_id: Optional[str] = None  # XUID / file name for the host player (PC port, Xbox)
+    # LCE → LCE: the End chunks [x0, x1) × [z0, z1) of the source (it is a save the game itself wrote, so
+    # all of them are kept, whatever the End of the target's profile)
+    keep_end: Optional[Tuple[int, int, int, int]] = None
 
 
 class LCEWriter:
@@ -293,9 +309,18 @@ class LCEWriter:
         if dim == NETHER:
             size = max(18, size // scale)
         elif dim == THE_END:
-            size = 18
+            size = self.profile.end_size
         half = size // 2
         return -half, size - half  # [lo, hi)
+
+    def area(self, dim: int) -> Tuple[int, int, int, int]:
+        """The chunks ``[x0, x1) × [z0, z1)`` the map keeps, in the coordinates of the converted world."""
+        lo, hi = self.bounds(dim)
+        x0, x1, z0, z1 = lo, hi, lo, hi
+        if dim == THE_END and self.opt.keep_end is not None:
+            kx0, kx1, kz0, kz1 = self.opt.keep_end
+            x0, x1, z0, z1 = min(x0, kx0), max(x1, kx1), min(z0, kz0), max(z1, kz1)
+        return x0, x1, z0, z1
 
     def target_coords(self, dim: int, cx: int, cz: int) -> Optional[Tuple[int, int]]:
         ox, oz = self.opt.offset_x, self.opt.offset_z
@@ -305,8 +330,8 @@ class LCEWriter:
         elif dim == THE_END:
             ox = oz = 0
         tx, tz = cx - ox, cz - oz
-        lo, hi = self.bounds(dim)
-        if lo <= tx < hi and lo <= tz < hi:
+        x0, x1, z0, z1 = self.area(dim)
+        if x0 <= tx < x1 and z0 <= tz < z1:
             return tx, tz
         return None
 
@@ -354,11 +379,17 @@ class LCEWriter:
             c.terrain_populated = 2046 if chunk.terrain_populated else 0
         if chunk.lce_heightmap is not None and n == 0:
             c.heightmap = chunk.lce_heightmap
-        ents = [e for e in (shift_entity(x, dx, dz) for x in chunk.entities) if e is not None]
-        if self.profile.entities is not None:
-            ents = [e for e in (_restrict_entity(x, self.profile.entities) for x in ents) if e is not None]
         # what the game has of the items, enchantments and entities (the report counts the rest)
         self.compat.dropped = {}
+        ents = []
+        for x in chunk.entities:
+            e = shift_entity(x, dx, dz)
+            if e is not None:
+                ents.append(e)
+            elif ids.entity_to_old(nbt.get(x, "id", ""))[0] is None:
+                self.compat._drop(f"entity {nbt.get(x, 'id', '')}")           # no such mob in the LCE id scheme
+        if self.profile.entities is not None:
+            ents = [e for e in (_restrict_entity(x, self.profile.entities) for x in ents) if e is not None]
         c.entities = [x for x in (self.compat.entity(e) for e in ents) if x is not None]
         c.tile_entities = [self.compat.holder(t) for t in
                            sanitize_tiles(chunk.tile_entities, c.blocks, dx, dz, self.profile.tiles, lce=True)]
@@ -468,7 +499,7 @@ class LCEWriter:
         if self.dropped:
             items = sum(n for w, n in self.dropped.items() if w.startswith("item"))
             ench = sum(n for w, n in self.dropped.items() if w.startswith("enchantment"))
-            ents = sorted({w.split(" ", 1)[1] for w in self.dropped if w.startswith("entity")})
+            ents = sorted({w.split(" ", 1)[1].split(":")[-1] for w in self.dropped if w.startswith("entity")})
             parts = ([tr("{n} items", n=items)] if items else []) + ([tr("{n} enchantments", n=ench)] if ench else []) + \
                 ([tr("the entities {names}", names=", ".join(ents))] if ents else [])
             self.progress.warn(tr("{version} does not have {what} of the source world: removed (the game does not know "

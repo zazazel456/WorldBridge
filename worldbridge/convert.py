@@ -473,7 +473,10 @@ def _finite_area(t: TargetSpec, spawn) -> Optional[Dict[int, Tuple[int, int, int
         from .lce.world import map_area
 
         size, ox, oz = _lce_layout(t, spawn)
-        areas = {dim: map_area(dim, size, ox, oz) for dim in (OVERWORLD, NETHER, THE_END)}
+        from .lce.world import PROFILES, resolve_profile
+
+        end = PROFILES[resolve_profile(t.lce_platform, t.lce_profile)].end_size
+        areas = {dim: map_area(dim, size, ox, oz, end) for dim in (OVERWORLD, NETHER, THE_END)}
     else:
         return None
     m = _AREA_MARGIN
@@ -695,6 +698,10 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
         # where the chunks land in the converted world (the same as ``coords`` unless they are moved)
         placed = {dim: move.coords(dim, cs) for dim, cs in coords.items()}
         writer = _make_writer(target, hub_dir, progress, src, move.spawn(src.info) if move.active else None)
+        if target.family == "lce" and d.kind == "lce" and placed.get(THE_END):
+            # LCE → LCE: every End chunk of the source is kept (the game wrote them, in the End of its version)
+            xs, zs = zip(*placed[THE_END])
+            writer.opt.keep_end = (min(xs), max(xs) + 1, min(zs), max(zs) + 1)
         if outside and hasattr(writer, "skipped_outside"):
             writer.skipped_outside += outside              # counted with the ones the writer leaves out
         total = sum(len(v) for v in coords.values()) or 1

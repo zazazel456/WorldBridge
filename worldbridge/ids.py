@@ -173,7 +173,7 @@ def tile_to_old(tid: str) -> Optional[str]:
         return None
     if ":" not in tid and tid[:1].isupper():
         return tid
-    n = tid.split(":", 1)[-1]
+    n = tid.split(":", 1)[-1].lower()               # the TU69+ saves write "minecraft:ender_Chest"
     if n.endswith("_shulker_box"):
         n = "shulker_box"
     if n.endswith("_bed"):
