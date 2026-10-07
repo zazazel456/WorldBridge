@@ -253,6 +253,8 @@ class HeightFit:
         cs = np.concatenate([np.zeros((1, 16, 16), np.int32), np.cumsum(prot, axis=0, dtype=np.int32)])
         for z, x in zip(*np.nonzero(s)):
             sh, a0 = int(s[z, x]), int(start[z, x])
+            if a0 < 1:                                                # surface at the very bottom: nothing to move
+                continue
             col = cs[:, z, x]
             if col[a0 + sh] == col[a0]:
                 continue

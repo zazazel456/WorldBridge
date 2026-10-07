@@ -86,6 +86,16 @@ def test_float_positions_move_with_the_ground():
     assert e["Pos"].list_data_type == 6 and float(e["Pos"][1].py_data) < 201.0
 
 
+def test_a_column_at_the_very_bottom_is_left_alone():
+    chunks = _column_world({(x, z): 200 for x in range(-1, 2) for z in range(-1, 2)})
+    chunks[(0, 0)].blocks[255, 0, 0] = 5               # something built in the column
+    fit = _fit(chunks)
+    fit.heights[(0, 0)][0, 0] = 2                      # sky-island maps: a surface under the band's start
+    fit.shifts(0, 0)[0, 0] = 5
+    c = fit.apply(chunks[(0, 0)])                      # (used to raise: argmin of an empty sequence)
+    assert int(np.nonzero(np.asarray(c.blocks[:, 8, 8]))[0].max()) < 200
+
+
 def _hub(tmp_path, heights):
     hub = str(tmp_path / "hub")
     w = JavaNumericWriter(hub, JavaWriteOptions(kind="anvil"), Progress())
