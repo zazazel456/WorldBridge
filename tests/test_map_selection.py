@@ -198,3 +198,88 @@ def test_biomes_offered_follow_the_game():
     assert 17 not in biomes.available("java", (1, 18))              # desert hills: gone in 1.18
     assert biomes.available("java", (1, 6, 4)) == biomes.JAVA_12 and biomes.available("pe_old") == ()
     assert biomes.parse("Mega Spruce Taiga") == 160 and biomes.parse("windswept_hills") == 3
+
+
+# ---------------------------------------------------------------- the map canvas (offscreen)
+
+
+def _canvas():
+    import os
+
+    import pytest
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    from worldbridge.gui.mapwidget import MapCanvas
+
+    c = MapCanvas()
+    c.resize(600, 400)
+    c.show()
+    app.processEvents()
+    return c
+
+
+def _drag(c, a, b, right=False):
+    from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    button = Qt.RightButton if right else Qt.LeftButton
+
+    def ev(t, p):
+        return QMouseEvent(t, QPointF(p), QPointF(p), button, button if t != QEvent.MouseButtonRelease else Qt.NoButton,
+                           Qt.NoModifier)
+
+    c.mousePressEvent(ev(QEvent.MouseButtonPress, QPoint(*a)))
+    c.mouseMoveEvent(ev(QEvent.MouseMove, QPoint(*b)))
+    c.mouseReleaseEvent(ev(QEvent.MouseButtonRelease, QPoint(*b)))
+
+
+def test_a_rubber_band_selects_nothing_before_the_tiles_exist():
+    """On a dimension that is still loading the band selected every chunk of its rectangle (470,249 at zoom
+    1/32), none of them existing, and the repaint took minutes."""
+    c = _canvas()
+    c.scale = 1 / 32
+    _drag(c, (2, 2), (598, 398))
+    assert not c.selected()
+    c.repaint()
+    c.present[0] = {(x, z) for x in range(-3, 3) for z in range(-3, 3)}      # tiles arrived: now it selects
+    c.center_on(0, 0)
+    c.scale = 4.0
+    _drag(c, (2, 2), (598, 398))
+    assert c.selected() == c.present[0]
+    _drag(c, (300, 200), (310, 210), right=True)
+    assert c.selected() < c.present[0]                                       # the right button deselects
+    c.close()
+
+
+def test_the_selection_and_heat_map_are_grouped_by_region_once_per_paint():
+    """Each region drawn scanned the whole selection (and the whole heat map): quadratic (select all on
+    160,000 chunks froze the map for seconds, 15 s at 400 x 400 on a slow machine)."""
+    class Counting(set):
+        reads = 0
+
+        def __iter__(self):
+            Counting.reads += 1
+            return super().__iter__()
+
+    class CountingDict(dict):
+        reads = 0
+
+        def items(self):
+            CountingDict.reads += 1
+            return super().items()
+
+    c = _canvas()
+    chunks = {(x, z) for x in range(-48, 48) for z in range(-48, 48)}          # 36 regions
+    c.present[0] = set(chunks)
+    c.fit(0)
+    c.selection[0] = Counting(chunks)
+    c.heat[0] = CountingDict({ch: 5 for ch in chunks})
+    c.show_heat = True
+    c._sel_img.clear()
+    c._heat_img.clear()
+    c.repaint()
+    assert Counting.reads == 1 and CountingDict.reads == 1
+    assert len(c._sel_img) >= 4 and len(c._heat_img) >= 4                        # the regions on screen were drawn
+    c.close()

@@ -211,36 +211,89 @@ def _height_map(prefix: bytes, tag: int, value: bytes, subs_raw: Optional[Dict[i
 # ------------------------------------------------------------------ single blocks
 
 
-def set_blocks(db, prefix_of, blocks: Dict[Tuple[int, int, int], Tuple[str, dict]],
-               only_if_air: bool = True) -> List[Tuple[int, int, int]]:
-    """prefix_of(cx, cz) -> the LevelDB key prefix of that chunk (dimension included)."""
-    """Put blocks (name, states) at world positions; returns the positions really changed."""
+LEGACY_SUB_BYTES = 1 + 4096 + 2048   # pre-1.2.13 sub chunk: version, block ids, block data (xzy order)
+STONE_ID = 1
+
+
+def legacy_block_at(raw: bytes, n: int) -> Optional[Tuple[int, int]]:
+    """(block id, data) of index ``n`` (x << 8 | z << 4 | y) of a pre-1.2.13 sub chunk record."""
+    if not raw or raw[0] in (8, 9) or len(raw) < LEGACY_SUB_BYTES:
+        return None
+    return raw[1 + n], (raw[4097 + (n >> 1)] >> ((n & 1) * 4)) & 15
+
+
+def _is_val_palette(palette) -> bool:
+    """1.2.13 - 1.12 palettes: {name, val} (numeric data), no block states."""
+    return any("val" in p and "states" not in p for p in palette)
+
+
+def _plain_stone(entry) -> bool:
+    """The stone block itself (not granite, diorite...): a stand-in written where Java has no block."""
+    if _name(entry) != "minecraft:stone":
+        return False
+    try:
+        if "val" in entry:
+            return int(entry["val"].py_int) == 0
+        st = entry["states"] if "states" in entry else {}
+        return "stone_type" not in st or str(st["stone_type"].py_str) == "stone"
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def set_blocks(db, prefix_of, blocks: Dict[Tuple[int, int, int], tuple],
+               only_if_air: bool = True, replace_stone: bool = False) -> List[Tuple[int, int, int]]:
+    """Put blocks at world positions; returns the positions really changed.
+
+    ``prefix_of(cx, cz)``: the LevelDB key prefix of that chunk (dimension included).  A block is
+    (name, states) or (name, states, numeric id): states ``{"block_data": n}`` is a block of a
+    version before 1.13 (PyMCTranslate's form), written as ``{name, val}`` in 1.2.13 - 1.12 palettes
+    and as id + data in the older sub chunks; a block that does not suit the sub chunk's format
+    (block states in a numeric chunk or the reverse) is not placed.  With ``only_if_air`` a block
+    goes only where there is air (and plain stone, with ``replace_stone``: the stand-in a Java
+    world converted before frames became air has under every frame)."""
     groups: Dict[Tuple[int, int, int], List] = {}
     for (x, y, z), st in blocks.items():
         groups.setdefault((x >> 4, y >> 4, z >> 4), []).append(((x & 15, y & 15, z & 15), (x, y, z), st))
     done = []
     for (cx, sy, cz), items in groups.items():
         key = prefix_of(cx, cz) + bytes([SUBCHUNK]) + struct.pack("b", sy)
-        raw = db.get(key)
+        try:
+            raw = db.get(key)             # a missing sub chunk raises KeyError (the frame's chunk has no blocks there)
+        except KeyError:
+            raw = None
         if raw is None:
             continue
-        sc = SubChunk.decode(bytes(raw))
+        raw = bytes(raw)
+        if raw and raw[0] not in (8, 9):
+            new = _set_legacy(raw, items, only_if_air, replace_stone, done)
+            if new is not None:
+                db.put(key, new)
+            continue
+        sc = SubChunk.decode(raw)
         if sc is None or not sc.storages:
             continue
         st0 = sc.storages[0]
+        val_palette = _is_val_palette(st0.palette)
         version = None
         for p in st0.palette:
             if "version" in p:
                 version = p["version"]
                 break
         changed = False
-        for (lx, ly, lz), pos, (name, states) in items:
-            n = lx << 8 | lz << 4 | ly
-            if only_if_air and _name(st0.palette[int(st0.idx[n])]) != AIR:
+        for (lx, ly, lz), pos, block in items:
+            name, states = block[0], block[1]
+            if (set(states) == {"block_data"}) != val_palette:
                 continue
-            entry = an.CompoundTag({"name": an.StringTag(name), "states": an.CompoundTag(states)})
-            if version is not None:
-                entry["version"] = version
+            n = lx << 8 | lz << 4 | ly
+            here = st0.palette[int(st0.idx[n])]
+            if only_if_air and _name(here) != AIR and not (replace_stone and _plain_stone(here)):
+                continue
+            if val_palette:
+                entry = an.CompoundTag({"name": an.StringTag(name), "val": an.ShortTag(int(states["block_data"].py_int))})
+            else:
+                entry = an.CompoundTag({"name": an.StringTag(name), "states": an.CompoundTag(states)})
+                if version is not None:
+                    entry["version"] = version
             key_bytes = an.NamedTag(entry, "").save_to(little_endian=True)
             pi = None
             for j, p in enumerate(st0.palette):
@@ -256,3 +309,26 @@ def set_blocks(db, prefix_of, blocks: Dict[Tuple[int, int, int], Tuple[str, dict
         if changed:
             db.put(key, sc.encode())
     return done
+
+
+def _set_legacy(raw: bytes, items, only_if_air: bool, replace_stone: bool, done: list) -> Optional[bytes]:
+    """The blocks of a pre-1.2.13 sub chunk (id + data nibbles): only blocks with a numeric id."""
+    if len(raw) < LEGACY_SUB_BYTES:
+        return None
+    buf = bytearray(raw)
+    changed = False
+    for (lx, ly, lz), pos, block in items:
+        states = block[1]
+        if len(block) < 3 or block[2] is None or set(states) != {"block_data"}:
+            continue
+        n = lx << 8 | lz << 4 | ly
+        if only_if_air and buf[1 + n] != 0 and not (replace_stone and legacy_block_at(raw, n) == (STONE_ID, 0)):
+            continue
+        buf[1 + n] = int(block[2]) & 255
+        data = int(states["block_data"].py_int) & 15
+        j = 4097 + (n >> 1)
+        shift = (n & 1) * 4
+        buf[j] = (buf[j] & (0xF0 >> shift)) | (data << shift)
+        done.append(pos)
+        changed = True
+    return bytes(buf) if changed else None

@@ -294,6 +294,11 @@ def _install_legacy_fallback(version_obj=None) -> None:
         return got if isinstance(got[0], Block) and got[0].base_name != "air" else None
 
     def from_universal(self, block, *a, **kw):
+        if block.base_name == "item_frame_block" and self._parent_version.platform == "java":
+            # Bedrock's frame is a block with a block entity, Java's an entity (written from the block
+            # entity): the block is air, PyMCTranslate's stand-in is stone, which pops the frame off
+            old = tuple(self._parent_version.version_number) < (1, 13)
+            return (Block("minecraft", "air", {"block_data": an.IntTag(0)} if old else {}), None, False)
         out = orig(self, block, *a, **kw)
         try:
             res = out[0]
@@ -400,18 +405,20 @@ def amulet_convert(src_path: str, dst_path: str, platform: str, version, progres
         level.level_wrapper.all_chunk_coords = only_selected
     _install_legacy_fallback()
     # a world that goes down to y -64 written to a game whose world starts at y 0: the cut ground gets
-    # the bedrock floor the old games have
+    # the bedrock floor the old games have (not when everything is kept: its own bedrock moved to y 0)
     try:
         deep = level.level_wrapper.bounds("minecraft:overworld").min[1] < 0
     except Exception:  # noqa: BLE001
         deep = False
-    floor = deep and tuple(version)[:2] < (1, 18)
-    if depth is not None and not (deep and floor):
+    old_game = deep and tuple(version)[:2] < (1, 18)
+    if depth is not None and not old_game:
         depth = None
+    floor = old_game and not (depth is not None and depth.bottom <= depth.low)
     if depth is not None:
         depth.used = True
     painted = {AMULET_DIMS[d]: v for d, v in (getattr(selection, "biomes", None) or {}).items() if v}
-    job = _AmuletJob(src_path, platform, version, depth, floor, painted, move)
+    job = _AmuletJob(src_path, platform, version, depth, floor, painted, move,
+                     keep_unfinished=bool(getattr(selection, "keep_unfinished", False)))
     if platform in ("java", "bedrock") and (_java_world(src_path) or _bedrock_world(src_path)):
         from .parallel import can_fork, workers
 
@@ -465,19 +472,25 @@ def _bedrock_world(path: str) -> bool:
 class _AmuletJob:
     """What happens to every chunk Amulet reads (the same in this process and in the workers)."""
 
-    def __init__(self, src, platform, version, depth, floor, painted, move):
+    def __init__(self, src, platform, version, depth, floor, painted, move, keep_unfinished=False):
         self.src, self.platform, self.version = src, platform, tuple(version)
         self.depth, self.floor, self.painted, self.move = depth, floor, painted, move
+        self.keep_unfinished = keep_unfinished
 
     def hook(self, level) -> None:
         depth, floor, painted, move = self.depth, self.floor, self.painted, self.move
-        if not (floor or painted or move is not None):
+        keep = self.keep_unfinished
+        if not (depth is not None or floor or painted or move is not None or keep):
             return
         by_dim = {name: dim for dim, name in AMULET_DIMS.items()}
         load = level.level_wrapper.load_chunk
+        if keep:
+            from amulet.api.chunk.status import StatusFormats
 
         def transformed(cx, cz, dimension, *a, **kw):
             chunk = load(cx, cz, dimension, *a, **kw)
+            if keep and chunk.status.as_type(StatusFormats.Java_14) != "full":
+                chunk.status = "full"        # Amulet's save only writes finished chunks (the state is restored afterwards)
             if depth is not None and dimension == "minecraft:overworld":
                 depth.apply(chunk)
             if floor and dimension == "minecraft:overworld":
@@ -558,7 +571,8 @@ def _amulet_part(k: int):
         if depth is not None and depth.fit is not None:
             starts, moved_d = depth.fit._starts, depth.fit.moved_columns - moved
         top = job.move.top if job.move is not None else _UNSET
-        return total, starts, moved_d, (None if top is _UNSET else (top,))
+        emptied = depth.emptied if depth is not None else None
+        return total, starts, moved_d, (None if top is _UNSET else (top,)), emptied
     finally:
         level.close()
 
@@ -654,12 +668,14 @@ def _amulet_parts(job, parts, coords, total, dst_path, progress, views) -> int:
     out = tempfile.mkdtemp(prefix=".worldbridge_parts_", dir=parent)
     try:
         saved = 0
-        for k, (n, starts, moved, top) in enumerate(_run_parts(job, parts, "save", out, progress, total,
-                                                               N_("Translating blocks (Amulet)"), views)):
+        for k, (n, starts, moved, top, emptied) in enumerate(_run_parts(job, parts, "save", out, progress, total,
+                                                                         N_("Translating blocks (Amulet)"), views)):
             saved += n
             if starts:
                 depth.fit._starts.update(starts)
                 depth.fit.moved_columns += moved
+            if emptied:
+                depth.emptied.update(emptied)
             if top is not None:
                 job.move.top = top[0]
         if job.platform == "bedrock":
@@ -793,7 +809,7 @@ LEGACY_LEVEL_DV = 1343   # Java 1.12.2: the level and players rebuilt in the num
 SPAWN_COMPOUND_DV = 4548  # Java 1.21.9: spawn: {dimension, pos, yaw, pitch} replaces SpawnX/Y/Z
 
 
-def write_java_level_dat(path: str, info: WorldInfo, target_version) -> None:
+def write_java_level_dat(path: str, info: WorldInfo, target_version, progress: Optional[Progress] = None) -> None:
     """The level.dat (and the linked players' playerdata) of a Java world opened by
     ``target_version``, which upgrades it with its data fixers.
 
@@ -803,8 +819,11 @@ def write_java_level_dat(path: str, info: WorldInfo, target_version) -> None:
       Java 1.15.2 level, so its players' items keep their modern names;
     * everything else is a Java 1.12.2 level with players in the numeric layout."""
     from .java.numeric import JavaWriteOptions, build_java_level, write_java_players
+    from .newcontent import tally_of
 
     target_dv = java_data_version(target_version)
+    tally = tally_of(progress) if progress is not None else None
+    target = tuple(target_version)
     level_dv = int(nbt.get(info.level, "DataVersion", 0) or 0)
     players = "playerdata"
     if 1451 <= level_dv <= target_dv:
@@ -821,7 +840,7 @@ def write_java_level_dat(path: str, info: WorldInfo, target_version) -> None:
         # the level fields are rebuilt in the 1.12 layout: the game turns them into
         # WorldGenSettings only from data older than 1.16 (data version 2550)
         dv = host_dv if 1451 <= host_dv < 2550 and host_dv <= target_dv else LEGACY_LEVEL_DV
-        data = build_java_level(info, JavaWriteOptions(kind="anvil", player_dv=dv))
+        data = build_java_level(info, JavaWriteOptions(kind="anvil", player_dv=dv, target=target, tally=tally))
         data["DataVersion"] = nbt.IntTag(dv)
         data["Version"] = nbt.CompoundTag({"Id": nbt.IntTag(dv), "Name": nbt.StringTag(""), "Snapshot": nbt.ByteTag(0)})
         if dv >= 1506 and str(nbt.get(data, "generatorName", "")).lower() == "flat":
@@ -829,7 +848,7 @@ def write_java_level_dat(path: str, info: WorldInfo, target_version) -> None:
     with open(os.path.join(path, "level.dat"), "wb") as f:
         f.write(nbt.dump(nbt.CompoundTag({"Data": data}), "", compressed=True))
     # playerdata files are upgraded from their own DataVersion
-    write_java_players(path, info, JavaWriteOptions(kind="anvil", player_dv=target_dv), players)
+    write_java_players(path, info, JavaWriteOptions(kind="anvil", player_dv=target_dv, target=target, tally=tally), players)
 
 
 PLAYERS_26 = os.path.join("players", "data")
@@ -883,19 +902,14 @@ def _flat_options() -> nbt.CompoundTag:
         "structures": nbt.CompoundTag({"village": nbt.CompoundTag()})})
 
 
-BEDROCK_GAMETYPE = {0: 0, 1: 1, 2: 2, 3: 1}
-
-
 def write_bedrock_level_dat(path: str, info: WorldInfo, version) -> None:
     """Merge the source level information into the Bedrock level.dat created by Amulet."""
     p = os.path.join(path, "level.dat")
     root = nbt.CompoundTag()
-    storage = 10
     if os.path.exists(p):
         with open(p, "rb") as f:
             raw = f.read()
         try:
-            storage = struct.unpack_from("<i", raw, 0)[0]
             root = nbt.load(raw[8:], little_endian=True, compressed=False).tag
         except Exception:  # noqa: BLE001
             root = nbt.CompoundTag()
@@ -904,7 +918,10 @@ def write_bedrock_level_dat(path: str, info: WorldInfo, version) -> None:
     root["LevelName"] = nbt.StringTag(info.name)
     root["lastOpenedWithVersion"] = nbt.ListTag([nbt.IntTag(i) for i in v], 3)
     root["MinimumCompatibleClientVersion"] = nbt.ListTag([nbt.IntTag(i) for i in v], 3)
-    root["StorageVersion"] = nbt.IntTag(10 if v[:3] >= (1, 18, 0) else 9 if v[:3] >= (1, 16, 0) else 8)
+    storage = gv.bedrock_storage_version(version)   # the header integer is the same number (Amulet's template says 9)
+    root["StorageVersion"] = nbt.IntTag(storage)
+    root["NetworkVersion"] = nbt.IntTag(gv.bedrock_protocol(version))
+    root["InventoryVersion"] = nbt.StringTag(".".join(str(i) for i in v[:3]))
     seed = nbt.get(src, "RandomSeed")
     if seed is None:
         wgs = nbt.get_tag(src, "WorldGenSettings")
@@ -913,7 +930,9 @@ def write_bedrock_level_dat(path: str, info: WorldInfo, version) -> None:
     sx, sy, sz = info.spawn
     root["SpawnX"], root["SpawnY"], root["SpawnZ"] = nbt.IntTag(sx), nbt.IntTag(sy), nbt.IntTag(sz)
     gt = int(nbt.get(src, "GameType", 0) or 0)
-    root["GameType"] = nbt.IntTag(BEDROCK_GAMETYPE.get(gt, 0))
+    from .bedrock.extra import bedrock_game_mode
+
+    root["GameType"] = nbt.IntTag(bedrock_game_mode(gt, version))   # Spectator 3 is 6 where Bedrock has it
     diff = nbt.get(src, "Difficulty")
     root["Difficulty"] = nbt.IntTag(2 if diff is None else int(diff))  # 0 is Peaceful, not "missing"
     gen = str(nbt.get(src, "generatorName", "default") or "default").lower()
@@ -942,14 +961,13 @@ def write_bedrock_level_dat(path: str, info: WorldInfo, version) -> None:
 
         for k, v in bedrock_rules(rules).items():
             root[k] = v
-    root.setdefault("NetworkVersion", nbt.IntTag(0))
     root.setdefault("Platform", nbt.IntTag(2))
     root.setdefault("SpawnMobs", nbt.ByteTag(1))
     root.setdefault("spawnMobs", nbt.ByteTag(1))
     root.setdefault("experiments", nbt.CompoundTag())
     payload = nbt.dump(root, "", little_endian=True)
     with open(p, "wb") as f:
-        f.write(struct.pack("<ii", max(storage, 8), len(payload)) + payload)
+        f.write(struct.pack("<ii", storage, len(payload)) + payload)
     with open(os.path.join(path, "levelname.txt"), "w", encoding="utf-8") as f:
         f.write(info.name)
     if info.thumbnail_png:
@@ -963,6 +981,14 @@ def read_bedrock_level_dat(path: str) -> nbt.CompoundTag:
     return nbt.load(raw[8:], little_endian=True, compressed=False).tag
 
 
+INT_MIN = -(1 << 31)
+
+
+def bedrock_spawn_unset(root: nbt.CompoundTag) -> bool:
+    """A Bedrock level.dat whose spawn was never set (Dedicated Server worlds: SpawnX/Y/Z are INT_MIN)."""
+    return any(int(nbt.get(root, k, 0) or 0) == INT_MIN for k in ("SpawnX", "SpawnZ"))
+
+
 def bedrock_info_to_java(root: nbt.CompoundTag) -> nbt.CompoundTag:
     """Bedrock level.dat -> Java-style Data compound (hub convention)."""
     out = nbt.CompoundTag()
@@ -970,10 +996,12 @@ def bedrock_info_to_java(root: nbt.CompoundTag) -> nbt.CompoundTag:
     out["RandomSeed"] = nbt.LongTag(int(nbt.get(root, "RandomSeed", 0) or 0))
     for k in ("SpawnX", "SpawnY", "SpawnZ"):
         out[k] = nbt.IntTag(int(nbt.get(root, k, 64 if k == "SpawnY" else 0) or 0))
-    if int(out["SpawnY"].py_data) > 320 or int(out["SpawnY"].py_data) < 0:
+    if bedrock_spawn_unset(root):                    # the game picks the spawn when the world is first opened: 0, 0
+        out["SpawnX"], out["SpawnZ"] = nbt.IntTag(0), nbt.IntTag(0)
+    if not -64 <= int(out["SpawnY"].py_data) <= 320:  # 32767 / INT_MIN: "on the ground"; a negative Y of 1.18+ is real
         out["SpawnY"] = nbt.IntTag(64)
     gt = int(nbt.get(root, "GameType", 0) or 0)
-    out["GameType"] = nbt.IntTag(gt if gt in (0, 1, 2) else 0)
+    out["GameType"] = nbt.IntTag(gt if gt in (0, 1, 2) else 3 if gt == 6 else 0)   # 6: Spectator (3 is not)
     diff = nbt.get(root, "Difficulty")
     out["Difficulty"] = nbt.ByteTag(2 if diff is None else int(diff))  # 0 is Peaceful, not "missing"
     out["Time"] = nbt.LongTag(int(nbt.get(root, "currentTick", 0) or 0))

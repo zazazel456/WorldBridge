@@ -12,12 +12,13 @@ the numeric one (LCE, old Java, Pocket Edition, the DFU hub) moves the hub chunk
 
 from __future__ import annotations
 
+import math
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 
 from . import nbt
-from .model import NETHER, OVERWORLD, Progress, WorldInfo, dimension_of
+from .model import NETHER, OVERWORLD, THE_END, Progress, WorldInfo, dimension_of
 from .i18n import tr
 
 Chunk = Tuple[int, int]
@@ -33,6 +34,7 @@ class Relocation:
         self.dest: Optional[Tuple[int, int]] = getattr(sel, "move_to", None)
         self.moves: Dict[int, Chunk] = {}
         self.top: Optional[int] = None              # ground height at the destination (new spawn)
+        self.new_spawn: Optional[Tuple[int, int, int]] = None   # set by apply_info
         if self.dest is None or not sel.chunks:
             return
         bx, bz = (int(v) for v in self.dest)
@@ -121,7 +123,7 @@ class Relocation:
     def _moved(self, dim: int, x: float, z: float) -> Optional[Tuple[float, float]]:
         """Where a point of a moved chunk goes (None: its chunk was not selected)."""
         cs = (self.sel.chunks or {}).get(dim) or set()
-        if (int(x) >> 4, int(z) >> 4) not in cs:
+        if (math.floor(x) >> 4, math.floor(z) >> 4) not in cs:      # floor: x = -0.7 is in chunk -1, not 0
             return None
         dx, dz = self.delta(dim)
         return x + dx * 16, z + dz * 16
@@ -134,6 +136,8 @@ class Relocation:
         p = self._moved(OVERWORLD, x, z)
         if p is not None:
             return int(p[0]), int(y), int(p[1])
+        if self.sel.spawn is not None:                # chosen with --spawn: exactly there, not on the ground at the destination
+            return int(x), int(y), int(z)
         bx, bz = self.dest or (0, 0)
         return int(bx), int(self.top if self.top is not None else y), int(bz)
 
@@ -141,6 +145,7 @@ class Relocation:
         if not self.active:
             return
         sx, sy, sz = self.spawn(info)
+        self.new_spawn = (sx, sy, sz)
         lv = info.level
         lv["SpawnX"], lv["SpawnY"], lv["SpawnZ"] = nbt.IntTag(sx), nbt.IntTag(sy), nbt.IntTag(sz)
         if isinstance(nbt.get_tag(lv, "spawn"), nbt.CompoundTag):
@@ -154,7 +159,7 @@ class Relocation:
             dim = dimension_of(p)
             new = self._moved(dim, x, z)
             if new is not None:
-                p["Pos"] = nbt.ListTag([nbt.DoubleTag(new[0]), pos[1], nbt.DoubleTag(new[1])], 6)
+                p["Pos"] = nbt.pos_list(new[0], pos[1], new[1])
                 continue
             old = nbt.get(p, "Dimension", 0)
             p["Dimension"] = nbt.StringTag("minecraft:overworld") if isinstance(old, str) else nbt.IntTag(0)
@@ -164,6 +169,24 @@ class Relocation:
             progress.log(self.describe() + " " + tr("Spawn: {x}, {y}, {z}.", x=sx, y=sy, z=sz))
             if sent:
                 progress.log(tr("{n} players were outside the moved chunks: they start at the new spawn.", n=sent))
+
+    def move_bedrock_player(self, root: nbt.CompoundTag) -> bool:
+        """A raw Bedrock player record (``~local_player``): moved with its chunk, or put at the new spawn of the
+        Overworld when it stood outside the moved chunks (as ``apply_info`` does for the other formats).  Pos is the
+        eye position: 1.62 above the feet."""
+        pos = nbt.get_tag(root, "Pos")
+        if not self.active or pos is None or len(pos) != 3:
+            return False
+        dim = {0: OVERWORLD, 1: NETHER, 2: THE_END}.get(int(nbt.get(root, "DimensionId", 0) or 0), OVERWORLD)
+        x, y, z = (float(v.py_data) for v in pos)
+        new = self._moved(dim, x, z)
+        if new is not None:
+            root["Pos"] = nbt.ListTag([nbt.FloatTag(new[0]), nbt.FloatTag(y), nbt.FloatTag(new[1])], 5)
+            return True
+        sx, sy, sz = self.new_spawn or (int(self.dest[0]), int(self.top if self.top is not None else y), int(self.dest[1]))
+        root["DimensionId"] = nbt.IntTag(0)
+        root["Pos"] = nbt.ListTag([nbt.FloatTag(sx + 0.5), nbt.FloatTag(sy + 1.62), nbt.FloatTag(sz + 0.5)], 5)
+        return True
 
     def moved_selection(self):
         """The selection in the coordinates of the converted world."""
@@ -193,8 +216,7 @@ def shift_entity(e, bx: int, bz: int):
         return e
     pos = nbt.get_tag(e, "Pos")
     if pos is not None and len(pos) == 3:
-        e["Pos"] = nbt.ListTag([nbt.DoubleTag(float(pos[0].py_data) + bx), pos[1],
-                                nbt.DoubleTag(float(pos[2].py_data) + bz)], 6)
+        e["Pos"] = nbt.pos_list(float(pos[0].py_data) + bx, pos[1], float(pos[2].py_data) + bz)
     for kx, kz in (("TileX", "TileZ"), ("xTile", "zTile"), ("HomePosX", "HomePosZ"), ("BoundX", "BoundZ")):
         if kx in e and kz in e:
             for k, d in ((kx, bx), (kz, bz)):

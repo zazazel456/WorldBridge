@@ -182,7 +182,10 @@ def _to_java_ids(blocks: np.ndarray):
 
 
 def load_classic(path: str) -> FiniteWorld:
-    raw = gzip.open(path).read()
+    with open(path, "rb") as f:
+        raw = f.read()
+    if raw[:2] == b"\x1f\x8b":            # usually gzipped, but saved uncompressed by some tools
+        raw = gzip.decompress(raw)
     info = WorldInfo()
     name = "Classic World"
     spawn: Optional[tuple] = None
@@ -190,6 +193,10 @@ def load_classic(path: str) -> FiniteWorld:
         w, l, h = 256, 256, 64
         blocks = np.frombuffer(raw, np.uint8)
     else:
+        if raw[:2] == b"\xac\xed":          # the serialised Level without the magic number and version
+            raw = struct.pack(">IB", MAGIC, 2) + raw
+        if len(raw) < 5:
+            raise ValueError("not a Minecraft Classic level")
         magic, ver = struct.unpack_from(">IB", raw, 0)
         if magic != MAGIC:
             raise ValueError("not a Minecraft Classic level")

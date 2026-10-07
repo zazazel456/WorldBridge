@@ -33,6 +33,23 @@ def test_java_settings_are_edited_and_saved_with_a_backup(tmp_path):
     assert again.get(_field(again, "Spawn Y")) == 99 and again.get(_field(again, "Seed")) == -42
 
 
+def test_second_save_keeps_the_original_backup(tmp_path):
+    src = SyntheticWorld(radius=1)
+    out = str(tmp_path / "java")
+    wr = JavaNumericWriter(out, JavaWriteOptions(kind="anvil"), Progress())
+    wr.add_chunk(0, src.read_chunk(0, 0, 0))
+    wr.finish(src.info)
+    w = open_world(out)
+    w.set(_field(w, "Name"), "First edit")
+    w.save()
+    w.set(_field(w, "Name"), "Second edit")
+    w.save()
+    with open(os.path.join(out, "level.dat.wb-backup"), "rb") as f:
+        root = nbt.load(f.read()).tag
+    assert str(nbt.get(root["Data"], "LevelName")) == "Test World"
+    assert open_world(out).get(_field(open_world(out), "Name")) == "Second edit"
+
+
 def test_old_pocket_edition_level_dat(tmp_path):
     root = nbt.CompoundTag({"LevelName": nbt.StringTag("PE"), "RandomSeed": nbt.LongTag(7), "GameType": nbt.IntTag(0),
                             "SpawnX": nbt.IntTag(1), "SpawnY": nbt.IntTag(64), "SpawnZ": nbt.IntTag(1)})

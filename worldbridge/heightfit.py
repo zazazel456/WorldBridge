@@ -253,6 +253,8 @@ class HeightFit:
         cs = np.concatenate([np.zeros((1, 16, 16), np.int32), np.cumsum(prot, axis=0, dtype=np.int32)])
         for z, x in zip(*np.nonzero(s)):
             sh, a0 = int(s[z, x]), int(start[z, x])
+            if a0 < 1:                                                # surface at the very bottom: nothing to move
+                continue
             col = cs[:, z, x]
             if col[a0 + sh] == col[a0]:
                 continue
@@ -385,7 +387,7 @@ def _move_entity(e: nbt.CompoundTag, fit: HeightFit) -> None:
     x, y, z = (float(v.py_data) for v in pos)
     ny = fit.shift_at(x, y, z)
     if ny != y:
-        e["Pos"] = nbt.ListTag([pos[0], nbt.DoubleTag(ny), pos[2]], 6)
+        e["Pos"] = nbt.pos_list(x, ny, z)
         for key in ("TileY", "APY"):                              # paintings / frames, leashed
             if key in e:
                 e[key] = nbt.IntTag(int(nbt.get(e, key)) - int(round(y - ny)))

@@ -15,6 +15,8 @@ target format supports them.
 
 from __future__ import annotations
 
+import os
+import shutil
 import threading
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Iterator, List, Optional, Tuple
@@ -22,11 +24,14 @@ from typing import Callable, Dict, Iterator, List, Optional, Tuple
 import numpy as np
 
 from . import nbt
+from .i18n import N_, tr
 
 # Dimension identifiers (Java numeric ids)
 OVERWORLD = 0
 NETHER = -1
 THE_END = 1
+# the dimensions' names for messages (translate with tr() where shown)
+DIM_LABEL = {OVERWORLD: N_("Overworld"), NETHER: N_("Nether"), THE_END: N_("End")}
 
 
 def dimension_of(player) -> int:
@@ -111,6 +116,8 @@ class NumericChunk:
     # LCE pass-through (kept when writing LCE again so LCE -> LCE is lossless)
     lce_terrain_flags: Optional[int] = None
     lce_heightmap: Optional[np.ndarray] = None
+    # block entities and entities of the source dropped with their blocks (worldbridge.depthfit)
+    cut_extras: Tuple[int, int] = (0, 0)
 
     def __post_init__(self):
         if self.blocks is None:
@@ -279,6 +286,11 @@ class Progress:
         if self._on_progress:
             self._on_progress(a + (b - a) * max(0.0, min(1.0, frac)), msg or self._stage)
 
+    def done(self, msg: str = ""):
+        """The end of a successful run: the bar reaches 100% whatever stage span was last set."""
+        self._span = (0.0, 1.0)
+        self.update(1.0, msg or tr("Completed"))
+
     def log(self, msg: str):
         if self._on_log:
             self._on_log(msg)
@@ -298,6 +310,22 @@ class Progress:
     def check(self):
         if self._cancel.is_set():
             raise ConversionCancelled()
+
+
+def copy_tree(src: str, dst: str, progress: Progress, ignore=None) -> None:
+    """``shutil.copytree`` into ``dst`` (existing folders are merged) that reports its progress file by
+    file and can be cancelled between two files."""
+    total = sum(len(files) for _r, _d, files in os.walk(src)) or 1
+    count = [0]
+
+    def copy(s, d):
+        progress.check()
+        shutil.copy2(s, d)
+        count[0] += 1
+        if count[0] % 16 == 0 or count[0] == total:
+            progress.update(count[0] / total, tr("Copying files {done}/{total}", done=count[0], total=total))
+
+    shutil.copytree(src, dst, dirs_exist_ok=True, ignore=ignore, copy_function=copy)
 
 
 UNKNOWN_BIOME = 255

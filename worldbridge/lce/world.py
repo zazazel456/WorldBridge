@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import struct
+from collections import Counter
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -13,7 +14,7 @@ import numpy as np
 from .. import blocks as blk
 from .. import entities as _ent
 from .. import ids, nbt
-from ..model import NETHER, OVERWORLD, THE_END, NumericChunk, Progress, WorldInfo, WorldSource, dimension_of
+from ..model import DIM_LABEL, NETHER, OVERWORLD, THE_END, NumericChunk, Progress, WorldInfo, WorldSource, dimension_of
 from . import chunk as lch
 from . import compat as _compat
 from . import region as lreg
@@ -23,10 +24,17 @@ from ..i18n import N_, tr
 _REGION_RE = re.compile(r"^(DIM-1|DIM1/)?r\.(-?\d+)\.(-?\d+)\.mcr$")
 # PS3 / Vita / PS4 player files: P_<12 hex>_<8 digits>_<online id>.dat (FileHeader::getValidPlayerDatFiles)
 _SONY_PLAYER = re.compile(r"^[PN]_[0-9A-Fa-f]{12}_\d{8}.*\.dat$")
+# the oldest Xbox 360 saves (save version 1, before TU1) keep the player at the top of the listing:
+# players_<XUID>.dat instead of players/<XUID>.dat
+_FLAT_PLAYER = re.compile(r"^players_(\d{1,20})\.dat$")
 SONY = ("ps3", "vita", "ps4")
 _DIM_PREFIX = {OVERWORLD: "", NETHER: "DIM-1", THE_END: "DIM1/"}
 _SPLIT_DIM = {0: OVERWORLD, 1: NETHER, 2: THE_END}
 _SPLIT_DIM_INV = {v: k for k, v in _SPLIT_DIM.items()}
+# PS4 / Xbox One ("split saves") keep the entities out of the chunks, one file per dimension:
+# [u32 BE count] then per chunk [i32 BE cx][i32 BE cz][BE NBT {Entities: [...]}] (the chunk tails have no
+# "Entities" at all); note the Nether file has no slash, like its region files
+ENTITY_FILES = {OVERWORLD: "entities.dat", NETHER: "DIM-1entities.dat", THE_END: "DIM1/entities.dat"}
 
 # world size presets (chunks across) -> (label, nether scale)
 WORLD_SIZES = {
@@ -35,6 +43,17 @@ WORLD_SIZES = {
     192: ("Medium 3072×3072", 6),
     320: ("Large 5120×5120", 8),
 }
+
+# The End of the LCE games is a fixed square centred on chunk 0, 0 (the same on every platform).
+# Up to TU43 it is 18 x 18 chunks: ChunkSource.h of the game's source has END_LEVEL_MAX_WIDTH = END_LEVEL_MIN_WIDTH
+# = 18 ("fix the size of the end for all platforms, 54 / 3"), and every save from TU12 to TU43 has exactly
+# 324 End chunks in x, z -9..8.  The saves from TU46 on (the End with its outer islands and cities) have End
+# chunks at x -6..5, z -6..30: no centred square of 18 holds them (the game's chunk cache is a centred square,
+# index = chunk + size / 2), and no constant for it is in the source we have.  64 x 64 (chunks -32..31, the four
+# region files DIM1/r.{-1,0}.{-1,0}) is the smallest region-aligned square that holds them, and the window
+# je2be's LCE reader scans for the End (kLengthEndRegions = 1).
+END_SIZE_OLD = 18
+END_SIZE_NEW = 64
 
 # LCE profiles: which numeric blocks the target game knows and which formats it writes
 @dataclass(frozen=True)
@@ -46,6 +65,7 @@ class LCEProfile:
     allowed: frozenset
     tiles: Optional[frozenset] = None  # allowed block entity ids (None = any)
     entities: Optional[frozenset] = None  # allowed entity ids (None = any)
+    end_size: int = END_SIZE_OLD  # chunks across the End the game keeps (centred on 0, 0)
 
 
 def _profiles() -> Dict[str, LCEProfile]:
@@ -53,8 +73,8 @@ def _profiles() -> Dict[str, LCEProfile]:
         p.key: p
         for p in (
             LCEProfile("tu31", N_("TU31 – 1.8 blocks (neoLegacy on PC, Bountiful consoles)"), 9, 9, blk.java_upto("1.8")),
-            LCEProfile("tu46", N_("TU46 – 1.9 blocks (Elytra Update)"), 9, 9, blk.java_upto("1.9")),
-            LCEProfile("tu54", N_("TU54+ – 1.12 blocks (World of Color)"), 9, 9, blk.java_upto("1.12")),
+            LCEProfile("tu46", N_("TU46 – 1.9 blocks (Elytra Update)"), 9, 9, blk.java_upto("1.9"), end_size=END_SIZE_NEW),
+            LCEProfile("tu54", N_("TU54+ – 1.12 blocks (World of Color)"), 9, 9, blk.java_upto("1.12"), end_size=END_SIZE_NEW),
         )
     }
 
@@ -75,14 +95,15 @@ def platform_sizes(platform: str) -> Tuple[int, ...]:
     return (54,) if platform in OLD_GEN else tuple(WORLD_SIZES)
 
 
-def map_area(dim: int, size: int, offset_x: int, offset_z: int) -> Tuple[int, int, int, int]:
+def map_area(dim: int, size: int, offset_x: int, offset_z: int, end_size: int = END_SIZE_OLD) -> Tuple[int, int, int, int]:
     """The source chunks ``[x0, x1) × [z0, z1)`` that land in an LCE map of ``size`` chunks whose chunk
-    0 is the source chunk ``(offset_x, offset_z)`` (``LCEWriter.target_coords`` keeps exactly these)."""
+    0 is the source chunk ``(offset_x, offset_z)`` (``LCEWriter.target_coords`` keeps exactly these);
+    ``end_size``: the End of the target's profile (``LCEProfile.end_size``)."""
     scale = WORLD_SIZES.get(size, ("", 3))[1]
     if dim == NETHER:
         size, ox, oz = max(18, size // scale), offset_x // scale, offset_z // scale
     elif dim == THE_END:
-        size, ox, oz = 18, 0, 0
+        size, ox, oz = end_size, 0, 0
     else:
         ox, oz = offset_x, offset_z
     lo, hi = -(size // 2), size - size // 2
@@ -98,12 +119,29 @@ def is_xuid(value: Optional[str]) -> bool:
     return bool(value) and re.fullmatch(r"\d{1,20}", value) is not None and int(value) < 1 << 64
 
 
+def player_id_ok(platform: str, value: Optional[str]) -> Optional[bool]:
+    """Whether the game of ``platform`` loads a player from ``players/<value>.dat``.  Real saves:
+    Windows64 / Xbox 360 (Xbox One) name the file after the XUID, Wii U after a 32 hex digit user id
+    (e.g. 72e5c982752611ebb2da010145153336); PS3 / Vita / PS4 use their own P_… names.  None: the rule
+    of the platform is not known (Switch), so only a given id can be right."""
+    if platform in SONY:
+        return True
+    if platform in XUID_PLATFORMS:
+        return is_xuid(value)
+    if platform == "wiiu":
+        return bool(value) and re.fullmatch(r"[0-9A-Fa-f]{32}", value) is not None
+    return None
+
+
 def save_players(path: str) -> Dict[str, str]:
     """The players of an LCE save: name (their "UUID" tag, the nickname on neoLegacy) -> file id
     (the XUID).  The id of the user of a PC is taken from any world played there."""
     c = SaveContainer.load(path)
     out: Dict[str, str] = {}
     for key, blob in sorted(c.files.items()):
+        flat = _FLAT_PLAYER.match(key)
+        if flat:
+            key = f"players/{flat.group(1)}.dat"
         if not (key.startswith("players/") and key.endswith(".dat")):
             continue
         fid = key[len("players/"):-4]
@@ -113,6 +151,37 @@ def save_players(path: str) -> Dict[str, str]:
             name = None
         out[str(name) if isinstance(name, str) and name else fid] = fid
     return out
+
+
+def entity_file_entries(blob: bytes) -> List[Tuple[int, int, nbt.CompoundTag, bytes]]:
+    """The records of an ``entities.dat`` of a split save: (cx, cz, root compound, its raw bytes)."""
+    out = []
+    (count,) = struct.unpack_from(">I", blob, 0)
+    p = 4
+    for _ in range(count):
+        cx, cz = struct.unpack_from(">ii", blob, p)
+        tag, end = nbt.load_with_offset(blob, p + 8)
+        out.append((cx, cz, tag.tag, blob[p + 8:end]))
+        p = end
+    return out
+
+
+def read_entity_file(blob: bytes) -> Dict[Tuple[int, int], list]:
+    """The entities of an ``entities.dat`` of a split save: (cx, cz) -> entity compounds."""
+    out: Dict[Tuple[int, int], list] = {}
+    for cx, cz, root, _raw in entity_file_entries(blob):
+        ents = list(nbt.get_tag(root, "Entities") or [])
+        if ents:
+            out.setdefault((cx, cz), []).extend(ents)
+    return out
+
+
+def write_entity_file(chunks: Dict[Tuple[int, int], bytes]) -> bytes:
+    """An ``entities.dat`` from (cx, cz) -> the dumped ``{Entities: [...]}`` compound of the chunk."""
+    out = bytearray(struct.pack(">I", len(chunks)))
+    for (cx, cz), blob in sorted(chunks.items()):
+        out += struct.pack(">ii", cx, cz) + blob
+    return bytes(out)
 
 
 def platform_profiles(platform: str) -> Tuple[str, ...]:
@@ -147,6 +216,18 @@ class LCEWorld(WorldSource):
         for (sdim, rx, rz), data in c.split_regions.items():
             dim = _SPLIT_DIM.get(sdim, OVERWORLD)
             self._regions[dim][(rx, rz)] = (data, 16)
+        # split saves (PS4 / Xbox One): the entities are in entities.dat, not in the chunks
+        self._entities: Dict[int, Dict[Tuple[int, int], list]] = {}
+        for dim, fname in ENTITY_FILES.items():
+            blob = c.files.get(fname)
+            if not blob:
+                continue
+            try:
+                self._entities[dim] = read_entity_file(blob)
+            except Exception as ex:  # noqa: BLE001
+                if progress:
+                    progress.warn(tr("{file} cannot be read: the entities of this dimension are lost ({error}).",
+                                     file=fname, error=ex))
         self.info = self._read_info()
         self.max_height = 256
 
@@ -166,6 +247,9 @@ class LCEWorld(WorldSource):
             data["LevelName"] = nbt.StringTag(c.display_name)
         info.level = data
         for name, blob in c.files.items():
+            flat = _FLAT_PLAYER.match(name)
+            if flat:
+                name = f"players/{flat.group(1)}.dat"
             base = name.rsplit("/", 1)[-1]
             if name.endswith(".dat") and (name.startswith("players/") or _SONY_PLAYER.match(base)):
                 try:
@@ -205,6 +289,9 @@ class LCEWorld(WorldSource):
         raw = lreg.decompress_payload(data[p:p + length], rle, self.container.platform.chunk, dlen)
         c = lch.decode_chunk(raw)
         c.cx, c.cz = cx, cz
+        extra = self._entities.get(dim, {}).get((cx, cz))
+        if extra:
+            c.entities = list(c.entities) + extra
         return c
 
     def read_chunk(self, dim: int, cx: int, cz: int) -> Optional[NumericChunk]:
@@ -261,6 +348,9 @@ class LCEWriteOptions:
     chunk_format: Optional[int] = None  # override chunk version (7 = NBT)
     world_name: Optional[str] = None
     host_player_id: Optional[str] = None  # XUID / file name for the host player (PC port, Xbox)
+    # LCE → LCE: the End chunks [x0, x1) × [z0, z1) of the source (it is a save the game itself wrote, so
+    # all of them are kept, whatever the End of the target's profile)
+    keep_end: Optional[Tuple[int, int, int, int]] = None
 
 
 class LCEWriter:
@@ -273,10 +363,12 @@ class LCEWriter:
         self.chunk_version = options.chunk_format or self.profile.chunk_version
         self.regions: Dict[Tuple[int, int, int], Dict[Tuple[int, int], Tuple[bytes, int]]] = {}
         self.replaced_blocks = 0
-        self.skipped_outside = 0
+        self.skipped_outside: Counter = Counter()        # per dimension: the chunks the map's limits left out
         # items, enchantments and entities the target game has (neoLegacy: from its source)
         self.compat = _compat.compat_for(self.profile.key, self.platform.key, self.profile.allowed)
         self.dropped: Dict[str, int] = {}
+        # split saves: dimension -> (cx, cz) -> the chunk's {Entities} for entities.dat
+        self.entity_chunks: Dict[int, Dict[Tuple[int, int], bytes]] = {}
 
     def bounds(self, dim: int) -> Tuple[int, int]:
         size = self.opt.world_size
@@ -284,9 +376,18 @@ class LCEWriter:
         if dim == NETHER:
             size = max(18, size // scale)
         elif dim == THE_END:
-            size = 18
+            size = self.profile.end_size
         half = size // 2
         return -half, size - half  # [lo, hi)
+
+    def area(self, dim: int) -> Tuple[int, int, int, int]:
+        """The chunks ``[x0, x1) × [z0, z1)`` the map keeps, in the coordinates of the converted world."""
+        lo, hi = self.bounds(dim)
+        x0, x1, z0, z1 = lo, hi, lo, hi
+        if dim == THE_END and self.opt.keep_end is not None:
+            kx0, kx1, kz0, kz1 = self.opt.keep_end
+            x0, x1, z0, z1 = min(x0, kx0), max(x1, kx1), min(z0, kz0), max(z1, kz1)
+        return x0, x1, z0, z1
 
     def target_coords(self, dim: int, cx: int, cz: int) -> Optional[Tuple[int, int]]:
         ox, oz = self.opt.offset_x, self.opt.offset_z
@@ -296,24 +397,28 @@ class LCEWriter:
         elif dim == THE_END:
             ox = oz = 0
         tx, tz = cx - ox, cz - oz
-        lo, hi = self.bounds(dim)
-        if lo <= tx < hi and lo <= tz < hi:
+        x0, x1, z0, z1 = self.area(dim)
+        if x0 <= tx < x1 and z0 <= tz < z1:
             return tx, tz
         return None
 
     def add_chunk(self, dim: int, chunk: NumericChunk, shift: bool = True):
-        self.store(self.encode(dim, chunk, shift))
+        self.store(self.encode(dim, chunk, shift), dim)
 
-    def store(self, rec) -> None:
-        """Keeps a chunk made by ``encode`` (in this process, in the conversion's order)."""
+    def store(self, rec, dim: Optional[int] = None) -> None:
+        """Keeps a chunk made by ``encode`` (in this process, in the conversion's order); ``dim``: its dimension."""
         if rec is None:
-            self.skipped_outside += 1
+            self.skipped_outside[OVERWORLD if dim is None else dim] += 1
             return
         key, loc, entry, replaced = rec[:4]
         self.replaced_blocks += replaced
         for what, n in (rec[4] if len(rec) > 4 else {}).items():
             self.dropped[what] = self.dropped.get(what, 0) + n
         self.regions.setdefault(key, {})[loc] = entry
+        ents = rec[5] if len(rec) > 5 else None
+        if ents is not None:
+            tx, tz, blob = ents
+            self.entity_chunks.setdefault(key[0], {})[(tx, tz)] = blob
 
     def encode(self, dim: int, chunk: NumericChunk, shift: bool = True):
         """The chunk as it goes into its region (None: outside the world).  Changes nothing in the
@@ -345,12 +450,25 @@ class LCEWriter:
             c.terrain_populated = 2046 if chunk.terrain_populated else 0
         if chunk.lce_heightmap is not None and n == 0:
             c.heightmap = chunk.lce_heightmap
-        ents = [e for e in (shift_entity(x, dx, dz) for x in chunk.entities) if e is not None]
-        if self.profile.entities is not None:
-            ents = [e for e in (_restrict_entity(x, self.profile.entities) for x in ents) if e is not None]
         # what the game has of the items, enchantments and entities (the report counts the rest)
         self.compat.dropped = {}
+        ents = []
+        for x in chunk.entities:
+            e = shift_entity(x, dx, dz)
+            if e is not None:
+                ents.append(e)
+            elif ids.entity_to_old(nbt.get(x, "id", ""))[0] is None:
+                self.compat._drop(f"entity {nbt.get(x, 'id', '')}")           # no such mob in the LCE id scheme
+        if self.profile.entities is not None:
+            ents = [e for e in (_restrict_entity(x, self.profile.entities) for x in ents) if e is not None]
         c.entities = [x for x in (self.compat.entity(e) for e in ents) if x is not None]
+        split_ents = None
+        if self.platform.split:
+            # PS4 / Xbox One keep the entities in entities.dat, as the game writes them (it reads them
+            # back from there): the chunk keeps no entities
+            if c.entities:
+                split_ents = (tx, tz, nbt.dump(nbt.CompoundTag({"Entities": nbt.compound_list(c.entities)}), ""))
+            c.entities = None
         c.tile_entities = [self.compat.holder(t) for t in
                            sanitize_tiles(chunk.tile_entities, c.blocks, dx, dz, self.profile.tiles, lce=True)]
         c.tile_ticks = []
@@ -368,7 +486,34 @@ class LCEWriter:
             rx, rz, lx, lz = tx >> 4, tz >> 4, tx & 15, tz & 15
         else:
             rx, rz, lx, lz = tx >> 5, tz >> 5, tx & 31, tz & 31
-        return (dim, rx, rz), (lx, lz), (comp, len(payload)), n, dict(self.compat.dropped)
+        return (dim, rx, rz), (lx, lz), (comp, len(payload)), n, dict(self.compat.dropped), split_ents
+
+    def _check_player_id(self, i: int, fname: str, chosen: Optional[str]) -> None:
+        """Warn when the game of the target platform will not load ``players/<fname>.dat``: an id the user
+        gave in the wrong form, or the host written under a name no console of the platform looks for."""
+        plat = self.platform.key
+        ok = player_id_ok(plat, fname)
+        if ok:
+            return
+        if chosen:
+            if ok is False:
+                if plat in XUID_PLATFORMS:
+                    self.progress.warn(tr(
+                        "“{name}” is not an XUID: the game loads the player from players/<number>.dat, so it will "
+                        "start at the spawn with an empty inventory. Give the number (the name of your file in "
+                        "players/ of a world already played, or use “From my world…” in the GUI).", name=chosen))
+                else:
+                    self.progress.warn(tr(
+                        "“{name}” is not a Wii U player id: the game loads the player from players/<32 hexadecimal "
+                        "digits>.dat, so it will start at the spawn with an empty inventory. Give the id (the name "
+                        "of your file in players/ of a world already played, or use “From my world…” in the GUI).",
+                        name=chosen))
+        elif i == 0 and (ok is False or fname in ("host", f"player{i}")):   # unknown rule (Switch): only a made-up name
+            self.progress.warn(tr(
+                "No player id given: the host player is written as players/{file}.dat, a file {platform} does not "
+                "load, so the player will start at the spawn with an empty inventory. Give your id with --player-id "
+                "(the name of your file in players/ of a world already played on that console, or use “From my "
+                "world…” in the GUI).", file=fname, platform=self.platform.label.split(" (")[0]))
 
     def finish(self, info: WorldInfo) -> str:
         cont = SaveContainer(self.platform, self.profile.save_version, self.profile.save_version)
@@ -382,6 +527,9 @@ class LCEWriter:
                 cont.split_regions[(_SPLIT_DIM_INV[dim], rx, rz)] = data
             else:
                 cont.files[f"{_DIM_PREFIX[dim]}r.{rx}.{rz}.mcr"] = data
+        if self.platform.split:  # the game's saves have the three files, empty ones too
+            for dim, fname in ENTITY_FILES.items():
+                cont.files[fname] = write_entity_file(self.entity_chunks.get(dim, {}))
         sony = self.platform.key in SONY
         same_place = self.opt.offset_x == 0 and self.opt.offset_z == 0 and "XZSize" in info.level
         raw_players = {k.split(":", 1)[1]: v for k, v in info.extra_files.items() if k.startswith("raw_player:")}
@@ -392,11 +540,11 @@ class LCEWriter:
                 nick = None
             if same_place and raw is not None and (sony == bool(_SONY_PLAYER.match(name + ".dat"))):
                 orig = next(k for k in raw_players if k.rsplit("/", 1)[-1][:-4] == name)
-                if nick and not sony:
-                    orig = f"players/{nick}.dat"  # player id chosen in the "Giocatori" tab
-                    if self.platform.key in XUID_PLATFORMS and not is_xuid(nick):
-                        self.progress.warn(tr("“{name}” is not an XUID: the game will not load this player (it "
-                                              "needs the number of its file in players/).", name=nick))
+                if not sony:
+                    chosen = nick or (self.opt.host_player_id if i == 0 else None)
+                    if chosen:
+                        orig = f"players/{chosen}.dat"  # player id chosen in the "Giocatori" tab / --player-id
+                        self._check_player_id(i, chosen, chosen)
                 cont.files[orig] = raw  # unchanged world position: keep the player file byte for byte
                 continue
             p = legacy_player(player, self.opt, self.target_coords)
@@ -415,11 +563,7 @@ class LCEWriter:
                     fname = chosen = self.opt.host_player_id
                 if nick:
                     fname = chosen = nick  # player id chosen in the "Giocatori" tab
-                if chosen and self.platform.key in XUID_PLATFORMS and not is_xuid(chosen):
-                    self.progress.warn(tr(
-                        "“{name}” is not an XUID: the game loads the player from players/<number>.dat, so it will "
-                        "start at the spawn with an empty inventory. Give the number (the name of your file in "
-                        "players/ of a world already played, or use “From my world…” in the GUI).", name=chosen))
+                self._check_player_id(i, fname, chosen)
                 cont.files[f"players/{fname}.dat"] = nbt.dump(p, "")
         for name, blob in info.extra_files.items():
             if name.startswith("data/map_") and not same_place:
@@ -449,17 +593,19 @@ class LCEWriter:
                 tr("{n} blocks that do not exist in {version} were replaced with equivalents.", n=self.replaced_blocks,
                    version=tr(self.profile.label))
             )
-        if self.skipped_outside:
-            self.progress.warn(
-                tr("{n} chunks outside the LCE world's limits ({size}×{size} chunks) were left out.",
-                   n=self.skipped_outside, size=self.opt.world_size)
-            )
+        for dim in (OVERWORLD, NETHER, THE_END):
+            if self.skipped_outside[dim]:
+                lo, hi = self.bounds(dim)
+                self.progress.warn(
+                    tr("{n} chunks outside the LCE world's limits ({dim}, {size}×{size} chunks) were left out.",
+                       n=self.skipped_outside[dim], dim=tr(DIM_LABEL[dim]), size=hi - lo)
+                )
         for what, n in self.compat.dropped.items():                       # the players' items
             self.dropped[what] = self.dropped.get(what, 0) + n
         if self.dropped:
             items = sum(n for w, n in self.dropped.items() if w.startswith("item"))
             ench = sum(n for w, n in self.dropped.items() if w.startswith("enchantment"))
-            ents = sorted({w.split(" ", 1)[1] for w in self.dropped if w.startswith("entity")})
+            ents = sorted({w.split(" ", 1)[1].split(":")[-1] for w in self.dropped if w.startswith("entity")})
             parts = ([tr("{n} items", n=items)] if items else []) + ([tr("{n} enchantments", n=ench)] if ench else []) + \
                 ([tr("the entities {names}", names=", ".join(ents))] if ents else [])
             self.progress.warn(tr("{version} does not have {what} of the source world: removed (the game does not know "
@@ -476,7 +622,7 @@ def shift_entity(e: nbt.CompoundTag, dx: float, dz: float) -> Optional[nbt.Compo
     if dx or dz:
         pos = nbt.get_tag(e, "Pos")
         if pos is not None and len(pos) == 3:
-            e["Pos"] = nbt.ListTag([nbt.DoubleTag(float(pos[0].py_data) + dx), pos[1], nbt.DoubleTag(float(pos[2].py_data) + dz)], 6)
+            e["Pos"] = nbt.pos_list(float(pos[0].py_data) + dx, pos[1], float(pos[2].py_data) + dz)
         for k in ("TileX", "TileZ"):
             if k in e:
                 e[k] = nbt.IntTag(int(e[k].py_data) + (dx if k == "TileX" else dz))
@@ -635,7 +781,7 @@ def legacy_player(p: nbt.CompoundTag, opt: LCEWriteOptions, mapper) -> nbt.Compo
                 del p[k]
         else:
             dx, dz = (t[0] - cx) * 16, (t[1] - cz) * 16
-            p["Pos"] = nbt.ListTag([nbt.DoubleTag(float(pos[0].py_data) + dx), pos[1], nbt.DoubleTag(float(pos[2].py_data) + dz)], 6)
+            p["Pos"] = nbt.pos_list(float(pos[0].py_data) + dx, pos[1], float(pos[2].py_data) + dz)
     return p
 
 

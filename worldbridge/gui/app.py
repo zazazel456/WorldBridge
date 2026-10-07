@@ -26,7 +26,7 @@ from .. import APP_NAME, __version__, i18n
 from .. import amulet_bridge as ab
 from ..convert import TargetSpec, convert
 from ..detect import detect
-from ..model import ConversionCancelled, Progress
+from ..model import ConversionCancelled, ConversionError, Progress
 from ..selection import Selection
 from ..i18n import N_, tr
 from . import theme
@@ -52,6 +52,8 @@ HELP_RING = N_("For the games that do not blend (Java Alpha 1.2 – 1.17, LCE ne
                "with natural terrain joining the converted world around it.")
 HELP_DEPTH = N_("1.18+ worlds (y −64 to 319) to games whose world starts at y 0 (Java 1.2 – 1.17, LCE, Bedrock up "
                 "to 1.17, and older versions).\n"
+                "Automatic: a flat or low world (its surface mostly below y 0, like superflat) keeps everything, "
+                "a normal one is cut.\n"
                 "Cut: what lies below y 0 disappears, the rest stays at its height.\n"
                 "Keep everything: nothing disappears below, the world rises by 64 blocks (useful if you built "
                 "below y 0); the mountains that no longer fit are compressed or cut as you choose below.\n"
@@ -151,10 +153,21 @@ class ConvertWorker(QObject):
             self.finished.emit(False, tr("Conversion cancelled."), [])
         except Exception as ex:  # noqa: BLE001
             self.log.emit(traceback.format_exc())
-            self.finished.emit(False, str(ex), [])
+            self.finished.emit(False, _failure_text(ex), [])
 
     def cancel(self):
         self.prog.cancel()
+
+
+def _failure_text(ex: BaseException) -> str:
+    """What the failure banner says: short, and with the kind of error when it is not one of ours
+    (a bare KeyError would read ``'foo'``); the whole traceback is in the log."""
+    msg = str(ex)
+    if not isinstance(ex, ConversionError):
+        msg = f"{type(ex).__name__}: {msg}" if msg else type(ex).__name__
+    if len(msg) > 300:
+        msg = msg[:300].rstrip() + tr("… (see the log)")
+    return msg
 
 
 def _esc(s: str) -> str:
@@ -228,6 +241,10 @@ class MainWindow(QMainWindow):
         self._worker: Optional[ConvertWorker] = None
         self._src_kind = ""
         self._src_name = ""
+        self._analysed = None               # the path the source analysis was last started for
+        self._detect_seq = 0                # the answer of an older analysis is ignored
+        self._closing = False
+        self._close_pending = False         # closing as soon as the cancelled conversion has finished
         self._result_path = ""
         self._pending_state = None
         central = QWidget()
@@ -241,7 +258,7 @@ class MainWindow(QMainWindow):
         self.tabs.tabBar().setExpanding(False)
         root.addWidget(self.tabs, 1)
         self.tabs.addTab(self._conversion_page(), theme.icon("document-export", "document-save-as"), tr("Conversion"))
-        self.map_tab = MapTab()
+        self.map_tab = MapTab(remember=remember)
         self.tabs.addTab(self.map_tab, theme.icon("map-flat", "globe", "applications-education-geography"),
                          tr("Map and chunks"))
         self.players_tab = PlayersTab()
@@ -282,7 +299,8 @@ class MainWindow(QMainWindow):
         self.src_edit = QLineEdit()
         self.src_edit.setPlaceholderText(tr("Drop the world folder or the save file here"))
         self.src_edit.setClearButtonEnabled(True)
-        self.src_edit.editingFinished.connect(self._on_source_changed)
+        self.src_edit.returnPressed.connect(lambda: self._on_source_changed(force=True))
+        self.src_edit.editingFinished.connect(self._on_source_changed)   # also on losing the focus
         lab.setBuddy(self.src_edit)
         top.addWidget(self.src_edit, 1)
         b_dir = QPushButton(theme.icon("folder-open", fallback=QStyle.SP_DirOpenIcon), tr("Open folder…"))
@@ -400,7 +418,7 @@ class MainWindow(QMainWindow):
         self._pending_state = st
         if st["src"].strip():
             self.src_edit.setText(st["src"])
-            self._on_source_changed()
+            self._on_source_changed(force=True)
         if st["manage"]:
             self.manage_tab.path_edit.setText(st["manage"])
             self.manage_tab._manual = True
@@ -477,7 +495,8 @@ class MainWindow(QMainWindow):
         self.borders = borders
         f.addRow(tr("Terrain border:"), borders)
         self.depth = QComboBox()
-        self.depth.addItem(tr("Cut below y 0 (default)"), "cut")
+        self.depth.addItem(tr("Automatic (keep the underground of flat or low worlds)"), "auto")
+        self.depth.addItem(tr("Cut below y 0"), "cut")
         self.depth.addItem(tr("Keep everything (the world rises by 64 blocks)"), "keep")
         self.depth.addItem(tr("Keep from a chosen y"), "custom")
         self.depth.setToolTip(tr("What happens to what lies below y 0 in 1.18+ worlds"))
@@ -719,7 +738,7 @@ class MainWindow(QMainWindow):
             self.bed_ver: fam == "bedrock",
             self.lce_plat: fam == "lce", self.lce_prof: fam == "lce", self.lce_size: fam == "lce",
             self.lce_area_row: fam == "lce", self.lce_hint: fam == "lce",
-            self.lce_xuid_row: fam == "lce" and self.lce_plat.currentData() in ("win64", "xbox360", "xboxone"),
+            self.lce_xuid_row: fam == "lce" and self.lce_plat.currentData() in ("win64", "xbox360", "xboxone", "wiiu", "switch"),
             self.pe_hint: fam == "pe_old",
             self.bta_heading: self._bta_on, self.bta_pal_row: self._bta_on, self.bta_y_row: self._bta_on,
             self.bta_note: self._bta_on,
@@ -789,7 +808,7 @@ class MainWindow(QMainWindow):
 
     def _xuid_from_save(self):
         """The XUID of the user, from a world already played with it (players/<XUID>.dat, named inside)."""
-        from ..lce.world import save_players
+        from ..lce.world import player_id_ok, save_players
 
         f, _ = QFileDialog.getOpenFileName(self, tr("Choose one of your played worlds (saveData.ms, savegame.dat…)"),
                                            self.out_edit.text() or os.path.expanduser("~"),
@@ -797,7 +816,8 @@ class MainWindow(QMainWindow):
         if not f:
             return
         try:
-            players = {n: x for n, x in save_players(f).items() if x.isdigit()}
+            plat = self.lce_plat.currentData()
+            players = {n: x for n, x in save_players(f).items() if player_id_ok(plat, x) is not False}
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(self, tr("Player ID"), tr("Cannot read the save:") + f"\n{e}")
             return
@@ -822,7 +842,7 @@ class MainWindow(QMainWindow):
         d = QFileDialog.getExistingDirectory(self, tr("Open the world folder"), self.src_edit.text() or os.path.expanduser("~"))
         if d:
             self.src_edit.setText(d)
-            self._on_source_changed()
+            self._on_source_changed(force=True)
 
     def _pick_src_file(self):
         f, _ = QFileDialog.getOpenFileName(self, tr("Open the save file"), self.src_edit.text() or os.path.expanduser("~"),
@@ -830,14 +850,20 @@ class MainWindow(QMainWindow):
                                            "GAMEDATA*);;" + tr("All files") + " (*)")
         if f:
             self.src_edit.setText(f)
-            self._on_source_changed()
+            self._on_source_changed(force=True)
 
-    def _on_source_changed(self):
+    def _on_source_changed(self, force: bool = False):
+        """Analyses the world in the box. Also called when the box loses the focus (``editingFinished``):
+        then a path already analysed is left alone, and nothing starts once the window is closing."""
         path = self.src_edit.text().strip()
-        if not path:
+        if not path or self._closing or (path == self._analysed and not force):
             return
+        self._analysed = path
+        self._detect_seq += 1
+        seq = self._detect_seq
         self.src_info.setText(tr("Analysing…"))
-        self._run_thread(DetectWorker(path), "done", self._on_detected)
+        self._run_thread(DetectWorker(path), "done",
+                         self._gui.wrap(lambda *a: self._on_detected(*a) if seq == self._detect_seq else None))
 
     def _on_detected(self, lines, kind: str, name: str):
         self.src_info.setText(format_summary(lines))
@@ -882,7 +908,7 @@ class MainWindow(QMainWindow):
         urls = e.mimeData().urls()
         if urls:
             self.src_edit.setText(urls[0].toLocalFile())
-            self._on_source_changed()
+            self._on_source_changed(force=True)
 
     def _pick_out(self):
         d = QFileDialog.getExistingDirectory(self, tr("Choose the output folder"), self.out_edit.text())
@@ -1032,6 +1058,11 @@ class MainWindow(QMainWindow):
         self.logview.appendPlainText(msg)
 
     def _on_finished(self, ok: bool, msg: str, warnings: list):
+        if self._close_pending:                  # the window was closed meanwhile: the cancel has finished, close now
+            self._worker = None
+            self._close_pending = False
+            self.close()
+            return
         self.map_tab.pause_preview(False)
         self.btn_convert.setEnabled(True)
         self.btn_cancel.setEnabled(False)
@@ -1097,11 +1128,24 @@ class MainWindow(QMainWindow):
         self.map_tab.save_state(s)
 
     def closeEvent(self, e):  # noqa: N802
+        if not self.manage_tab.maybe_discard():
+            e.ignore()
+            return
+        if self._worker is not None:
+            # the conversion's workers (Amulet's processes, the temporary folders) are cleaned up only when it
+            # stops: the window waits for that (``_on_finished`` closes it)
+            if not self._close_pending:
+                self._close_pending = True
+                self._worker.cancel()
+                self.btn_cancel.setEnabled(False)
+                self._log(tr("Cancelling…"))
+            self.bar.setFormat(tr("Cancelling…"))
+            e.ignore()
+            return
+        self._closing = True
         if self._remember:
             self._save_state()
         self.map_tab.shutdown()
-        if self._worker:
-            self._worker.cancel()
         for th, _w in list(self._threads):
             th.quit()
             th.wait(3000)
@@ -1116,7 +1160,7 @@ def main() -> int:
     w = MainWindow()
     if len(sys.argv) > 1 and os.path.exists(sys.argv[1]):
         w.src_edit.setText(sys.argv[1])
-        w._on_source_changed()
+        w._on_source_changed(force=True)
     w.show()
     app._wb_window = w
     return app.exec()

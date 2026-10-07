@@ -141,7 +141,7 @@ def hanging_to_old(e: nbt.CompoundTag) -> nbt.CompoundTag:
 
 MOB_KEEP = ("Age", "InLove", "Sheared", "Color", "Size", "powered", "Saddle", "Sitting", "CollarColor", "Variant",
             "Profession", "CatType", "Type", "IsChickenJockey", "Anger", "PlayerCreated", "Tame", "Temper", "VillagerData",
-            "Career", "CareerLevel")
+            "Career", "CareerLevel", "CatType", "RabbitType", "variant")
 
 
 # ------------------------------------------------------------------ villager professions
@@ -442,8 +442,179 @@ def from_java_modern(e: nbt.CompoundTag) -> Optional[dict]:
     return c
 
 
+# ------------------------------------------------------------------ variants, saddles, armour
+# Java keeps a mob's look in Variant (horse: colour | marking << 8; llama, parrot, axolotl), CatType (cat, before
+# 1.19) / variant, RabbitType, Type (fox, mooshroom: "red" / "snow" / "brown"); Bedrock in Variant (+ MarkVariant for
+# the horse's marking) and, redundantly, in the "+minecraft:<group>" definitions.
+HORSE_BASE = ("white", "creamy", "chestnut", "brown", "black", "gray", "darkbrown")
+HORSE_MARKINGS = ("none", "white_details", "white_fields", "white_dots", "black_dots")
+LLAMA_COATS = ("creamy", "white", "brown", "gray")
+CAT_NAMES = ("tabby", "black", "red", "siamese", "british_shorthair", "calico", "persian", "ragdoll", "white", "jellie",
+             "all_black")                                        # Java's, by CatType
+CAT_BEDROCK = (8, 1, 2, 3, 4, 5, 6, 7, 0, 10, 9)                  # Java CatType -> Bedrock Variant (an involution)
+AXOLOTL_BEDROCK = (0, 3, 2, 1, 4)                                 # Java lucy, wild, gold, cyan, blue -> Bedrock (also its own inverse)
+FOX_TYPES = ("red", "snow")
+MOOSHROOM_TYPES = ("red", "brown")
+EQUIDS = ("horse", "donkey", "mule", "skeleton_horse", "zombie_horse", "llama", "trader_llama", "camel")
+JAVA_CAT_VARIANT_DV = 3105                                        # 1.19: cats have a variant name, not CatType
+# Bedrock's preferred professions (villager_v2) by Java's profession name
+BEDROCK_PROFESSIONS = ("farmer", "fisherman", "shepherd", "fletcher", "librarian", "cartographer", "cleric", "armorer",
+                       "weaponsmith", "toolsmith", "butcher", "leatherworker", "mason", "nitwit")
+
+
+def _int_extra(extra: dict, key: str) -> Optional[int]:
+    v = extra.get(key)
+    try:
+        return int(v.py_data) if v is not None else None
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _str_extra(extra: dict, key: str) -> Optional[str]:
+    v = extra.get(key)
+    return str(v.py_data).split(":", 1)[-1] if isinstance(v, nbt.StringTag) else None
+
+
+def _empty_slot(i: int) -> nbt.CompoundTag:
+    return nbt.CompoundTag({"Name": nbt.StringTag(""), "Count": nbt.ByteTag(0), "Damage": nbt.ShortTag(0),
+                            "Slot": nbt.ByteTag(i), "WasPickedUp": nbt.ByteTag(0)})
+
+
+def write_bedrock_variants(e: nbt.CompoundTag, c: dict, bname: str, version) -> None:
+    """Variant / MarkVariant, Saddled, the saddle and armour slots and the villager's profession of a mob."""
+    extra = c.get("extra") or {}
+    eq = c.get("equip") or {}
+    defs = e["definitions"]
+    variant = None
+    if bname == "horse":
+        v = _int_extra(extra, "Variant")
+        if v is not None:
+            variant = v & 0xFF
+            mark = (v >> 8) & 0xFF
+            e["MarkVariant"] = nbt.IntTag(mark)
+            defs.append(nbt.StringTag("+minecraft:base_" + HORSE_BASE[min(variant, 6)]))
+            defs.append(nbt.StringTag("+minecraft:markings_" + HORSE_MARKINGS[min(mark, 4)]))
+    elif bname in ("llama", "trader_llama", "parrot"):
+        variant = _int_extra(extra, "Variant")
+        if variant is not None and bname != "parrot":
+            defs.append(nbt.StringTag("+minecraft:llama_" + LLAMA_COATS[min(max(variant, 0), 3)]))
+    elif bname == "axolotl":
+        v = _int_extra(extra, "Variant")
+        variant = AXOLOTL_BEDROCK[v] if v is not None and 0 <= v < 5 else None
+    elif bname == "cat":
+        v = _int_extra(extra, "CatType")
+        if v is None and _str_extra(extra, "variant") in CAT_NAMES:
+            v = CAT_NAMES.index(_str_extra(extra, "variant"))
+        variant = CAT_BEDROCK[v] if v is not None and 0 <= v < len(CAT_BEDROCK) else None
+    elif bname == "rabbit":
+        variant = _int_extra(extra, "RabbitType")
+    elif bname == "fox":
+        t = _str_extra(extra, "Type")
+        variant = FOX_TYPES.index(t) if t in FOX_TYPES else None
+    elif bname == "mooshroom":
+        t = _str_extra(extra, "Type")
+        if t in MOOSHROOM_TYPES:
+            variant = MOOSHROOM_TYPES.index(t)
+            defs.append(nbt.StringTag("+minecraft:mooshroom_" + t))
+    if variant is not None:
+        e["Variant"] = nbt.IntTag(variant)
+    saddle = eq.get("saddle")
+    saddled = bool(saddle) or bool(_int_extra(extra, "Saddle"))
+    if bname in ("pig", "strider"):
+        e["Saddled"] = nbt.ByteTag(int(saddled))
+        defs.append(nbt.StringTag(f"+minecraft:{bname}_" + ("saddled" if saddled else "unsaddled")))
+    elif bname in EQUIDS:
+        body = eq.get("body")
+        if saddled:
+            e["Saddled"] = nbt.ByteTag(1)
+        if saddle or body:                       # the saddle is slot 0 of the animal's inventory, the armour / carpet slot 1
+            slots = []
+            for i, it in enumerate((saddle, body)):
+                t = items.to_bedrock(it, tuple(version)) if it else None
+                if t is None:
+                    t = _empty_slot(i)
+                else:
+                    t["Slot"] = nbt.ByteTag(i)
+                slots.append(t)
+            e["ChestItems"] = nbt.ListTag(slots, 10)
+    elif bname == "villager_v2":
+        vd = villager_data(extra)
+        prof = str(nbt.get(vd, "profession", "")).split(":", 1)[-1] if vd is not None else ""
+        if prof in BEDROCK_PROFESSIONS:
+            e["PreferredProfession"] = nbt.StringTag(prof)
+            defs.append(nbt.StringTag("+" + prof))
+            e["TradeTier"] = nbt.IntTag(max(0, int(nbt.get(vd, "level", 1) or 1) - 1))
+
+
+def read_bedrock_variants(c: dict, e: nbt.CompoundTag, n: str, version=None) -> None:
+    """The inverse of :func:`write_bedrock_variants`, into the canonical extras and equipment."""
+    extra = c["extra"]
+    var = nbt.get(e, "Variant")
+    var = int(var) if var is not None else None
+    if n == "horse" and var is not None:
+        extra["Variant"] = nbt.IntTag((var & 0xFF) | (max(0, int(nbt.get(e, "MarkVariant", 0) or 0)) & 0xFF) << 8)
+    elif n in ("llama", "trader_llama", "parrot") and var is not None:
+        extra["Variant"] = nbt.IntTag(var)
+    elif n == "axolotl" and var is not None and 0 <= var < 5:
+        extra["Variant"] = nbt.IntTag(AXOLOTL_BEDROCK[var])
+    elif n == "cat" and var is not None and 0 <= var < len(CAT_BEDROCK):
+        extra["CatType"] = nbt.IntTag(CAT_BEDROCK[var])
+    elif n == "rabbit" and var is not None:
+        extra["RabbitType"] = nbt.IntTag(var)
+    elif n == "fox" and var in (0, 1):
+        extra["Type"] = nbt.StringTag(FOX_TYPES[var])
+    elif n == "mooshroom" and var in (0, 1):
+        extra["Type"] = nbt.StringTag(MOOSHROOM_TYPES[var])
+    saddled = bool(nbt.get(e, "Saddled"))
+    if n in ("pig", "strider"):
+        if saddled:
+            extra["Saddle"] = nbt.ByteTag(1)
+        return
+    if n in EQUIDS:
+        chest = {}
+        for i, t in enumerate(nbt.get_tag(e, "ChestItems") or []):
+            if isinstance(t, nbt.CompoundTag) and str(nbt.get(t, "Name", "") or ""):
+                chest[int(nbt.get(t, "Slot", i))] = items.from_bedrock(t)
+        saddle, body = chest.get(0), chest.get(1)
+        if body is None:                         # horse armour is also kept in the Armor list
+            for t in nbt.get_tag(e, "Armor") or []:
+                if isinstance(t, nbt.CompoundTag) and str(nbt.get(t, "Name", "") or "").endswith("horse_armor"):
+                    body = items.from_bedrock(t)
+        if saddle is None and saddled:
+            saddle = items.Item(name="saddle", count=1, damage=0, slot=None)
+        if saddle or body:
+            eq = c.setdefault("equip", {"hand": [None, None], "armor": [None] * 4, "saddle": None, "body": None})
+            eq["saddle"], eq["body"] = saddle, body
+    if n == "villager":
+        prof = nbt.get(e, "PreferredProfession")
+        if prof:
+            extra["VillagerData"] = nbt.CompoundTag({
+                "profession": nbt.StringTag("minecraft:" + str(prof).split(":", 1)[-1]),
+                "level": nbt.IntTag(max(1, min(5, int(nbt.get(e, "TradeTier", 0) or 0) + 1))),
+                "type": nbt.StringTag("minecraft:plains")})
+
+
+# Pocket Edition 0.9 - 0.16 (LevelDB) saved an entity by its number, ``id`` (a few later versions OR the
+# category into the high bytes): the numbers are Bedrock's legacy ones.  The names are Java's, or the
+# Bedrock identifier FROM_BEDROCK translates.
+PE_ENTITY_NUMBERS = {
+    **items.BEDROCK_ENTITY_NAMES, 51: "npc", 52: "wither", 53: "ender_dragon", 63: "player", 64: "item", 65: "tnt",
+    66: "falling_block", 68: "xp_bottle", 69: "xp_orb", 70: "eye_of_ender_signal", 71: "ender_crystal",
+    72: "fireworks_rocket", 73: "thrown_trident", 76: "shulker_bullet", 77: "fishing_hook", 79: "dragon_fireball",
+    80: "arrow", 81: "snowball", 82: "egg", 83: "painting", 84: "minecart", 85: "fireball", 86: "splash_potion",
+    87: "ender_pearl", 88: "leash_knot", 89: "wither_skull", 90: "boat", 91: "wither_skull", 93: "lightning_bolt",
+    94: "small_fireball", 95: "area_effect_cloud", 96: "hopper_minecart", 97: "tnt_minecart", 98: "chest_minecart",
+    100: "command_block_minecart", 101: "lingering_potion", 102: "llama_spit", 103: "evocation_fang"}
+
+
 def from_bedrock(e: nbt.CompoundTag) -> Optional[dict]:
     ident = str(nbt.get(e, "identifier", "") or "")
+    pe_numeric = False
+    if not ident:
+        num = nbt.get(e, "id")
+        if isinstance(num, int) and not isinstance(num, bool):     # Pocket Edition 0.9 - 0.16
+            ident = PE_ENTITY_NUMBERS.get(num & 0xFF, "")
+            pe_numeric = True
     if not ident:
         return None
     n = ident.split(":", 1)[-1]
@@ -457,10 +628,10 @@ def from_bedrock(e: nbt.CompoundTag) -> Optional[dict]:
     if nbt.get(e, "CustomNameVisible"):
         c["name_visible"] = True
     for a in nbt.get_tag(e, "Attributes") or []:
-        if nbt.get(a, "Name") == "minecraft:health":
+        if nbt.get(a, "Name") in ("minecraft:health", "generic.health"):
             c["health"] = float(nbt.get(a, "Current", 20.0))
     c["extra"] = {}
-    if nbt.get(e, "IsBaby"):
+    if nbt.get(e, "IsBaby") or (pe_numeric and int(nbt.get(e, "Age", 0) or 0) < 0):
         c["extra"]["Age"] = nbt.IntTag(-24000)
     if "Color" in e and n == "sheep":
         c["extra"]["Color"] = nbt.ByteTag(int(nbt.get(e, "Color")))
@@ -499,8 +670,12 @@ def from_bedrock(e: nbt.CompoundTag) -> Optional[dict]:
     hand = [stack((nbt.get_tag(e, k) or [None])[0]) for k in ("Mainhand", "Offhand")]
     armor = [stack(t) for t in list(nbt.get_tag(e, "Armor") or [])[:4]]
     armor = (armor + [None] * 4)[:4][::-1]                  # Bedrock: head .. feet; canonical: feet .. head
+    if n in EQUIDS:                                          # horse armour is not worn armour
+        armor = [None if it is not None and it["name"].endswith("horse_armor") else it for it in armor]
     if any(hand) or any(armor):
         c["equip"] = {"hand": hand, "armor": armor, "saddle": None, "body": None}
+    if not pe_numeric:
+        read_bedrock_variants(c, e, n)
     return c
 
 
@@ -593,8 +768,17 @@ def to_java_modern(c: dict, data_version: int) -> Optional[nbt.CompoundTag]:
         e["CustomName"] = nbt.StringTag(items.json_text(c["custom_name"]))
         e["CustomNameVisible"] = nbt.ByteTag(1 if c.get("name_visible") else 0)
     for k, v in (c.get("extra") or {}).items():
-        if k in ("Age", "Sheared", "Color", "Size", "Saddle", "CollarColor", "Variant", "Sitting", "Tame", "Temper"):
+        if k in ("Age", "Sheared", "Color", "Size", "Saddle", "CollarColor", "Variant", "Sitting", "Tame", "Temper",
+                 "RabbitType"):
             e[k] = v
+        elif k == "Type" and name in ("fox", "mooshroom"):
+            e[k] = v
+        elif k == "CatType" and name == "cat":
+            if data_version >= JAVA_CAT_VARIANT_DV:
+                i = int(v.py_data)
+                e["variant"] = nbt.StringTag("minecraft:" + CAT_NAMES[i if 0 <= i < len(CAT_NAMES) else 0])
+            else:
+                e[k] = v
     if name in ("boat", "chest_boat") and "Type" in (c.get("extra") or {}):
         e["Type"] = c["extra"]["Type"]
     if name in ("villager", "zombie_villager") and data_version >= 1952:  # 1.14: VillagerData
@@ -695,6 +879,7 @@ def to_bedrock(c: dict, uid: int, owner_uid: Optional[int] = None, version=(1, 2
             e["Sitting"] = nbt.ByteTag(int(extra["Sitting"].py_data))
         if bname == "wolf":
             e["Color"] = nbt.ByteTag(int(extra["CollarColor"].py_data) if "CollarColor" in extra else 14)
+    write_bedrock_variants(e, c, bname, version)
     if "health" in c and bname not in ("item", "xp_orb", "painting"):
         h = float(c["health"])
         e["Attributes"] = nbt.ListTag([nbt.CompoundTag({"Name": nbt.StringTag("minecraft:health"), "Base": nbt.FloatTag(h),

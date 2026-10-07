@@ -52,11 +52,17 @@ def detect_java_numeric(path: str) -> Optional[str]:
     """Return 'anvil' / 'mcregion' / 'alpha' when ``path`` is a numeric Java world."""
     if not os.path.isfile(os.path.join(path, "level.dat")):
         return None
-    reg = os.path.join(path, "region")
-    if os.path.isdir(reg):
+    # the Overworld's chunks, else the Nether's or the End's: a world whose Overworld was left out (all
+    # of it cut by the depth, or not converted) has only DIM-1 / DIM1
+    for sub in ("region", os.path.join("DIM-1", "region"), os.path.join("DIM1", "region")):
+        reg = os.path.join(path, sub)
+        if not os.path.isdir(reg):
+            continue
         files = os.listdir(reg)
         mca = [f for f in files if f.endswith(".mca")]
         mcr = [f for f in files if f.endswith(".mcr")]
+        if not (mca or mcr):
+            continue
         if mca:
             # numeric only if chunks carry no block palette (<1.13): sniff real chunks
             verdict = _sniff_anvil(reg, mca)
@@ -73,10 +79,11 @@ def detect_java_numeric(path: str) -> Optional[str]:
             return "anvil"
         if mcr:
             return "mcregion"
-    for entry in os.listdir(path):
-        full = os.path.join(path, entry)
-        if os.path.isdir(full) and re.fullmatch(r"-?[0-9a-z]{1,2}", entry):
-            return "alpha"
+    for base in (path, os.path.join(path, "DIM-1"), os.path.join(path, "DIM1")):
+        for entry in os.listdir(base) if os.path.isdir(base) else ():
+            full = os.path.join(base, entry)
+            if os.path.isdir(full) and re.fullmatch(r"-?[0-9a-z]{1,2}", entry):
+                return "alpha"
     return None
 
 
@@ -143,9 +150,9 @@ class JavaNumericWorld(WorldSource):
         icon = os.path.join(self.path, "icon.png")
         if os.path.exists(icon):
             info.thumbnail_png = open(icon, "rb").read()
-        names = {"anvil": "Java Edition 1.2 – 1.12 (Anvil)", "mcregion": "Java Edition Beta 1.3 – 1.1 (McRegion)",
-                 "alpha": "Java Edition Infdev/Alpha – Beta 1.2"}
-        info.source_description = names.get(self.kind, "Java Edition")
+        from ..detect import numeric_label
+
+        info.source_description = numeric_label(self.kind, info.level)
         return info
 
     def _dim_dir(self, dim: int) -> str:
@@ -291,6 +298,9 @@ class JavaWriteOptions:
     # (the game upgrades them from there) instead of being downgraded; 0 = none.  It must not
     # be newer than the data version the game upgrades them from (level.dat: the level's)
     player_dv: int = 0
+    # the Java release of the target (Amulet routes) and the newcontent.Tally that counts what it lacks
+    target: Optional[Tuple[int, ...]] = None
+    tally: Optional[object] = None
 
     def old_version(self) -> Optional[str]:
         """The Java version whose content (items, mobs, block entities) the output is limited to."""
@@ -416,7 +426,7 @@ class JavaNumericWriter:
             old.dropped_items, old.dropped_entities, old.dropped_tiles = before
         return dim, c.cx, c.cz, comp, n, modern, wl, dropped
 
-    def store(self, rec) -> None:
+    def store(self, rec, dim: Optional[int] = None) -> None:
         """Keeps a chunk made by ``encode`` (in this process, in the conversion's order)."""
         if rec is None:
             return
@@ -569,7 +579,7 @@ def _shift_chunk_y(c: NumericChunk, dy: int):
     for e in c.entities:
         pos = nbt.get_tag(e, "Pos")
         if pos is not None and len(pos) == 3:
-            e["Pos"] = nbt.ListTag([pos[0], nbt.DoubleTag(float(pos[1].py_data) + dy), pos[2]], 6)
+            e["Pos"] = nbt.pos_list(pos[0], float(pos[1].py_data) + dy, pos[2])
         if "TileY" in e:                                              # paintings, item frames
             e["TileY"] = nbt.IntTag(int(nbt.get(e, "TileY")) + dy)
 
@@ -686,6 +696,10 @@ def java_player_nbt(player: nbt.CompoundTag, opt: JavaWriteOptions) -> nbt.Compo
     if 1451 <= dv <= opt.player_dv:
         # already a Java 1.13+ player (Java or Bedrock source): keep it untouched, the game
         # upgrades it from its own DataVersion
+        if opt.target is not None:        # a Bedrock player carries items newer than an older target has
+            from ..newcontent import clean_player
+
+            clean_player(p, opt.target, opt.tally)
         return p
     from ..lce.world import legacy_items
 
@@ -707,7 +721,7 @@ def java_player_nbt(player: nbt.CompoundTag, opt: JavaWriteOptions) -> nbt.Compo
         p["Dimension"] = nbt.IntTag({"minecraft:the_nether": -1, "minecraft:the_end": 1}.get(nbt.get(p, "Dimension"), 0))
     if opt.y_offset and "Pos" in p and len(p["Pos"]) == 3:
         pos = p["Pos"]
-        p["Pos"] = nbt.ListTag([pos[0], nbt.DoubleTag(float(pos[1].py_data) + opt.y_offset), pos[2]], 6)
+        p["Pos"] = nbt.pos_list(pos[0], float(pos[1].py_data) + opt.y_offset, pos[2])
     return java_entity_nbt(p)
 
 

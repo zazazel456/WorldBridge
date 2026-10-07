@@ -65,16 +65,16 @@ _SECTIONS = {
             'chunk sorgente che diventa il centro del mondo LCE (x,z)',
         'name of the target world':
             'nome del mondo di destinazione',
-        'LCE PC/Xbox: the XUID (file name in players/) for the main player':
-            'LCE PC/Xbox: XUID (nome file in players/) da dare al giocatore principale',
+        'LCE PC/Xbox/Wii U/Switch: the id of the main player (its file name in players/: the XUID on PC and Xbox, 32 hex digits on Wii U)':
+            'LCE PC/Xbox/Wii U/Switch: id del giocatore principale (il nome del suo file in players/: lo XUID su PC e Xbox, 32 cifre esadecimali su Wii U)',
         'Java / Bedrock 1.18+: no game blending (the chunks of a pre-1.18 world are written in the new format: the game does not blend them with new terrain nor generate the part below y 0)':
             'Java / Bedrock 1.18+: niente blending del gioco (i chunk di un mondo pre-1.18 vengono scritti nel formato nuovo: il gioco non li fonde col terreno nuovo e non genera la parte sotto y 0)',
         'no WorldBridge ring (Java Alpha 1.2 – 1.17, neoLegacy, Nether and End) and no filling of finite maps (PE 0.x, LCE 54 / 64 chunks)':
             'niente anello di raccordo di WorldBridge (Java Alpha 1.2 – 1.17, neoLegacy, Nether ed End) e niente riempimento delle mappe finite (PE 0.x, LCE 54 / 64 chunk)',
         '128-block-high worlds (Alpha, Beta, Java 1.0 – 1.1, PE 0.x): taller mountains are compressed (default: the surface comes down whole) or cut at y 127':
             'mondi alti 128 blocchi (Alpha, Beta, Java 1.0 – 1.1, PE 0.x): le montagne più alte vengono compresse (predefinito: la superficie scende intera) oppure tagliate a y 127',
-        '1.18+ worlds to games that start at y 0: cut = the underground below y 0 is dropped (default), keep = everything kept (the world rises by 64), negative Y = kept from that y':
-            'mondi 1.18+ verso giochi che partono da y 0: cut = il sottosuolo sotto y 0 sparisce (predefinito), keep = tutto tenuto (il mondo sale di 64), Y negativo = tenuto da quella y',
+        '1.18+ worlds to games that start at y 0: auto = flat or low worlds keep their underground, the others are cut (default); cut = the underground below y 0 is dropped, keep = everything kept (the world rises by 64), negative Y = kept from that y':
+            'mondi 1.18+ verso giochi che partono da y 0: auto = i mondi piatti o bassi tengono il sottosuolo, gli altri vengono tagliati (predefinito); cut = il sottosuolo sotto y 0 sparisce, keep = tutto tenuto (il mondo sale di 64), Y negativo = tenuto da quella y',
         'do not convert the Nether / the End: the game generates them anew when first entered (repeatable)':
             "non converte il Nether / l'End: il gioco li genera da capo al primo ingresso (ripetibile)",
         'convert only the chunks of an MCA Selector CSV file (DIM = overworld, nether, end; repeatable). Dimensions without a file are left out':
@@ -131,6 +131,18 @@ _SECTIONS = {
             'Errore: {error}',
         'Done: {path}  ({n} chunks, {seconds}s)':
             'Fatto: {path}  ({n} chunk, {seconds}s)',
+        "expected {n} numbers separated by commas (e.g. {example}), not '{value}'":
+            "servono {n} numeri separati da virgole (es. {example}), non '{value}'",
+        "expected auto, cut, keep or a height such as -64, not '{value}'":
+            "serve auto, cut, keep o un'altezza come -64, non '{value}'",
+        'file not found: {path}':
+            'file non trovato: {path}',
+        "expected BIOME=[DIM:]FILE, not '{value}'":
+            "serve BIOMA=[DIM:]FILE, non '{value}'",
+        '{option} {file}: no chunk coordinates found (an MCA Selector CSV file is expected)':
+            '{option} {file}: nessuna coordinata di chunk trovata (serve un file CSV di MCA Selector)',
+        'contains: {description}':
+            'contiene: {description}',
     },
     'worldbridge/convert.py': {
         'Finite map: only the chunks that reach it (with a margin for its edge) are translated.':
@@ -167,6 +179,14 @@ _SECTIONS = {
             '{dim}: non convertito, il gioco lo genera da capo al primo ingresso.',
         '{n} chunks the game had not finished (at the edge of the explored area: only planned or bare rock) are not converted: the game or the ring generates them properly.':
             "{n} chunk non ancora completati dal gioco (ai margini dell'area esplorata: solo pianificati o roccia nuda) non vengono convertiti: il gioco o il raccordo li generano come si deve.",
+        'sub chunk {y} of chunk {cx}, {cz} (dimension {dim}) not found':
+            'sub-chunk {y} del chunk {cx}, {cz} (dimensione {dim}) non trovato',
+        'record {key} not found':
+            'record {key} non trovato',
+        '{n} chunks the game had not finished are kept: Minecraft finishes them when it loads them.':
+            'I {n} chunk non ancora completati dal gioco vengono mantenuti: Minecraft li completa quando li carica.',
+        'The {n} chunks Bedrock had not finished hold {tiles} block entities and {entities} entities (villages, dungeons...): they are lost with the chunks.':
+            'I {n} chunk non completati da Bedrock contengono {tiles} blocchi-entità e {entities} entità (villaggi, dungeon...): vanno persi insieme ai chunk.',
         'Copying the world (Minecraft will upgrade it with its own blending)':
             'Copia del mondo (Minecraft lo aggiornerà con il blending ufficiale)',
         'Copying the world (Minecraft will upgrade it when it is opened)':
@@ -217,6 +237,16 @@ _SECTIONS = {
             '{n} casse non avevano il loro contenuto (blocco-entità) nel mondo di origine o nella traduzione: sono state scritte vuote, così almeno si vedono.',
         '{n} chunks of the source world were unreadable (damaged or truncated) and were skipped: Minecraft will generate them again.':
             '{n} chunk del mondo di origine erano illeggibili (danneggiati o troncati) e sono stati saltati: Minecraft li rigenererà.',
+        '{n} chunks were left empty by the height limit: everything in them lies outside the target game\'s world (y 0 to 255), mostly below y 0. To keep what lies below y 0 use --depth keep (the world rises by 64 blocks) or a lower Y, e.g. --depth -32 (in the app: Underground of 1.18+ worlds).':
+            '{n} chunk sono rimasti vuoti per il limite di altezza: tutto quello che contengono sta fuori dal mondo del gioco di destinazione (da y 0 a 255), per lo più sotto y 0. Per tenere quello che sta sotto y 0 usa --depth keep (il mondo sale di 64 blocchi) o una Y più bassa, ad es. --depth -32 (nell\'app: Sottosuolo dei mondi 1.18+).',
+        'Height limit: {tiles} block entities (chests, signs, spawners…) and {entities} entities stood on blocks that were cut (under the kept underground, above y 255 or inside the rock removed from the mountains) and were lost with them.':
+            'Limite di altezza: {tiles} blocchi-entità (casse, cartelli, spawner…) e {entities} entità stavano su blocchi tagliati (sotto il sottosuolo tenuto, sopra y 255 o dentro la roccia tolta dalle montagne) e sono andati persi con loro.',
+        'Underground (automatic): no blocks found in the sampled chunks, what lies below y 0 is cut (--depth keep keeps it).':
+            'Sottosuolo (automatico): nessun blocco trovato nei chunk campionati, quello che sta sotto y 0 viene tagliato (--depth keep lo tiene).',
+        'Underground (automatic): the surface of this world is mostly below y 0 (median y {y}): the whole underground is kept and the world rises by 64 blocks.':
+            'Sottosuolo (automatico): la superficie di questo mondo sta per lo più sotto y 0 (mediana y {y}): tutto il sottosuolo viene tenuto e il mondo sale di 64 blocchi.',
+        'Underground (automatic): the surface of this world is above y 0 (median y {y}): what lies below y 0 is cut (--depth keep keeps it).':
+            'Sottosuolo (automatico): la superficie di questo mondo sta sopra y 0 (mediana y {y}): quello che sta sotto y 0 viene tagliato (--depth keep lo tiene).',
         'Mountain compression: {n} block entities (chests, spawners…) were inside the removed rock and were lost.':
             'Compressione delle montagne: {n} blocchi-entità (casse, spawner…) erano dentro la roccia tolta e sono andati persi.',
         'Writing the final files':
@@ -277,8 +307,24 @@ _SECTIONS = {
             'Raccordo: {n} chunk di terreno del gioco (seed {seed}) intorno al mondo convertito, alzato o abbassato dolcemente fino al suo bordo, larghi da 3 a {width} chunk secondo il dislivello; grotte, alberi, minerali e laghi li aggiunge il gioco.',
         '{target}: only the main player ({player}) is transferred; the other selected players are ignored.':
             '{target}: viene trasferito solo il giocatore principale ({player}); gli altri giocatori selezionati sono ignorati.',
+        '{n} players were not written: a Java world keeps one player in level.dat and a file for each player linked to a Java account (--player KEY=NICKNAME, “Players” tab).':
+            "{n} giocatori non sono stati scritti: un mondo Java tiene un giocatore in level.dat e un file per ogni giocatore collegato a un account Java (--player CHIAVE=NICKNAME, scheda «Giocatori»).",
+        'Left out of Pocket Edition 0.8: {names}':
+            'Lasciato fuori da Pocket Edition 0.8: {names}',
         'Selection: {n} unselected chunks removed.':
             'Selezione: {n} chunk non selezionati rimossi.',
+        'Unknown LCE platform: {platform} (choose from {choices})':
+            'Piattaforma LCE sconosciuta: {platform} (scegli tra {choices})',
+        '{size} chunks is not a world size {platform} has: use {choices}':
+            '{size} chunk non è una dimensione del mondo disponibile per {platform}: usa {choices}',
+        '{profile} is not a console version {platform} has: use {choices}':
+            '{profile} non è una versione delle console disponibile per {platform}: usa {choices}',
+        'The output path is a file, not a folder: {path}':
+            'Il percorso di destinazione è un file, non una cartella: {path}',
+        'The output folder cannot be inside the source world: {path}':
+            'La cartella di destinazione non può trovarsi dentro al mondo di origine: {path}',
+        'The source world cannot be inside the output folder: {path}':
+            'Il mondo di origine non può trovarsi dentro alla cartella di destinazione: {path}',
     },
     'worldbridge/terrain/policy.py': {
         "No terrain border yet for {target}: where the converted world ends the game will put its own terrain with a step. For an edge without steps choose Java 1.18 or later (the game's blending) or Java Alpha 1.2 – 1.12 (WorldBridge's ring).":
@@ -345,6 +391,8 @@ _SECTIONS = {
             'Rimozione dei chunk inutilizzati',
         'Completed':
             'Completato',
+        'kept {kept} of {total} chunks · removed {removed} ({pct}%)':
+            'tenuti {kept} chunk su {total} · rimossi {removed} ({pct}%)',
     },
     'worldbridge/lce/world.py': {
         'TU31 – 1.8 blocks (neoLegacy on PC, Bountiful consoles)':
@@ -353,14 +401,16 @@ _SECTIONS = {
             'TU46 – blocchi 1.9 (Elytra Update)',
         'TU54+ – 1.12 blocks (World of Color)':
             'TU54+ – blocchi 1.12 (World of Color)',
-        '“{name}” is not an XUID: the game will not load this player (it needs the number of its file in players/).':
-            '«{name}» non è un XUID: il gioco non caricherà questo giocatore (serve il numero del suo file in players/).',
+        '{file} cannot be read: the entities of this dimension are lost ({error}).':
+            '{file} non è leggibile: le entità di questa dimensione vanno perse ({error}).',
+        '“{name}” is not a Wii U player id: the game loads the player from players/<32 hexadecimal digits>.dat, so it will start at the spawn with an empty inventory. Give the id (the name of your file in players/ of a world already played, or use “From my world…” in the GUI).':
+            "«{name}» non è un id giocatore Wii U: il gioco carica il giocatore da players/<32 cifre esadecimali>.dat, quindi partirà dallo spawn con l'inventario vuoto. Indica l'id (il nome del tuo file in players/ di un mondo già giocato, o usa «Dal mio mondo…» nella GUI).",
+        'No player id given: the host player is written as players/{file}.dat, a file {platform} does not load, so the player will start at the spawn with an empty inventory. Give your id with --player-id (the name of your file in players/ of a world already played on that console, or use “From my world…” in the GUI).':
+            "Nessun id giocatore indicato: il giocatore host è scritto come players/{file}.dat, un file che {platform} non carica, quindi il giocatore partirà dallo spawn con l'inventario vuoto. Indica il tuo id con --player-id (il nome del tuo file in players/ di un mondo già giocato su quella console, o usa «Dal mio mondo…» nella GUI).",
         '“{name}” is not an XUID: the game loads the player from players/<number>.dat, so it will start at the spawn with an empty inventory. Give the number (the name of your file in players/ of a world already played, or use “From my world…” in the GUI).':
             "«{name}» non è un XUID: il gioco carica il giocatore da players/<numero>.dat, quindi partirà dallo spawn con l'inventario vuoto. Indica il numero (il nome del tuo file in players/ di un mondo già giocato, o usa «Dal mio mondo…» nella GUI).",
         '{n} blocks that do not exist in {version} were replaced with equivalents.':
             '{n} blocchi non esistenti in {version} sono stati sostituiti con equivalenti.',
-        "{n} chunks outside the LCE world's limits ({size}×{size} chunks) were left out.":
-            '{n} chunk fuori dai limiti del mondo LCE ({size}×{size} chunk) sono stati esclusi.',
         '{n} items':
             '{n} oggetti',
         '{n} enchantments':
@@ -371,6 +421,14 @@ _SECTIONS = {
             ' e ',
         '{version} does not have {what} of the source world: removed (the game does not know them); new arrows, boats and potions become their classic versions.':
             '{version} non ha {what} del mondo di origine: tolti (il gioco non li conosce); frecce, barche e pozioni nuove diventano le loro versioni classiche.',
+        "{n} chunks outside the LCE world's limits ({dim}, {size}×{size} chunks) were left out.":
+            '{n} chunk fuori dai limiti del mondo LCE ({dim}, {size}×{size} chunk) sono stati esclusi.',
+        'Overworld':
+            'Overworld',
+        'Nether':
+            'Nether',
+        'End':
+            'End',
     },
     'worldbridge/lce/compat.py': {
     },
@@ -429,6 +487,8 @@ _SECTIONS = {
             'Formato del mondo non riconosciuto.',
         'The archive does not contain a recognised world.':
             "L'archivio non contiene un mondo riconosciuto.",
+        'Copying files {done}/{total}':
+            'Copia dei file {done}/{total}',
     },
     'worldbridge/java/numeric.py': {
         'Java chunk {cx},{cz} unreadable, skipped: {error}':
@@ -447,6 +507,8 @@ _SECTIONS = {
             '{n} cornici',
         '{n} maps':
             '{n} mappe',
+        '{n} item frames could not be placed in Bedrock {version} (on a floor or ceiling before 1.13, or where the block is not air): they are not in the converted world.':
+            '{n} cornici non si sono potute collocare in Bedrock {version} (a pavimento o soffitto prima della 1.13, o dove il blocco non è aria): non sono nel mondo convertito.',
         'Bedrock: {tiles} block entities and {entities} entities written{extra}.':
             'Bedrock: {tiles} blocchi-entità e {entities} entità scritti{extra}.',
         'Entities and containers {i}/{n}':
@@ -497,6 +559,18 @@ _SECTIONS = {
             'Archivio mondo (.mcworld / .zip)',
         'Better than Adventure (Beta 1.7.3 mod, BTA 8.0.1)':
             'Better than Adventure (mod di Beta 1.7.3, BTA 8.0.1)',
+        '{file} is a Git LFS pointer (a small text file standing for the real one): fetch the real files with “git lfs pull” or download the world as an archive.':
+            '{file} è un puntatore Git LFS (un piccolo file di testo al posto di quello vero): scarica i file veri con «git lfs pull» oppure scarica il mondo come archivio.',
+        'level.dat is not a valid NBT file: the world is damaged or incomplete ({error}).':
+            'level.dat non è un file NBT valido: il mondo è danneggiato o incompleto ({error}).',
+        'New Nintendo 3DS Edition worlds are not supported: their chunks are not kept in a LevelDB database (db/cdb, db/vdb) like those of the other Bedrock worlds.':
+            'I mondi di New Nintendo 3DS Edition non sono supportati: i loro chunk non stanno in un database LevelDB (db/cdb, db/vdb) come quelli degli altri mondi Bedrock.',
+        'The db folder of this Bedrock world holds no LevelDB database (CURRENT is missing): the world is incomplete.':
+            'La cartella db di questo mondo Bedrock non contiene un database LevelDB (manca CURRENT): il mondo è incompleto.',
+        'The level.dat of this Bedrock world is not valid: the world is damaged or incomplete.':
+            'Il level.dat di questo mondo Bedrock non è valido: il mondo è danneggiato o incompleto.',
+        'This Bedrock world has no terrain: the db folder with its chunks is missing (only level.dat and the add-ons were saved, the game generates the terrain when the world is first opened), so there is nothing to convert. Open it once in Minecraft and convert the saved world.':
+            "Questo mondo Bedrock non ha terreno: manca la cartella db con i suoi chunk (sono stati salvati solo level.dat e gli add-on, il gioco genera il terreno alla prima apertura del mondo), quindi non c'è niente da convertire. Aprilo una volta in Minecraft e converti il mondo salvato.",
     },
     'worldbridge/bta/world.py': {
         'No level.dat in {path}':
@@ -1095,6 +1169,8 @@ _SECTIONS = {
             'Nuovo nome:',
         'Unsaved changes':
             'Modifiche non salvate',
+        'The world has unsaved changes. Save them before going on?':
+            'Il mondo ha modifiche non salvate. Salvarle prima di continuare?',
         'Saving failed':
             'Salvataggio non riuscito',
         'Saved (backup copy: *.wb-backup)':
@@ -1117,8 +1193,8 @@ _SECTIONS = {
             "Per mondi nati prima della 1.18 (LCE, vecchie Java / Bedrock, Pocket Edition) convertiti in Java o Bedrock 1.18+: i chunk vengono scritti come chunk pre-1.18, così Minecraft all'apertura li fonde col terreno nuovo (altezze e biomi) e genera la parte sotto y 0.\nTogliendo la spunta i chunk sono scritti nel formato nuovo: niente fusione, niente terreno sotto y 0.",
         "For the games that do not blend (Java Alpha 1.2 – 1.17, LCE neoLegacy): WorldBridge writes around the converted world a ring of terrain made by the game's generator (same seed), which passes smoothly from the converted edge to that version's terrain; in the Nether and the End too.\nPocket Edition 0.x and LCE with a 54 / 64-chunk map: the world is finite and is written whole, with natural terrain joining the converted world around it.":
             "Per i giochi che non fanno blending (Java Alpha 1.2 – 1.17, LCE neoLegacy): WorldBridge scrive intorno al mondo convertito un anello di terreno generato col generatore del gioco (stesso seed), che passa dolcemente dal bordo convertito al terreno di quella versione; anche nel Nether e nell'End.\nPocket Edition 0.x e LCE con mappa da 54 / 64 chunk: il mondo è finito e viene scritto per intero, con terreno naturale raccordato intorno al mondo convertito.",
-        '1.18+ worlds (y −64 to 319) to games whose world starts at y 0 (Java 1.2 – 1.17, LCE, Bedrock up to 1.17, and older versions).\nCut: what lies below y 0 disappears, the rest stays at its height.\nKeep everything: nothing disappears below, the world rises by 64 blocks (useful if you built below y 0); the mountains that no longer fit are compressed or cut as you choose below.\nFrom a chosen y: below that y it disappears, the rest rises to start from y 0.':
-            'Mondi 1.18+ (da y −64 a 319) verso giochi il cui mondo parte da y 0 (Java 1.2 – 1.17, LCE, Bedrock fino alla 1.17, e le versioni più vecchie).\nTaglia: quello che sta sotto y 0 sparisce, il resto resta alla sua altezza.\nMantieni tutto: niente sparisce sotto, il mondo sale di 64 blocchi (utile se hai costruito sotto y 0); le montagne che non entrano più vengono compresse o tagliate come scegli qui sotto.\nDa una y scelta: sotto quella y sparisce, il resto sale fino a partire da y 0.',
+        '1.18+ worlds (y −64 to 319) to games whose world starts at y 0 (Java 1.2 – 1.17, LCE, Bedrock up to 1.17, and older versions).\nAutomatic: a flat or low world (its surface mostly below y 0, like superflat) keeps everything, a normal one is cut.\nCut: what lies below y 0 disappears, the rest stays at its height.\nKeep everything: nothing disappears below, the world rises by 64 blocks (useful if you built below y 0); the mountains that no longer fit are compressed or cut as you choose below.\nFrom a chosen y: below that y it disappears, the rest rises to start from y 0.':
+            'Mondi 1.18+ (da y −64 a 319) verso giochi il cui mondo parte da y 0 (Java 1.2 – 1.17, LCE, Bedrock fino alla 1.17, e le versioni più vecchie).\nAutomatico: un mondo piatto o basso (la superficie quasi tutta sotto y 0, come il superpiatto) tiene tutto, uno normale viene tagliato.\nTaglia: quello che sta sotto y 0 sparisce, il resto resta alla sua altezza.\nMantieni tutto: niente sparisce sotto, il mondo sale di 64 blocchi (utile se hai costruito sotto y 0); le montagne che non entrano più vengono compresse o tagliate come scegli qui sotto.\nDa una y scelta: sotto quella y sparisce, il resto sale fino a partire da y 0.',
         "When the terrain does not fit the target game's height: the mountains of 1.18+ worlds (up to y 319, and even more if you keep the underground) to the games 256 blocks high, and to those 128 blocks high (Alpha, Beta, Java 1.0 – 1.1, Pocket Edition 0.x).\nCompress: nothing changes at the bottom; higher up every column loses a band of rock under the surface, so mountains stay mountains (lower) with grass, snow, trees and buildings intact. Bases dug into the mountain come down whole.\nCut: everything above the limit disappears and flat stone plateaus remain.":
             "Quando il terreno non entra nell'altezza del gioco di destinazione: le montagne dei mondi 1.18+ (fino a y 319, e ancora di più se tieni il sottosuolo) verso i giochi alti 256 blocchi, e verso quelli alti 128 (Alpha, Beta, Java 1.0 – 1.1, Pocket Edition 0.x).\nComprimi: in basso non cambia nulla; più su ogni colonna perde una fascia di roccia sotto la superficie, così le montagne restano montagne (più basse) con erba, neve, alberi e costruzioni intatti. Le basi scavate dentro la montagna scendono intere.\nTaglia: tutto quello che sta sopra il limite sparisce e restano tavolati di pietra piatti.",
         'The game loads the main player from players/<XUID>.dat: the XUID is a number the game gives your user, not the nickname. With “From my world…” you take it from a world you have already played.':
@@ -1199,8 +1275,10 @@ _SECTIONS = {
             'Intorno al mondo convertito, terreno generato come nel gioco di destinazione',
         'Terrain border:':
             'Raccordo col terreno:',
-        'Cut below y 0 (default)':
-            'Taglia sotto y 0 (predefinito)',
+        'Automatic (keep the underground of flat or low worlds)':
+            'Automatico (tiene il sottosuolo dei mondi piatti o bassi)',
+        'Cut below y 0':
+            'Taglia sotto y 0',
         'Keep everything (the world rises by 64 blocks)':
             'Mantieni tutto (il mondo sale di 64 blocchi)',
         'Keep from a chosen y':
@@ -1361,6 +1439,8 @@ _SECTIONS = {
             'Avvio…',
         'Cancelling…':
             'Annullamento in corso…',
+        '… (see the log)':
+            '… (vedi il registro)',
         'Completed':
             'Completato',
         'Conversion completed.':

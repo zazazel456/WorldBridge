@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import os
 import struct
+from collections import Counter
 from typing import List, Optional, Tuple
 
 import numpy as np
 
 from .. import blocks as blk
-from .. import nbt
+from .. import ids, nbt
 from ..lce.chunk import array_to_nibbles, java128_to_yzx, nibbles_to_array, yzx_to_java128
 from ..model import OVERWORLD, NumericChunk, Progress, WorldInfo, WorldSource, dimension_of
 from ..i18n import tr
@@ -35,6 +36,17 @@ PE_ALLOWED = frozenset(list(range(0, 23)) + [24, 26, 27, 30, 31, 32, 35] + list(
                           107, 108, 109, 112, 114, 125, 126, 128, 141, 142, 155, 156, 170, 171, 173])
 
 
+def _plain_pages(lst: nbt.ListTag) -> nbt.ListTag:
+    """Book pages as plain text (Java 1.8+ written books keep JSON text components)."""
+    from ..items import plain_text
+
+    for it in lst:
+        pages = nbt.get_tag(nbt.get_tag(it, "tag") or nbt.CompoundTag(), "pages")
+        if pages is not None and len(pages) and isinstance(pages[0], nbt.StringTag):
+            it["tag"]["pages"] = nbt.ListTag([nbt.StringTag(plain_text(p.py_data)) for p in pages], 8)
+    return lst
+
+
 def _read_le_nbt(path: str, header: int) -> Optional[nbt.CompoundTag]:
     if not os.path.exists(path):
         return None
@@ -45,11 +57,71 @@ def _read_le_nbt(path: str, header: int) -> Optional[nbt.CompoundTag]:
         return None
 
 
+def read_v1_level(raw: bytes) -> Optional[nbt.CompoundTag]:
+    """The level.dat of PE 0.1 (storage version 1): [i32 LE 1][i32 LE length], then a big endian
+    (RakNet BitStream) body: seed, spawn x/y/z, time, size on disk, last played (i32 each) and the
+    name as [u16 length][bytes].  None when ``raw`` is not one."""
+    if len(raw) < 8 + 30 or struct.unpack_from("<i", raw, 0)[0] != 1:
+        return None
+    (length,) = struct.unpack_from("<i", raw, 4)
+    body = raw[8:8 + length]
+    if length < 30 or len(body) < length:
+        return None
+    seed, sx, sy, sz, time, _size, played = struct.unpack_from(">7i", body, 0)
+    (n,) = struct.unpack_from(">H", body, 28)
+    if 30 + n > len(body):
+        return None
+    return nbt.CompoundTag({
+        "LevelName": nbt.StringTag(body[30:30 + n].decode("utf-8", "replace")), "RandomSeed": nbt.LongTag(seed),
+        "SpawnX": nbt.IntTag(sx), "SpawnY": nbt.IntTag(sy), "SpawnZ": nbt.IntTag(sz),
+        "Time": nbt.LongTag(max(time, 0)), "LastPlayed": nbt.LongTag(played & 0xFFFFFFFF),
+        "GameType": nbt.IntTag(1)})  # 0.1 - 0.2 had the creative mode only (no health, a hotbar without counts)
+
+
+def read_v1_player(raw: bytes) -> Optional[nbt.CompoundTag]:
+    """The player.dat of PE 0.1 - 0.2: [i32 LE 1][i32 LE 80], then little endian: position, motion
+    (3 floats each), pitch, yaw and fall distance (floats), fire and air (i16), on ground (u8), 3
+    bytes of padding and the 9 hotbar block ids (i32, -1 = empty).  As a Java player compound."""
+    if len(raw) < 88 or struct.unpack_from("<ii", raw, 0) != (1, 80):
+        return None
+    v = struct.unpack_from("<9f2hB3x9i", raw, 8)
+    pos, motion, pitch, yaw, fall = v[0:3], v[3:6], v[6], v[7], v[8]
+    fire, air, ground, hotbar = v[9], v[10], v[11], v[12:21]
+    if not all(abs(c) < 1e6 for c in pos):
+        return None
+    inv = nbt.ListTag([], 10)
+    for slot, iid in enumerate(hotbar):
+        if 0 < iid < 512:
+            iid, dmg = PE_TO_JAVA.get(iid, (iid, 0))
+            if iid:
+                inv.append(nbt.CompoundTag({"id": nbt.ShortTag(iid), "Count": nbt.ByteTag(1),
+                                            "Damage": nbt.ShortTag(dmg), "Slot": nbt.ByteTag(slot)}))
+    return nbt.CompoundTag({
+        "Pos": nbt.ListTag([nbt.DoubleTag(c) for c in pos], 6),
+        "Motion": nbt.ListTag([nbt.DoubleTag(c) for c in motion], 6),
+        "Rotation": nbt.ListTag([nbt.FloatTag(yaw), nbt.FloatTag(pitch)], 5),
+        "FallDistance": nbt.FloatTag(fall), "Fire": nbt.ShortTag(fire), "Air": nbt.ShortTag(air),
+        "OnGround": nbt.ByteTag(ground), "Health": nbt.ShortTag(20), "Dimension": nbt.IntTag(0),
+        "Inventory": inv})
+
+
+def _read_v1(path: str, parse):
+    if not os.path.exists(path):
+        return None
+    with open(path, "rb") as f:
+        return parse(f.read())
+
+
 class PEOldWorld(WorldSource):
     def __init__(self, path: str):
         self.path = path
         self.max_height = 128
-        lvl = _read_le_nbt(os.path.join(path, "level.dat"), 8) or nbt.CompoundTag()
+        lvl = _read_v1(os.path.join(path, "level.dat"), read_v1_level)  # PE 0.1: a binary level.dat
+        lvl = lvl or _read_le_nbt(os.path.join(path, "level.dat"), 8) or nbt.CompoundTag()
+        if "Player" not in lvl:  # PE 0.1 - 0.2: a binary player.dat beside it
+            player = _read_v1(os.path.join(path, "player.dat"), read_v1_player)
+            if player is not None:
+                lvl["Player"] = player
         self.info = WorldInfo()
         self.info.level = nbt.CompoundTag()
         for k in ("LevelName", "RandomSeed", "SpawnX", "SpawnY", "SpawnZ", "GameType", "Time", "LastPlayed"):
@@ -143,6 +215,9 @@ class PEOldWriter:
         self.ents: List[nbt.CompoundTag] = []
         self.replaced = 0
         self.skipped = 0
+        self.dropped_items = 0
+        self.dropped_ents: Counter = Counter()     # what the game has no entity or block entity for
+        self.dropped_tiles: Counter = Counter()
         os.makedirs(out_dir, exist_ok=True)
 
     def add_chunk(self, dim: int, c: NumericChunk, shift: bool = True):
@@ -171,24 +246,47 @@ class PEOldWriter:
         body = (yzx_to_java128(b.astype(np.uint8)).tobytes() + array_to_nibbles(yzx_to_java128(d))
                 + array_to_nibbles(yzx_to_java128(sky)) + array_to_nibbles(yzx_to_java128(bl)) + bytes(256))
         self.chunks[(c.cx, c.cz)] = body
+        from ..items import plain_text
+        from ..lce.compat import plain_sign_line
         from ..lce.world import legacy_items
 
         for t in c.tile_entities:
-            tid = str(nbt.get(t, "id", "")).split(":", 1)[-1]
-            tid = {"chest": "Chest", "furnace": "Furnace", "sign": "Sign"}.get(tid, tid)
-            if tid in ("Chest", "Furnace", "Sign"):
-                t = nbt.copy(t)
-                t["id"] = nbt.StringTag(tid)
-                if "Items" in t:
-                    t["Items"] = legacy_items(t["Items"])
-                self.tiles.append(t)
+            raw_id = str(nbt.get(t, "id", ""))
+            tid = ids.tile_to_old(raw_id) or raw_id.split(":", 1)[-1]        # "chest" (1.11+) or "Chest"
+            if tid not in ("Chest", "Furnace", "Sign", "NetherReactor"):
+                self.dropped_tiles[tid or "?"] += 1
+                continue
+            t = nbt.copy(t)
+            t["id"] = nbt.StringTag(tid)
+            if "Items" in t:
+                n = len(t["Items"])
+                t["Items"] = _plain_pages(legacy_items(t["Items"]))
+                self.dropped_items += n - len(t["Items"])
+            if tid == "Sign":  # PE keeps plain lines (at most 15 characters), not Java's JSON text
+                for i in range(1, 5):
+                    line = plain_sign_line(plain_text(nbt.get(t, f"Text{i}", "")))
+                    t[f"Text{i}"] = nbt.StringTag(line[:15])
+            self.tiles.append(t)
         for e in c.entities:
-            eid = nbt.get(e, "id", "")
-            num = PE_ENTITY_INV.get(eid)
+            raw_id = str(nbt.get(e, "id", ""))
+            old, _extra = ids.entity_to_old(raw_id)                          # "Chicken" or "minecraft:chicken"
+            num = PE_ENTITY_INV.get(old)
             if num is None:
+                self.dropped_ents[old or raw_id.split(":", 1)[-1] or "?"] += 1
                 continue
             e = nbt.copy(e)
             e["id"] = nbt.IntTag(num)
+            # PE 0.x reads Health as a short (Java 1.6+ writes a float, with HealF beside the short before 1.9)
+            hp = nbt.get(e, "HealF", nbt.get(e, "Health"))
+            if hp is not None:
+                try:
+                    e["Health"] = nbt.ShortTag(max(0, min(32767, int(round(float(hp))))))
+                except (TypeError, ValueError):
+                    del e["Health"]
+            if "HealF" in e:
+                del e["HealF"]
+            if isinstance(nbt.get_tag(e, "Item"), nbt.CompoundTag):
+                e["Item"] = _plain_pages(nbt.ListTag([e["Item"]], 10))[0]
             pos = nbt.get_tag(e, "Pos")
             if pos is not None:
                 e["Pos"] = nbt.ListTag([nbt.FloatTag(float(v.py_data)) for v in pos], 5)
@@ -239,7 +337,7 @@ class PEOldWriter:
                 i = cx + cz * 32
                 header[i * 4] = per
                 header[i * 4 + 1 : i * 4 + 4] = sector.to_bytes(3, "little")
-                blob = struct.pack("<I", CHUNK_BYTES) + data
+                blob = struct.pack("<I", CHUNK_BYTES + 4) + data  # the length counts its own 4 bytes, as in every real save
                 body += blob + bytes(per * SECTOR - len(blob))
                 sector += per
         with open(os.path.join(self.out, "chunks.dat"), "wb") as f:
@@ -269,6 +367,14 @@ class PEOldWriter:
             f.write(b"ENT\x00" + struct.pack("<ii", 1, len(ent)) + ent)
         if self.replaced:
             self.progress.warn(tr("{n} blocks missing in Pocket Edition 0.8 were replaced.", n=self.replaced))
+        n_ents, n_tiles = sum(self.dropped_ents.values()), sum(self.dropped_tiles.values())
+        if n_ents or n_tiles or self.dropped_items:
+            self.progress.warn(tr("Content that does not exist in {version}: removed {items} items, {entities} "
+                                  "entities and {tiles} block entities.", version="Pocket Edition 0.8",
+                                  items=self.dropped_items, entities=n_ents, tiles=n_tiles))
+            names = ", ".join(f"{k} ×{v}" for k, v in (self.dropped_ents + self.dropped_tiles).most_common(8))
+            if names:
+                self.progress.log(tr("Left out of Pocket Edition 0.8: {names}", names=names))
         if self.skipped:
             self.progress.warn(tr("{n} chunks outside the 256×256 area of Pocket Edition 0.8 were left out (Overworld "
                                   "only, chunks 0..15).", n=self.skipped))

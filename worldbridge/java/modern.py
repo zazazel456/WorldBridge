@@ -10,7 +10,8 @@ from collections import defaultdict
 from typing import Dict, Iterator, List, Optional, Tuple
 
 from .. import entities as ent
-from .. import nbt, tiles
+from .. import gameversion as gv
+from .. import nbt, newcontent, tiles
 from ..model import NETHER, OVERWORLD, THE_END, Progress, WorldInfo
 from .region import JavaRegion, RegionWriter
 from ..i18n import tr
@@ -66,6 +67,15 @@ def _state_tile(name: str, props) -> Optional[dict]:
             return {"kind": "noteblock", "note": int(str(nbt.get(props, "note", 0)))}
         except ValueError:
             return None
+    # block entities whose data is partly in the block state: merged into the block entity of the chunk
+    if name in ("suspicious_sand", "suspicious_gravel"):
+        try:
+            dusted = int(str(nbt.get(props, "dusted", 0)))
+        except ValueError:
+            dusted = 0
+        return {"kind": "brushable_block", "block": name, "dusted": dusted, "merge": True}
+    if name.endswith("copper_golem_statue"):
+        return {"kind": "copper_golem_statue", "pose": str(nbt.get(props, "copper_golem_pose", "standing")), "merge": True}
     return None
 
 
@@ -133,7 +143,8 @@ def _encode(idx, n_palette: int, spanning: bool):
 
 
 def state_tiles(root: nbt.CompoundTag, cx: int, cz: int) -> List[dict]:
-    """Canonical flower pot / note block entities rebuilt from the block states of a 1.13+ chunk."""
+    """Canonical flower pot / note block entities rebuilt from the block states of a 1.13+ chunk (and what
+    the block states add to brushable blocks / copper golem statues: those have ``merge`` set)."""
     import numpy as np
 
     dv = int(nbt.get(root, "DataVersion", 0) or 0)
@@ -143,7 +154,7 @@ def state_tiles(root: nbt.CompoundTag, cx: int, cz: int) -> List[dict]:
         wanted = {}
         for i, st in enumerate(palette):
             name = nbt.state_name(st, "")
-            if "potted_" in name or name.endswith("note_block"):
+            if "potted_" in name or name.endswith(("note_block", "copper_golem_statue")) or "suspicious_" in name:
                 t = _state_tile(name, nbt.state_props(st))
                 if t is not None:
                     wanted[i] = t
@@ -161,19 +172,39 @@ def state_tiles(root: nbt.CompoundTag, cx: int, cz: int) -> List[dict]:
     return out
 
 
+def _state_changes(c: dict):
+    """(block name suffixes it applies to, replacement block or None, {property: value}) of a canonical
+    block entity whose data is also in the block state, or None."""
+    kind = c.get("kind")
+    if kind == "flower_pot":
+        flat = tiles.pot_flat(c.get("plant"))
+        return ("flower_pot", "minecraft:potted_" + flat, {}) if flat else None
+    if kind == "noteblock":
+        return ("note_block", None, {"note": str(int(c["note"]))}) if 0 < int(c.get("note", 0)) <= 24 else None
+    if kind == "lectern":
+        return ("lectern", None, {"has_book": "true" if c.get("book") else "false"})
+    if kind == "jukebox":
+        return ("jukebox", None, {"has_record": "true" if c.get("record") else "false"})
+    if kind == "chiseled_bookshelf":
+        full = {int(i["slot"]) for i in c.get("slots", [])}
+        return ("chiseled_bookshelf", None, {f"slot_{i}_occupied": "true" if i in full else "false" for i in range(6)})
+    if kind == "brushable_block" and "dusted" in c:
+        return (("suspicious_sand", "suspicious_gravel"), None, {"dusted": str(int(c["dusted"]))})
+    if kind == "copper_golem_statue" and c.get("pose"):
+        return ("copper_golem_statue", None, {"copper_golem_pose": str(c["pose"])})
+    return None
+
+
 def apply_state_tiles(root: nbt.CompoundTag, canon: List[dict]) -> int:
-    """The reverse of ``state_tiles``: put the plant of the canonical flower pots and the pitch of
-    the note blocks into the block states of a 1.13+ chunk (Amulet leaves them empty / at 0).
+    """The reverse of ``state_tiles``: put the plant of the canonical flower pots, the pitch of the note
+    blocks, the book of the lecterns... into the block states of a 1.13+ chunk (Amulet leaves them empty / at 0).
     Returns the number of blocks changed."""
     dv = int(nbt.get(root, "DataVersion", 0) or 0)
     todo = {}
     for c in canon:
-        if c.get("kind") == "flower_pot":
-            flat = tiles.pot_flat(c.get("plant"))
-            if flat:
-                todo[tuple(c["pos"])] = ("flower_pot", "minecraft:potted_" + flat, None)
-        elif c.get("kind") == "noteblock" and 0 < int(c.get("note", 0)) <= 24:
-            todo[tuple(c["pos"])] = ("note_block", None, str(int(c["note"])))
+        ch = _state_changes(c)
+        if ch is not None:
+            todo[tuple(c["pos"])] = ch
     if not todo:
         return 0
     by_y = defaultdict(list)
@@ -192,17 +223,18 @@ def apply_state_tiles(root: nbt.CompoundTag, canon: List[dict]) -> int:
             continue
         keys = [nbt.dump(st, "") for st in palette]
         here = 0
-        for n, (base, new_name, note) in wanted:
+        for n, (match, new_name, props) in wanted:
             cur = palette[int(idx[n])]
-            if nbt.state_name(cur, "").split(":", 1)[-1] != base:
+            if not nbt.state_name(cur, "").split(":", 1)[-1].endswith(match):
                 continue  # not the expected block: leave it alone
             if new_name is not None:
                 st = nbt.CompoundTag({"Name": nbt.StringTag(new_name)})
             else:
                 st = nbt.copy(cur)
-                props = nbt.get_tag(st, "Properties") or nbt.CompoundTag()
-                props["note"] = nbt.StringTag(note)
-                st["Properties"] = props
+                ps = nbt.get_tag(st, "Properties") or nbt.CompoundTag()
+                for k, v in props.items():
+                    ps[k] = nbt.StringTag(v)
+                st["Properties"] = ps
             k = nbt.dump(st, "")
             if k not in keys:
                 palette.append(st)
@@ -213,6 +245,63 @@ def apply_state_tiles(root: nbt.CompoundTag, canon: List[dict]) -> int:
             changed += here
             holder[dkey] = _encode(idx, len(palette), spanning)
     return changed
+
+
+def blocks_at(root: nbt.CompoundTag, positions) -> Dict[Tuple[int, int, int], str]:
+    """The block names (no namespace) at ``positions`` (x, y, z) of a 1.13+ chunk."""
+    dv = int(nbt.get(root, "DataVersion", 0) or 0)
+    by_y = defaultdict(list)
+    for x, y, z in positions:
+        by_y[y >> 4].append((x, y, z))
+    out = {}
+    for sec, holder, pkey, dkey in _sections(root):
+        wanted = by_y.get(int(nbt.get(sec, "Y", -99)))
+        palette = nbt.get_tag(holder, pkey)
+        if not wanted or palette is None or not len(palette):
+            continue
+        idx = _decode(nbt.get_tag(holder, dkey), len(palette), bool(dv) and dv < SPANNING_DV)
+        if idx is None:
+            continue
+        for x, y, z in wanted:
+            out[(x, y, z)] = nbt.state_name(palette[int(idx[(y & 15) << 8 | (z & 15) << 4 | (x & 15)])], "").split(":", 1)[-1]
+    return out
+
+
+def resolve_kinds(root: nbt.CompoundTag, canon: List[dict]) -> int:
+    """Bedrock has one block entity for the chest and the trapped chest, the campfire and the soul campfire, the
+    beehive and the bee nest: the canonical ones read from it get the kind of the block that is in the chunk.
+    Returns the number of block entities changed."""
+    shared = [c for c in canon if c.get("kind") in tiles.SHARED_BEDROCK_ID]
+    if not shared:
+        return 0
+    names = blocks_at(root, [tuple(c["pos"]) for c in shared])
+    n = 0
+    for c in shared:
+        name = names.get(tuple(c["pos"]), "")
+        k = tiles.JAVA_TO_KIND.get(name)
+        if k is not None and k != c["kind"] and tiles.KINDS[k][2] == tiles.KINDS[c["kind"]][2]:
+            c["kind"] = k
+            n += 1
+        if k == "chest" and name.endswith("copper_chest"):   # the block entity has the id of its block
+            c["java_id"] = name
+    return n
+
+
+def merge_state_tiles(te: list, states: List[dict]) -> list:
+    """``te`` (NBT block entities) and the ``state_tiles`` of a chunk as one list: a state tile with ``merge``
+    completes the block entity at its position (as a canonical dict), the others come after the NBT ones."""
+    merge = {tuple(c["pos"]): c for c in states if c.get("merge")}
+    out = list(te)
+    for i, t in enumerate(out):
+        if merge and isinstance(t, nbt.CompoundTag):
+            s = merge.get(tiles._pos(t))
+            c = tiles.from_java_modern(t) if s is not None else None
+            if c is not None and c["kind"] == s["kind"]:
+                c.update({k: v for k, v in s.items() if k != "merge"})
+                out[i] = c
+                del merge[tuple(c["pos"])]
+    out.extend({k: v for k, v in c.items() if k != "merge"} for c in states if not c.get("merge") or tuple(c["pos"]) in merge)
+    return out
 
 
 def _iter_chunks(world: str, sub: str, dim: int):
@@ -235,14 +324,15 @@ def _iter_chunks(world: str, sub: str, dim: int):
 def iter_modern_extras(world: str, progress: Optional[Progress] = None,
                        with_states: bool = False) -> Iterator[Tuple[int, int, int, list, list]]:
     """Yield (dim, cx, cz, block_entities, entities) of a Java 1.13+ world.  with_states: the
-    block entity list also gets the canonical dicts of ``state_tiles`` (after the NBT ones)."""
+    block entity list also gets the canonical dicts of ``state_tiles`` (after the NBT ones; some of them
+    complete the block entity of their block, see ``merge_state_tiles``)."""
     for dim in (OVERWORLD, NETHER, THE_END):
         per_chunk: Dict[Tuple[int, int], List[list]] = defaultdict(lambda: [[], []])
         for cx, cz, root in _iter_chunks(world, "region", dim):
             te, en = _chunk_parts(root)
             te = list(te)
             if with_states:
-                te += state_tiles(root, cx, cz)
+                te = merge_state_tiles(te, state_tiles(root, cx, cz))
             if len(te) or len(en):
                 per_chunk[(cx, cz)][0].extend(te)
                 per_chunk[(cx, cz)][1].extend(en)
@@ -263,20 +353,21 @@ class JavaModernExtras:
             self.data[(dim, cx, cz)] = (te, en)
 
     def chunk_extras(self, dim: int, cx: int, cz: int):
+        """At their height in the source world: extra._wrap_reader moves them with the blocks (depthfit)
+        and drops those that end out of 0 - 255."""
         te, en = self.data.get((dim, cx, cz), ([], []))
         canon, seen = [], set()
         for t in te:
             c = t if isinstance(t, dict) else tiles.from_java_modern(t)
-            if c is not None and 0 <= c["pos"][1] < 256 and tuple(c["pos"]) not in seen:
+            if c is not None and tuple(c["pos"]) not in seen:
                 seen.add(tuple(c["pos"]))
                 canon.append(c)
         tl = tiles.write_list(canon, "legacy")
         el = []
         for c in ent.read_list(en, "java"):
-            if 0 <= c["pos"][1] < 256:
-                e = ent.to_legacy(c)
-                if e is not None:
-                    el.append(e)
+            e = ent.to_legacy(c)
+            if e is not None:
+                el.append(e)
         return el, tl
 
 
@@ -331,21 +422,25 @@ def _moved_key(move, dim: int, cx: int, cz: int, tl: list, el: list):
     return (dim,) + tuple(move.canon_chunk(dim, cx, cz, tl, el))
 
 
-def inject_from_bedrock(src: str, out_dir: str, info: WorldInfo, progress: Progress, move=None):
+def inject_from_bedrock(src: str, out_dir: str, info: WorldInfo, progress: Progress, move=None, depth=None):
     canon = {}
     for (dim, cx, cz), (te, en) in _bedrock_chunks(src).items():
         tl = [c for c in (tiles.from_bedrock(t) for t in te) if c is not None]
         el = [e for e in en if isinstance(e, dict)] + ent.read_list([e for e in en if not isinstance(e, dict)], "bedrock")
+        if depth is not None and dim == OVERWORLD:
+            tl, el = depth.move_canon(cx, cz, tl, el)           # with their blocks (worldbridge.depthfit)
         if tl or el:
             canon[_moved_key(move, dim, cx, cz, tl, el)] = (tl, el)
     inject_canon(out_dir, canon, progress)
 
 
-def inject_from_java(src: str, out_dir: str, info: WorldInfo, progress: Progress, move=None):
+def inject_from_java(src: str, out_dir: str, info: WorldInfo, progress: Progress, move=None, depth=None):
     canon = {}
     for dim, cx, cz, te, en in iter_modern_extras(src, progress):
         tl = [c for c in (tiles.from_java_modern(t) for t in te) if c is not None]
         el = ent.read_list(en, "java")
+        if depth is not None and dim == OVERWORLD:
+            tl, el = depth.move_canon(cx, cz, tl, el)
         if tl or el:
             canon[_moved_key(move, dim, cx, cz, tl, el)] = (tl, el)
     inject_canon(out_dir, canon, progress)
@@ -385,6 +480,8 @@ def inject_canon(out_dir: str, canon, progress: Progress):
     for (dim, cx, cz), (tl, el) in canon.items():
         by_region[(dim, cx >> 5, cz >> 5)].append((cx, cz, tl, el))
     n_t = n_e = 0
+    tally = newcontent.tally_of(progress)
+    jver = None                                   # (data version, its Java release) of the last chunk
     for (dim, rx, rz), entries in by_region.items():
         path = os.path.join(_folder(out_dir, dim, "region"), f"r.{rx}.{rz}.mca")
         if not os.path.exists(path):
@@ -411,12 +508,21 @@ def inject_canon(out_dir: str, canon, progress: Progress):
             dv = int(nbt.get(root, "DataVersion", 3465))
             dv_seen = dv
             tl, el = todo[(lx, lz)]
+            if jver is None or jver[0] != dv:
+                jver = (dv, gv.java_from_data_version(dv))
+            if jver[1] is not None:        # what a target older than the source does not have goes (and is counted)
+                tl, el = newcontent.clean_extras(tl, el, jver[1], tally)
+            resolve_kinds(root, tl)
             apply_state_tiles(root, tl)
             new_tiles = tiles.write_list(tl, "java", data_version=dv)
             lvl = nbt.get_tag(root, "Level")
             holder, key = (lvl, "TileEntities") if lvl is not None else (root, "block_entities")
             existing = {(int(nbt.get(t, "x", 0)), int(nbt.get(t, "y", 0)), int(nbt.get(t, "z", 0))): t
                         for t in (nbt.get_tag(holder, key) or [])}
+            for c in tl:  # a block entity the target version does not have: Amulet's copy of the other game's one goes too
+                if not tiles.exists_in_java(c["kind"], dv):
+                    existing.pop(tuple(c["pos"]), None)
+                    tally.tiles += 1
             for t in new_tiles:
                 existing[(int(t["x"].py_data), int(t["y"].py_data), int(t["z"].py_data))] = t
                 n_t += 1

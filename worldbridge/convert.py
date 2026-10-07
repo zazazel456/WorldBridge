@@ -16,7 +16,7 @@ from . import amulet_bridge as ab
 from .i18n import N_, tr
 from . import detect as det
 from .model import (NETHER, OVERWORLD, THE_END, UNKNOWN_BIOME, BiomeFiller, ConversionCancelled, ConversionError, NumericChunk,
-                    Progress, WorldSource)
+                    Progress, WorldSource, copy_tree)
 from .selection import Selection, apply_to_info, prune_bedrock, prune_java, resolve_links
 
 
@@ -68,9 +68,10 @@ class TargetSpec:
     # 128 high targets (Alpha, Beta, Java 1.0 - 1.1, PE 0.x): ground above their ceiling is
     # "compress"ed (mountains lowered keeping their surface, see worldbridge.heightfit) or "cut"
     tall_terrain: str = "compress"
-    # Caves & Cliffs worlds into games whose world starts at y 0 (worldbridge.depthfit): "cut" (the
-    # underground goes), "keep" (the world moves up by 64) or the lowest y kept (a negative number)
-    depth: object = "cut"
+    # Caves & Cliffs worlds into games whose world starts at y 0 (worldbridge.depthfit): "auto" (flat or
+    # low worlds are kept, the others cut), "cut" (the underground goes), "keep" (the world moves up by
+    # 64) or the lowest y kept (a negative number)
+    depth: object = "auto"
     # dimensions not converted: the game generates them anew (NETHER, THE_END)
     regen: Tuple[int, ...] = ()
 
@@ -181,7 +182,7 @@ def shift_info_y(info, dy: int) -> None:
         seen.add(id(p))
         pos = _nbt.get_tag(p, "Pos")
         if pos is not None and len(pos) == 3:
-            p["Pos"] = _nbt.ListTag([pos[0], _nbt.DoubleTag(float(pos[1].py_data) + dy), pos[2]], 6)
+            p["Pos"] = _nbt.pos_list(pos[0], float(pos[1].py_data) + dy, pos[2])
     if "SpawnY" in lvl:
         lvl["SpawnY"] = _nbt.IntTag(int(_nbt.get(lvl, "SpawnY")) + dy)
     sp = _nbt.get_tag(lvl, "spawn")
@@ -256,7 +257,9 @@ def open_source(d: det.Detected, progress: Progress, tmp: str, for_amulet_target
         progress.log(tr("Translating the blocks to the numeric Java 1.12.2 format with Amulet…"))
         ab.amulet_convert(d.path, hub, "java", (1, 12, 2), progress, selection, depth)
         world = JavaNumericWorld(hub, progress=progress)
-        attach_source_extras(world, d, progress)
+        # block entities and entities come again from the original world (extra.py), at their old
+        # height: they go where Amulet's pass moved their blocks (depthfit)
+        attach_source_extras(world, d, progress, depth)
         _depth_players(world.info, depth, progress)
         read = world.read_chunk
 
@@ -265,10 +268,6 @@ def open_source(d: det.Detected, progress: Progress, tmp: str, for_amulet_target
             c = read(dim, cx, cz)
             if c is not None:
                 c.sky_light = c.block_light = None
-                if depth is not None and depth.active and dim == OVERWORLD:
-                    # block entities and entities come again from the original world (extra.py), at
-                    # their old height: they go where Amulet's pass moved their blocks
-                    depth.move_numeric(c)
             return c
 
         world.read_chunk = read_chunk
@@ -311,6 +310,9 @@ class _Done:
     chunk: object = None
     obs: object = None                        # blocks the rings look at (edge chunks)
     unreadable: int = 0
+    emptied: int = 0                          # nothing left of the chunk in the target's height (depthfit)
+    cut_tiles: int = 0                        # block entities / entities cut with their blocks (depthfit)
+    cut_entities: int = 0
     empty_chests: int = 0
     rows: int = 0
     top: object = None                        # Relocation.top, when this chunk has the destination
@@ -325,8 +327,9 @@ class _Pipeline:
     applies it: the result is the one of the plain loop."""
 
     def __init__(self, src: WorldSource, progress: Progress, rows, fit, shift_here: int, biomes, move,
-                 writer, observe: Dict[int, set], drawn_tiles: bool, filler: bool = False):
+                 writer, observe: Dict[int, set], drawn_tiles: bool, filler: bool = False, depth=None):
         self.src, self.progress = src, progress
+        self.depth = depth
         # BiomeFiller in the main loop: only chunks with every biome known are encoded here (the filler
         # reads them back from the writer when it needs them), the others go to it as they are
         self.filler = filler
@@ -350,8 +353,17 @@ class _Pipeline:
             self.rows.fix(dim, c)                   # rows of double chests: every pair drawn
             out.rows, self.rows.changed = self.rows.changed - before, before
         if c is None:
-            out.unreadable = 1
+            # a chunk the depth cut left without blocks is not a damaged one (None: it holds nothing)
+            had = self.depth.emptied.get((cx, cz)) if self.depth is not None and dim == OVERWORLD else None
+            if had is None:
+                out.unreadable = 1
+            elif had:
+                out.emptied = 1
+                emptied_extras = getattr(self.src, "emptied_extras", None)      # lost with their chunk's blocks
+                if emptied_extras is not None:
+                    out.cut_tiles, out.cut_entities = emptied_extras(dim, cx, cz)
             return out
+        out.cut_tiles, out.cut_entities = c.cut_extras
         if self.fit is not None and dim == OVERWORLD:
             c = self.fit.apply(c)
         if self.shift_here:
@@ -473,7 +485,10 @@ def _finite_area(t: TargetSpec, spawn) -> Optional[Dict[int, Tuple[int, int, int
         from .lce.world import map_area
 
         size, ox, oz = _lce_layout(t, spawn)
-        areas = {dim: map_area(dim, size, ox, oz) for dim in (OVERWORLD, NETHER, THE_END)}
+        from .lce.world import PROFILES, resolve_profile
+
+        end = PROFILES[resolve_profile(t.lce_platform, t.lce_profile)].end_size
+        areas = {dim: map_area(dim, size, ox, oz, end) for dim in (OVERWORLD, NETHER, THE_END)}
     else:
         return None
     m = _AREA_MARGIN
@@ -505,6 +520,7 @@ def _within(coords: List[Tuple[int, int]], box: Optional[Tuple[int, int, int, in
 
 def _make_writer(t: TargetSpec, out: str, progress: Progress, src: WorldSource, spawn=None):
     """``spawn``: the spawn of the converted world when it is not the source's (chunks moved)."""
+    moved = spawn
     spawn = spawn or src.info.spawn
     if t.family == "lce":
         from .lce.world import LCEWriteOptions, LCEWriter
@@ -515,10 +531,13 @@ def _make_writer(t: TargetSpec, out: str, progress: Progress, src: WorldSource, 
                                               offset_x=ox, offset_z=oz, world_name=t.world_name,
                                               host_player_id=t.lce_player_id), progress)
     if t.family == "pe_old":
-        from .bedrock.pe_old import PEOldWriter
+        from .bedrock.pe_old import PEOldWorld, PEOldWriter
 
         sx, _sy, sz = spawn
-        return PEOldWriter(out, progress, world_name=t.world_name, origin=((sx >> 4) - 8, (sz >> 4) - 8))
+        origin = ((sx >> 4) - 8, (sz >> 4) - 8)
+        if isinstance(src, PEOldWorld) and moved is None:
+            origin = (0, 0)  # a PE 0.x map is already 16 x 16 chunks from (0, 0): converting it changes nothing
+        return PEOldWriter(out, progress, world_name=t.world_name, origin=origin)
     from .java.numeric import JavaNumericWriter, JavaWriteOptions
 
     if t.family == "java" and t.java_mode in ("mcregion", "alpha"):
@@ -534,11 +553,69 @@ def _make_writer(t: TargetSpec, out: str, progress: Progress, src: WorldSource, 
     return JavaNumericWriter(out, opt, progress)
 
 
+def validate_target(t: TargetSpec) -> None:
+    """Refuses, before anything is read, the options the target cannot honour (``ConversionError``)."""
+    if t.family == "lce":
+        from .lce.container import PLATFORMS
+        from .lce.world import platform_profiles, platform_sizes
+
+        if t.lce_platform not in PLATFORMS:
+            raise ConversionError(tr("Unknown LCE platform: {platform} (choose from {choices})", platform=t.lce_platform,
+                                     choices=", ".join(PLATFORMS)))
+        if t.lce_world_size and t.lce_world_size not in platform_sizes(t.lce_platform):
+            raise ConversionError(tr("{size} chunks is not a world size {platform} has: use {choices}",
+                                     size=t.lce_world_size, platform=t.lce_platform,
+                                     choices=", ".join(str(v) for v in platform_sizes(t.lce_platform))))
+        if t.lce_profile and t.lce_profile not in platform_profiles(t.lce_platform):
+            raise ConversionError(tr("{profile} is not a console version {platform} has: use {choices}",
+                                     profile=t.lce_profile, platform=t.lce_platform,
+                                     choices=", ".join(platform_profiles(t.lce_platform))))
+    elif t.family == "java" and t.java_version_limit:
+        lim = t.java_version_limit
+        if t.java_mode in OLD_LIMITS:
+            choices = OLD_LIMITS[t.java_mode]
+        elif t.java_mode == "numeric":
+            choices = _numeric_limits()
+        else:
+            return
+        if lim not in choices:
+            raise ConversionError(tr("--java-limit {limit} is not valid for the {format} format: use {choices}",
+                                     limit=lim, format=t.java_mode, choices=", ".join(choices)))
+
+
+def _numeric_limits() -> Tuple[str, ...]:
+    from .blocks import _V
+
+    return tuple(v for v in _V if v.startswith("1."))
+
+
+def check_output_folder(src_path: str, out_dir: str) -> None:
+    """The output folder cannot be inside the source world (the working copy would copy itself) nor the
+    source inside the output folder (``ConversionError``)."""
+    if os.path.isfile(out_dir):
+        raise ConversionError(tr("The output path is a file, not a folder: {path}", path=out_dir))
+    src = os.path.realpath(src_path)
+    if not os.path.isdir(src):
+        return
+    out = os.path.realpath(out_dir)
+    try:
+        common = os.path.commonpath([src, out])
+    except ValueError:                                   # another drive
+        return
+    if common == src:
+        raise ConversionError(tr("The output folder cannot be inside the source world: {path}", path=out_dir))
+    if common == out:
+        raise ConversionError(tr("The source world cannot be inside the output folder: {path}", path=src_path))
+
+
 def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[Progress] = None) -> ConversionResult:
     progress = progress or Progress()
     t0 = time.time()
+    validate_target(target)
+    check_output_folder(src_path, out_dir)
     if os.path.exists(out_dir) and os.listdir(out_dir):
         raise ConversionError(tr("The output folder is not empty: {path}", path=out_dir))
+    created_out = not os.path.exists(out_dir)
     parent = os.path.dirname(os.path.abspath(out_dir)) or "."
     os.makedirs(parent, exist_ok=True)
     tmp = tempfile.mkdtemp(prefix=".worldbridge_", dir=parent)
@@ -548,6 +625,8 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
         d = det.detect(src_path)
         if d is None:
             raise ConversionError(tr("World format not recognised. Choose the world folder or the save file."))
+        if d.kind != "archive":
+            check_output_folder(d.path, out_dir)      # the world's folder when the save file or level.dat was given
         if d.kind == "archive":
             folder = det.extract_archive(d.path, os.path.join(tmp, "archive"))
             d = det.detect(folder)
@@ -585,10 +664,23 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
 
         excl = incomplete_chunks(d.kind, d.path, sel.chunks)
         if excl:
-            sel.exclude = excl
+            from .incomplete import bedrock_held, keep_for
+
             n = sum(len(v) for v in excl.values())
-            progress.log(tr("{n} chunks the game had not finished (at the edge of the explored area: only planned or "
-                            "bare rock) are not converted: the game or the ring generates them properly.", n=n))
+            if keep_for(d.kind, target.family):
+                sel.keep_unfinished = True
+                progress.log(tr("{n} chunks the game had not finished are kept: Minecraft finishes them when it loads "
+                                "them.", n=n))
+            else:
+                sel.exclude = excl
+                progress.log(tr("{n} chunks the game had not finished (at the edge of the explored area: only planned or "
+                                "bare rock) are not converted: the game or the ring generates them properly.", n=n))
+                if d.kind == "bedrock":
+                    held_t, held_e = bedrock_held(d.path, excl)
+                    if held_t or held_e:
+                        progress.warn(tr("The {n} chunks Bedrock had not finished hold {tiles} block entities and "
+                                         "{entities} entities (villages, dungeons...): they are lost with the chunks.",
+                                         n=n, tiles=held_t, entities=held_e))
         old_source = _source_is_pre118(d)
         same_edition = (not sel.biomes and sel.move_to is None and target.family in ("java", "bedrock")
                         and d.kind == ("bedrock" if target.family == "bedrock" else "java_modern")
@@ -597,12 +689,12 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
         if (same_edition and target.blend and old_source
                 and tuple(target.version or ab.latest("bedrock" if target.family == "bedrock" else "java")) >= CAVES_CLIFFS):
             progress.stage(tr("Copying the world (Minecraft will upgrade it with its own blending)"), 0.05, 0.95)
-            shutil.copytree(d.path, out_dir, dirs_exist_ok=True)
+            copy_tree(d.path, out_dir, progress)
             if sel.active:
                 _edit_copy(d, out_dir, target, sel, progress)
             progress.log(tr("The world is pre-1.18: it is kept as it is; when it is opened, Minecraft runs its own "
                             "upgrade, blending terrain and biomes."))
-            progress.update(1.0, tr("Completed"))
+            progress.done()
             return ConversionResult(out_dir, 0, time.time() - t0, list(progress.warnings))
         # ---- Java 1.13+ -> the same or a newer Java: the game's own upgrade keeps every block, item
         # component, book, mob and setting, which no translation does as well (before 1.18 the game
@@ -610,12 +702,12 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
         if (same_edition and target.family == "java" and _java_upgrade_only(d, target)
                 and (not target.ring or tuple(target.version or ab.latest("java")) >= CAVES_CLIFFS)):
             progress.stage(tr("Copying the world (Minecraft will upgrade it when it is opened)"), 0.05, 0.95)
-            shutil.copytree(d.path, out_dir, dirs_exist_ok=True)
+            copy_tree(d.path, out_dir, progress)
             if sel.active:
                 _edit_copy(d, out_dir, target, sel, progress)
             progress.log(tr("The target version is the same as the world's or newer: the world is kept as it is, and "
                             "Minecraft upgrades it with its own upgrade when it is opened."))
-            progress.update(1.0, tr("Completed"))
+            progress.done()
             return ConversionResult(out_dir, 0, time.time() - t0, list(progress.warnings))
 
         # ---- direct Amulet -> Amulet (keeps every modern block)
@@ -632,7 +724,7 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
         progress.stage(tr("Reading the source world"), 0.03, 0.35 if d.kind in AMULET_KINDS else 0.05)
         from . import depthfit
 
-        depth = depthfit.plan(target, d.kind in AMULET_KINDS and not old_source)
+        depth = depthfit.plan(target, d.kind in AMULET_KINDS and not old_source, d.path, progress)
         src_sel = sel
         if d.kind in AMULET_KINDS and target.family in ("lce", "pe_old"):
             # a finite map: only the part of the world that reaches it goes through Amulet
@@ -646,6 +738,10 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
             progress.log(tr("Finite map: only the chunks that reach it (with a margin for its edge) are translated."))
         src = open_source(d, progress, tmp, _is_amulet_target(target), src_sel, depth)
         apply_to_info(src.info, sel, target.family, progress)
+        if sel.spawn is not None and depth is not None and depth.used:
+            # --spawn is a point of the source world: it rises / falls with the ground like the world's own spawn
+            x, y, z = (int(v) for v in sel.spawn)
+            src.info.level["SpawnY"] = ab.nbt.IntTag(int(round(depth.point(x + 0.5, y, z + 0.5))))
         _warn_single_player(src.info, target, sel, progress)
         if target.family == "java" and target.java_mode == "auto":
             # Mojang's own upgrade (DataFixerUpper) is the most faithful route for numeric worlds;
@@ -685,18 +781,23 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
         move = Relocation(sel)
         if move.active:
             progress.log(move.describe())
-        outside = 0
+        outside: Dict[int, int] = {}
         area = None if d.kind in _FINITE_SOURCES else _finite_area(target, move.spawn(src.info) if move.active else src.info.spawn)
         if area is not None:
             # a finite map (LCE, PE 0.x): the chunks that cannot reach it are not even read
-            n = sum(len(v) for v in coords.values())
+            n_dim = {dim: len(v) for dim, v in coords.items()}
             coords = {dim: _within(cs, area.get(dim), move.delta(dim)) for dim, cs in coords.items()}
-            outside = n - sum(len(v) for v in coords.values())
+            outside = {dim: n - len(coords[dim]) for dim, n in n_dim.items() if n > len(coords[dim])}
         # where the chunks land in the converted world (the same as ``coords`` unless they are moved)
         placed = {dim: move.coords(dim, cs) for dim, cs in coords.items()}
         writer = _make_writer(target, hub_dir, progress, src, move.spawn(src.info) if move.active else None)
+        if target.family == "lce" and d.kind == "lce" and placed.get(THE_END):
+            # LCE → LCE: every End chunk of the source is kept (the game wrote them, in the End of its version)
+            xs, zs = zip(*placed[THE_END])
+            writer.opt.keep_end = (min(xs), max(xs) + 1, min(zs), max(zs) + 1)
         if outside and hasattr(writer, "skipped_outside"):
-            writer.skipped_outside += outside              # counted with the ones the writer leaves out
+            for dim, n in outside.items():                 # counted with the ones the writer leaves out
+                writer.skipped_outside[dim] += n
         total = sum(len(v) for v in coords.values()) or 1
         start = 0.35 if d.kind in AMULET_KINDS else 0.05
         end = 0.6 if amulet_target else 0.97
@@ -773,7 +874,7 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
             else:
                 fit = None
             progress.stage(tr("Converting {n} chunks", n=total), mid, end)
-        written = unreadable = empty_chests = 0
+        written = unreadable = emptied = cut_tiles = cut_entities = empty_chests = 0
         rows = None
         if _pairs_chests_itself(target):
             from .chestfix import ChestRows
@@ -783,7 +884,7 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
         if ring is not None:
             observe.setdefault(OVERWORLD, set()).update(ring.edge_chunks)
         pipe = _Pipeline(src, progress, rows, fit, shift_here, sel.biomes if not amulet_target else None,
-                         move, writer, observe, not amulet_target, filler is not None)
+                         move, writer, observe, not amulet_target, filler is not None, depth)
         written_ow = set()
         track_ow = ring is not None and plan.kind == "fill"      # only the fill needs them (finite maps)
         cur_dim = None
@@ -797,6 +898,9 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
                 cur_dim = res.dim
             pipe.merge(res)
             unreadable += res.unreadable
+            emptied += res.emptied
+            cut_tiles += res.cut_tiles
+            cut_entities += res.cut_entities
             empty_chests += res.empty_chests
             if res.obs is not None:
                 if ring is not None:
@@ -805,7 +909,7 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
                     rings3d[res.dim].observe(res.dim, res.obs)
             if res.written:
                 if res.encoded:
-                    writer.store(res.rec)
+                    writer.store(res.rec, res.dim)
                     written += 1
                     if track_ow and res.dim == OVERWORLD:
                         written_ow.add(res.pos)
@@ -864,6 +968,8 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
         if empty_chests:
             progress.warn(tr("{n} chests had no contents (block entity) in the source world or in the translation: "
                              "they were written empty, so at least they are visible.", n=empty_chests))
+        _warn_emptied(progress, emptied)
+        _warn_cut_extras(progress, cut_tiles, cut_entities)
         if unreadable:
             progress.warn(tr("{n} chunks of the source world were unreadable (damaged or truncated) and were skipped: "
                              "Minecraft will generate them again.", n=unreadable))
@@ -918,8 +1024,16 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
                     tr("{n} Update Aquatic blocks (LCE) were replaced with 1.12 equivalents: choose a specific "
                        "(pre-converted) Java version to keep them identical.", n=n_modern)
                 )
-        progress.update(1.0, tr("Completed"))
+        progress.done()
         return ConversionResult(out_path, written, time.time() - t0, list(progress.warnings))
+    except BaseException:
+        # cancelled or failed: an output folder this run created and left empty goes away with it
+        if created_out and os.path.isdir(out_dir) and not os.listdir(out_dir):
+            try:
+                os.rmdir(out_dir)
+            except OSError:
+                pass
+        raise
     finally:
         for folder in [tmp] + extra_tmp:
             shutil.rmtree(folder, ignore_errors=True)
@@ -982,7 +1096,7 @@ def _convert_bta(d: det.Detected, out_dir: str, target: TargetSpec, progress: Pr
     progress.stage(tr("Writing the final files"), 0.97, 0.99)
     progress.log(tr("Open the world with Minecraft Java 26.3: on first start the game upgrades it (it may ask for a "
                     "backup) and blends the new terrain with the converted chunks."))
-    progress.update(1.0, tr("Completed"))
+    progress.done()
     return ConversionResult(out_dir, n, time.time() - t0, list(progress.warnings))
 
 
@@ -1011,12 +1125,14 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
     progress.stage(tr("Converting with Amulet to {target}", target=target.describe()), 0.03, 0.75 if ring_here else 0.9)
     from . import depthfit
 
-    depth = depthfit.plan(target, not old_source)
+    depth = depthfit.plan(target, not old_source, d.path, progress)
     from .relocate import Relocation
 
     move = Relocation(sel)
     n = ab.amulet_convert(d.path, out_dir, platform, wver, progress, sel, depth, move if move.active else None)
     _depth_players(info, depth, progress)
+    if depth is not None:
+        _warn_emptied(progress, sum(1 for had in depth.emptied.values() if had))
     move.apply_info(info, progress)
     if move.active:
         sel = move.moved_selection()
@@ -1024,8 +1140,11 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
     if platform == "bedrock":
         ab.write_bedrock_level_dat(out_dir, info, wver)
     else:
-        ab.write_java_level_dat(out_dir, info, target.version)
-    direct_extras(d, out_dir, target, info, progress, wver, move if move.active else None)
+        ab.write_java_level_dat(out_dir, info, target.version, progress)
+    direct_extras(d, out_dir, target, info, progress, wver, move if move.active else None, depth, sel.keep_unfinished)
+    _warn_missing_content(progress, platform, wver)
+    if depth is not None:
+        _warn_cut_extras(progress, depth.lost_tiles, depth.lost_entities)
     if sel.filters:  # entities/block entities are only attached to written chunks, but be sure
         (prune_bedrock if platform == "bedrock" else prune_java)(out_dir, sel)
     # the ring comes last: the selection would remove it, and the source's entities and block
@@ -1038,8 +1157,35 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
             progress.warn(tr(CUSTOMIZED))
     if platform == "java" and target.ring and tuple(target.version or (99,)) < CAVES_CLIFFS:
         _rings3d_after_amulet(out_dir, target, info, wver, tmp, progress)
-    progress.update(1.0, tr("Completed"))
+    progress.done()
     return ConversionResult(out_dir, n or 0)
+
+
+def _warn_missing_content(progress: Progress, platform: str, version) -> None:
+    """The items, mobs and block entities of a newer game that the (older) target version does not have were
+    removed on the way: say how many (newcontent.Tally)."""
+    from .newcontent import java_version_label, tally_of
+
+    label = java_version_label(tuple(version)) if platform == "java" else "Bedrock " + ab.version_str(version)
+    tally_of(progress).warn(progress, label)
+
+
+def _warn_emptied(progress: Progress, n: int) -> None:
+    """Chunks of a Caves & Cliffs world that have nothing left in the target's height (0 - 255)."""
+    if n:
+        progress.warn(tr("{n} chunks were left empty by the height limit: everything in them lies outside the target "
+                         "game's world (y 0 to 255), mostly below y 0. To keep what lies below y 0 use --depth keep "
+                         "(the world rises by 64 blocks) or a lower Y, e.g. --depth -32 (in the app: Underground of "
+                         "1.18+ worlds).", n=n))
+
+
+def _warn_cut_extras(progress: Progress, n_tiles: int, n_ents: int) -> None:
+    """Block entities / entities of a Caves & Cliffs world whose blocks did not fit the target's
+    0 - 255 (underground or mountain tops cut, rock removed by the compression): lost with them."""
+    if n_tiles or n_ents:
+        progress.warn(tr("Height limit: {tiles} block entities (chests, signs, spawners…) and {entities} entities stood "
+                         "on blocks that were cut (under the kept underground, above y 255 or inside the rock removed "
+                         "from the mountains) and were lost with them.", tiles=n_tiles, entities=n_ents))
 
 
 def _depth_players(info, depth, progress: Progress) -> None:
@@ -1065,7 +1211,7 @@ def _depth_players(info, depth, progress: Progress) -> None:
         if pos is None or len(pos) != 3 or dimension_of(p) != OVERWORLD:
             continue
         x, y, z = (float(v.py_data) for v in pos)
-        p["Pos"] = ab.nbt.ListTag([pos[0], ab.nbt.DoubleTag(depth.point(x, y, z)), pos[2]], 6)
+        p["Pos"] = ab.nbt.pos_list(x, depth.point(x, y, z), z)
 
 
 def _regen_players(info, regen, progress: Progress) -> None:
@@ -1316,6 +1462,15 @@ def _warn_single_player(info, target: TargetSpec, sel: Selection, progress: Prog
     if sel.players is not None and len(info.players) > 1 and target.family in ("bedrock", "pe_old"):
         progress.warn(tr("{target}: only the main player ({player}) is transferred; the other selected players are "
                          "ignored.", target=target.describe(), player=next(iter(info.players))))
+    if target.family == "java" and len(info.players) > 1:
+        # the first player is the one of level.dat; the others get a playerdata file only when linked to a
+        # Java account (--player KEY=NICKNAME, "Players" tab)
+        links = getattr(info, "player_links", None) or {}
+        kept = {k for k in info.players if getattr(links.get(k), "uuid", None) or getattr(links.get(k), "nickname", None)}
+        lost = len(set(info.players) - kept - {next(iter(info.players))})
+        if lost:
+            progress.warn(tr("{n} players were not written: a Java world keeps one player in level.dat and a file "
+                             "for each player linked to a Java account (--player KEY=NICKNAME, “Players” tab).", n=lost))
 
 
 def _edit_copy(d: det.Detected, out_dir: str, target: TargetSpec, sel: Selection, progress: Progress) -> None:

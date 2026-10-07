@@ -77,6 +77,13 @@ Implemented from the 4J source (`Minecraft.World`):
 - **Compression per platform:** zlib (Windows64, Wii U, PS4, Xbox One, Switch, Vita chunks), raw
   deflate with a size header (PS3, EdgeZLib), XMemCompress LZX (Xbox 360), Vita's zero run-length
   encoding for the whole container, and 4J's RLE on every region chunk.
+- **Xbox 360 `savegame.dat`:** every real save checked (22, TU0 to TU75, loose or in a CON package)
+  starts with `[BE u32 size][BE u64 decompressed size]`, then the XMemCompress frames and one zero
+  byte (the u32 is 12 + frames + 1; a few bytes of slack follow). WorldBridge writes the same layout
+  and still reads the `[u32 0][BE u32 size]` one it wrote before. The container is written with real
+  LZX only up to 1 MiB (pure-Python encoder, about 4 s per MiB); above that, with LZX uncompressed
+  blocks (the regions inside are compressed one by one anyway), and never above 16 MiB, the limit of
+  the encoder's 24-bit block size.
 - **Split saves** (PS4, Xbox One): region files outside the container, in `GAMEDATA_DDDDXXZZ` files
   of 16 × 16-chunk regions.
 - **Chunk formats:** NBT (TU0–TU13); 4J's compressed storage, versions 8–11

@@ -20,8 +20,12 @@ import os
 from collections import deque
 from typing import Any, Callable, Iterable, Iterator, List, Optional
 
-_STATE: Any = None
-_FN: Optional[Callable] = None
+# the calls in progress, by token: (function, state).  A worker is forked while the call that
+# started it is registered, so it finds its own entry; calls made at the same time by other
+# threads (the map's loader and a conversion in the GUI) each have their own, and never see
+# each other's function or state.
+_CALLS: dict = {}
+_TOKENS = itertools.count(1)
 _IN_WORKER = False
 
 
@@ -66,8 +70,8 @@ def _mark_worker() -> None:
     _IN_WORKER = True
 
 
-def _run_batch(batch: List[Any]) -> List[Any]:
-    fn, state = _FN, _STATE
+def _run_batch(token: int, batch: List[Any]) -> List[Any]:
+    fn, state = _CALLS[token]
     return [fn(state, item) for item in batch]
 
 
@@ -77,7 +81,6 @@ def ordered_map(fn: Callable[[Any, Any], Any], state: Any, items: Iterable[Any],
     looked up by name in the workers) and must not depend on anything the parent changes after this
     call starts: the workers see the state as it was when they were started.  ``items`` may be an
     iterator (read lazily, a few batches ahead of the results); ``min_items`` only counts for lists."""
-    global _STATE, _FN
     n = n_workers or workers()
     small = hasattr(items, "__len__") and len(items) < min_items
     it = iter(items)
@@ -89,11 +92,18 @@ def ordered_map(fn: Callable[[Any, Any], Any], state: Any, items: Iterable[Any],
     import multiprocessing as mp
     from concurrent.futures.process import BrokenProcessPool
 
-    _STATE, _FN = state, fn
+    token = next(_TOKENS)
+    _CALLS[token] = (fn, state)            # before the first submit: the workers are forked with it
+    try:
+        yield from _pooled(fn, state, it, token, n, batch, cf, mp, BrokenProcessPool)
+    finally:
+        _CALLS.pop(token, None)
+
+
+def _pooled(fn, state, it, token, n, batch, cf, mp, BrokenProcessPool) -> Iterator[Any]:
     try:
         pool = cf.ProcessPoolExecutor(max_workers=n, mp_context=mp.get_context("fork"), initializer=_mark_worker)
     except (OSError, ValueError):
-        _STATE = _FN = None
         for item in it:
             yield fn(state, item)
         return
@@ -105,13 +115,10 @@ def ordered_map(fn: Callable[[Any, Any], Any], state: Any, items: Iterable[Any],
             chunk = list(itertools.islice(it, batch))
             if not chunk:
                 return
-            pending.append((pool.submit(_run_batch, chunk), chunk))
+            pending.append((pool.submit(_run_batch, token, chunk), chunk))
 
     try:
-        try:
-            refill()                                # the workers start (fork) here, with the state as it is
-        finally:
-            _STATE = _FN = None                     # the workers have their copy: the parent drops its reference
+        refill()                                    # the workers start (fork) here (or as they are needed)
         while pending:
             res = pending[0][0].result()
             pending.popleft()

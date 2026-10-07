@@ -9,7 +9,7 @@ from worldbridge.detect import detect
 from worldbridge.lce.world import LCEWorld
 
 
-def _indev(path):
+def _indev(path, mobs=False):
     w, l, h = 40, 36, 64
     blocks = np.zeros((h, l, w), np.uint8)
     blocks[:30] = 1
@@ -28,6 +28,11 @@ def _indev(path):
             "Items": nbt.ListTag([nbt.CompoundTag({"id": nbt.ShortTag(264), "Count": nbt.ByteTag(2),
                                                    "Damage": nbt.ShortTag(0), "Slot": nbt.ByteTag(0)})], 10)})], 10),
     })
+    if mobs:  # Indev keeps Pos / Motion as floats
+        fl = lambda *v: nbt.ListTag([nbt.FloatTag(x) for x in v], 5)
+        for eid, pos in (("Pig", (10.5, 33.0, 12.5)), ("LocalPlayer", (5.5, 33.0, 5.5))):
+            root["Entities"].append(nbt.CompoundTag({"id": nbt.StringTag(eid), "Pos": fl(*pos), "Motion": fl(0, 0, 0),
+                                                     "Rotation": fl(0, 0)}))
     open(path, "wb").write(nbt.dump(root, "MinecraftLevel", compressed=True))
 
 
@@ -42,6 +47,26 @@ def test_indev_to_lce(tmp_path):
     c = w.read_chunk(0, 0, 0)
     assert c.blocks[29, 0, 0] == 1 and c.blocks[30, 0, 0] == 2 and c.blocks[31, 5, 7] == 54
     assert nbt.get(c.tile_entities[0], "x") == 7
+
+
+def test_indev_float_positions_become_doubles(tmp_path):
+    from worldbridge.java.finite import load_indev
+    src = tmp_path / "world.mclevel"
+    _indev(str(src), mobs=True)
+    w = load_indev(str(src))
+    for e in list(w.ents) + list(w.info.players.values()):
+        for k in ("Pos", "Motion"):
+            assert all(isinstance(v, nbt.DoubleTag) for v in e[k])
+    assert nbt.pos_list(nbt.FloatTag(1.5), 2, nbt.DoubleTag(3.0)).list_data_type == 6
+
+
+def test_indev_mobs_and_player_convert(tmp_path):
+    src = tmp_path / "world.mclevel"
+    _indev(str(src), mobs=True)
+    convert(str(src), str(tmp_path / "lce"), TargetSpec(family="lce", ring=False))
+    out = tmp_path / "java"
+    res = convert(str(src), str(out), TargetSpec(family="java", java_mode="numeric", java_version_limit="1.2"))
+    assert res.chunks and not any("unreadable" in w for w in res.warnings)
 
 
 def test_classic_v1(tmp_path):

@@ -11,13 +11,14 @@ Amulet translates blocks; this module writes the rest natively:
 
 from __future__ import annotations
 
+import functools
 import os
 import struct
 from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
 from .. import entities as ent
-from .. import items, nbt, tiles
+from .. import items, nbt, newcontent, tiles
 from ..model import NETHER, OVERWORLD, THE_END, Progress, WorldInfo
 from ..i18n import tr
 
@@ -164,6 +165,22 @@ def abilities_tag(values: dict) -> nbt.CompoundTag:
     return t
 
 
+BEDROCK_SPECTATOR = 6                      # GameType / PlayerGameMode of Spectator
+BEDROCK_SPECTATOR_FROM = (1, 21, 40)       # before it Bedrock has no Spectator
+
+
+def bedrock_game_mode(java_mode: Optional[int], version) -> Optional[int]:
+    """A Java game mode (0 - 3) as Bedrock ``version`` stores it: Spectator is 6 from Bedrock 1.21.40,
+    before it the nearest is Creative.  The world's GameType and the player's PlayerGameMode use the
+    same mapping, so a player in the world's mode still follows it."""
+    if java_mode is None:
+        return None
+    m = int(java_mode)
+    if m == 3:
+        return BEDROCK_SPECTATOR if tuple(version)[:3] >= BEDROCK_SPECTATOR_FROM else 1
+    return m if m in (0, 1, 2) else 0
+
+
 def legacy_player_to_bedrock(p: nbt.CompoundTag, version, uid: int, world_game_type: Optional[int] = None) -> nbt.CompoundTag:
     """world_game_type: the world's game mode; a player in that same mode follows the world
     setting (Bedrock "default" personal mode), so changing the world's mode changes the player's."""
@@ -220,10 +237,9 @@ def legacy_player_to_bedrock(p: nbt.CompoundTag, version, uid: int, world_game_t
     out["EnderChestInventory"] = nbt.ListTag([ender[i] if ender[i] is not None else empty(i) for i in range(27)], 10)
     gt = nbt.get(p, "playerGameType")
     gt = int(gt) if gt is not None and int(gt) in (0, 1, 2, 3) else None
-    # Spectator is 6 from Bedrock 1.21.40; before, the nearest is Creative
-    spectator = 6 if tuple(version) >= (1, 21, 40) else 1
-    mode = {3: spectator}.get(gt, gt)
-    if gt is None or (world_game_type is not None and mode == {3: spectator}.get(world_game_type, world_game_type)):
+    mode = bedrock_game_mode(gt, version)
+    # compared with the world's mode as write_bedrock_level_dat writes it
+    if gt is None or (world_game_type is not None and mode == bedrock_game_mode(world_game_type, version)):
         out["PlayerGameMode"] = nbt.IntTag(5)  # "default": follows the world
     else:
         out["PlayerGameMode"] = nbt.IntTag(mode)
@@ -290,13 +306,23 @@ def frame_canon(db, prefix: bytes, t: nbt.CompoundTag) -> Optional[dict]:
     raw = _get(db, prefix + bytes([terrain.SUBCHUNK]) + struct.pack("b", y >> 4)) if -128 <= y >> 4 < 128 else None
     sc = terrain.SubChunk.decode(raw) if raw else None
     f3 = 3
+    n = (x & 15) << 8 | (z & 15) << 4 | (y & 15)
+    data = None
     if sc is not None and sc.storages:
         st = sc.storages[0]
-        entry = st.palette[int(st.idx[(x & 15) << 8 | (z & 15) << 4 | (y & 15)])]
+        entry = st.palette[int(st.idx[n])]
         try:
-            f3 = int(entry["states"]["facing_direction"].py_int)
+            if "states" in entry:
+                f3 = int(entry["states"]["facing_direction"].py_int)
+            elif "val" in entry:                    # 1.2.13 - 1.12: {name, val}
+                data = int(entry["val"].py_int)
         except Exception:  # noqa: BLE001
             pass
+    elif raw:                                       # before 1.2.13: block ids and data nibbles
+        b = terrain.legacy_block_at(bytes(raw), n)
+        data = b[1] if b is not None else None
+    if data is not None:                            # before 1.13: east 0, west 1, south 2, north 3 (+8 with a map)
+        f3 = (5, 4, 3, 2)[data & 3]
     off = {0: (0, -1, 0), 1: (0, 1, 0), 2: (0, 0, -1), 3: (0, 0, 1), 4: (-1, 0, 0), 5: (1, 0, 0)}.get(f3, (0, 0, 1))
     c = {"name": "glow_item_frame" if str(nbt.get(t, "id")) == "GlowItemFrame" else "item_frame",
          "pos": (x + 0.5 - off[0] * 0.46875, y + 0.5 - off[1] * 0.46875, z + 0.5 - off[2] * 0.46875),
@@ -335,6 +361,8 @@ class BedrockExtras:
         return out
 
     def chunk_extras(self, dim: int, cx: int, cz: int):
+        """At their height in the source world: extra._wrap_reader moves them with the blocks (depthfit)
+        and drops those that end out of 0 - 255."""
         prefix = chunk_prefix(cx, cz, dim)
         try:
             raw = _get(self.db, prefix + bytes([BE_TAG]))
@@ -343,13 +371,12 @@ class BedrockExtras:
             if raw:
                 raw_tiles = read_nbt_list(raw)
                 canon = [c for c in (tiles.from_bedrock(t) for t in raw_tiles) if c is not None]
-                canon = [c for c in canon if 0 <= c["pos"][1] < 256]
                 tl = tiles.write_list(canon, "legacy")
                 frames = [t for t in raw_tiles if is_frame_tile(t)]
             el = [e for e in (self._frame(prefix, t) for t in frames) if e is not None]
             for e in self._actors(prefix):
                 c = ent.from_bedrock(e)
-                if c is not None and 0 <= c["pos"][1] < 256:
+                if c is not None:
                     le = ent.to_legacy(c)
                     if le is not None:
                         el.append(le)
@@ -372,6 +399,45 @@ class BedrockExtras:
 # ------------------------------------------------------------------ target side
 
 
+# PyMCTranslate's 1.17.30 frame (the first version with every state), translated to each target version:
+# block states from 1.13 (``item_frame_photo_bit`` only from 1.17.30), ``{block_data}`` before
+_FRAME_REF = (1, 17, 30)
+FRAME_ID = {"minecraft:frame": 199}          # the numeric id, for the sub chunks of before 1.2.13
+
+
+@functools.lru_cache(maxsize=None)
+def _frame_block(version: tuple, facing: int, is_map: bool, glow: bool):
+    from ..items import _tm
+
+    if version < (1, 13, 0) and facing < 2:
+        return None                            # on a floor / ceiling: Bedrock 1.13+ only
+    try:
+        import amulet_nbt as anbt
+        from amulet.api.block import Block
+
+        ref = _tm().get_version("bedrock", _FRAME_REF)
+        dst = _tm().get_version("bedrock", version)
+        u = ref.block.to_universal(Block("minecraft", "glow_frame" if glow else "frame", {
+            "facing_direction": anbt.IntTag(facing), "item_frame_map_bit": anbt.ByteTag(int(is_map)),
+            "item_frame_photo_bit": anbt.ByteTag(0)}))[0]
+        b = dst.block.from_universal(u)[0]
+        if not b.base_name.endswith("frame"):
+            return None
+        props = dict(b.properties)
+        if version < (1, 13, 0) and set(props) != {"block_data"}:
+            return None
+        return b.namespaced_name, props, FRAME_ID.get(b.namespaced_name)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def frame_block(version, facing: int, is_map: bool, glow: bool = False):
+    """The item frame block of ``version`` as terrain.set_blocks takes it: (name, states, numeric id).
+    ``item_frame_photo_bit`` exists from 1.17.30; before 1.13 the states are ``{block_data}`` (east 0,
+    west 1, south 2, north 3, +8 with a map).  None: the frame cannot exist in that version."""
+    return _frame_block(tuple(version)[:3], int(facing), bool(is_map), bool(glow))
+
+
 class BedrockInjector:
     def __init__(self, out_dir: str, version, progress: Progress):
         self.db = _db(out_dir)
@@ -383,6 +449,7 @@ class BedrockInjector:
         self.n_tiles = 0
         self.n_ents = 0
         self.n_frames = 0
+        self.n_frames_lost = 0
         self.n_maps = 0
 
     def put_chunk(self, dim: int, cx: int, cz: int, tile_canon: List[dict], ent_canon: List[dict]):
@@ -391,6 +458,9 @@ class BedrockInjector:
             key = prefix + bytes([BE_TAG])
             existing = read_nbt_list(_get(self.db, key) or b"")
             by_pos = {(int(nbt.get(t, "x", 0)), int(nbt.get(t, "y", 0)), int(nbt.get(t, "z", 0))): t for t in existing}
+            for c in tile_canon:  # a block entity this version does not have: Amulet's copy of Java's goes too
+                if not tiles.exists_in_bedrock(c["kind"], self.version):
+                    by_pos.pop(tuple(c["pos"]), None)
             for t in tiles.write_list(tile_canon, "bedrock", version=self.version):
                 by_pos[(int(t["x"].py_data), int(t["y"].py_data), int(t["z"].py_data))] = t
                 self.n_tiles += 1
@@ -425,6 +495,35 @@ class BedrockInjector:
                 old = _get(self.db, key) or b""
                 self.db.put(key, old + write_nbt_list([e for _k, e in actors]))
 
+    def put_raw_tiles(self, dim: int, cx: int, cz: int, tags: List[nbt.CompoundTag]):
+        """Block entities that keep their own tags (no canonical form), next to the ones of ``put_chunk``."""
+        key = chunk_prefix(cx, cz, dim) + bytes([BE_TAG])
+        existing = read_nbt_list(_get(self.db, key) or b"")
+        have = {(int(nbt.get(t, "x", 0)), int(nbt.get(t, "y", 0)), int(nbt.get(t, "z", 0))) for t in existing}
+        new = [t for t in tags if (int(nbt.get(t, "x", 0)), int(nbt.get(t, "y", 0)), int(nbt.get(t, "z", 0))) not in have]
+        self.db.put(key, _dump_list(existing + new))
+        self.n_tiles += len(new)
+
+    def put_raw_actors(self, dim: int, cx: int, cz: int, actors: List[nbt.CompoundTag]):
+        """Actors that keep their own tags (and unique ids), stored the way this version reads them."""
+        prefix = chunk_prefix(cx, cz, dim)
+        self.n_ents += len(actors)
+        if self.modern_actors:
+            keys = []
+            for e in actors:
+                key, _uid = self.ids.next()
+                e["internalComponents"] = nbt.CompoundTag({"EntityStorageKeyComponent": nbt.CompoundTag(
+                    {"StorageKey": nbt.escape_string(key)})})
+                self.db.put(b"actorprefix" + key, nbt.dump(e, "", little_endian=True, escape=True))
+                keys.append(key)
+            self.db.put(b"digp" + prefix, (_get(self.db, b"digp" + prefix) or b"") + b"".join(keys))
+        else:
+            for e in actors:
+                if "internalComponents" in e:
+                    del e["internalComponents"]
+            key = prefix + bytes([ENTITY_TAG])
+            self.db.put(key, (_get(self.db, key) or b"") + _dump_list(actors))
+
     def _put_frames(self, dim: int, frames: List[dict]):
         """Item frames are blocks with a block entity in Bedrock."""
         from . import terrain
@@ -440,9 +539,11 @@ class BedrockInjector:
             if item is not None and "Slot" in item:
                 del item["Slot"]
             is_map = item is not None and str(nbt.get(item, "Name", "")).endswith("filled_map")
-            blocks[(x, y, z)] = ("minecraft:glow_frame" if glow else "minecraft:frame",
-                                 {"facing_direction": nbt.IntTag(facing), "item_frame_map_bit": nbt.ByteTag(int(is_map)),
-                                  "item_frame_photo_bit": nbt.ByteTag(0)})
+            block = frame_block(self.version, facing, is_map, glow)
+            if block is None:
+                self.n_frames_lost += 1
+                continue
+            blocks[(x, y, z)] = block
             t = nbt.CompoundTag({"id": nbt.StringTag("GlowItemFrame" if glow else "ItemFrame"), "x": nbt.IntTag(x),
                                  "y": nbt.IntTag(y), "z": nbt.IntTag(z), "isMovable": nbt.ByteTag(1)})
             if item is not None:
@@ -450,7 +551,9 @@ class BedrockInjector:
                 t["ItemRotation"] = nbt.FloatTag(float(int(c.get("item_rot", 0)) % 8 * 45))
                 t["ItemDropChance"] = nbt.FloatTag(1.0)
             tes[(x, y, z)] = t
-        placed = terrain.set_blocks(self.db, lambda cx, cz: chunk_prefix(cx, cz, dim), blocks)
+        # the stone under a frame is the stand-in older versions of WorldBridge wrote for Java's missing block
+        placed = terrain.set_blocks(self.db, lambda cx, cz: chunk_prefix(cx, cz, dim), blocks, replace_stone=True)
+        self.n_frames_lost += len(blocks) - len(placed)
         by_chunk = defaultdict(list)
         for pos in placed:
             by_chunk[(pos[0] >> 4, pos[2] >> 4)].append(tes[pos])
@@ -489,6 +592,10 @@ class BedrockInjector:
 
 
 def _log_injector(inj: "BedrockInjector", progress: Progress) -> None:
+    if inj.n_frames_lost:
+        progress.warn(tr("{n} item frames could not be placed in Bedrock {version} (on a floor or ceiling before 1.13, "
+                         "or where the block is not air): they are not in the converted world.", n=inj.n_frames_lost,
+                         version=".".join(str(v) for v in inj.version[:3])))
     extra = "".join(", " + w for n, w in ((inj.n_frames, tr("{n} frames", n=inj.n_frames)),
                                           (inj.n_maps, tr("{n} maps", n=inj.n_maps))) if n)
     progress.log(tr("Bedrock: {tiles} block entities and {entities} entities written{extra}.", tiles=inj.n_tiles,
@@ -530,7 +637,7 @@ def inject_from_hub(hub_dir: str, out_dir: str, version, info: WorldInfo, progre
     _log_injector(inj, progress)
 
 
-def inject_from_java_modern(src: str, out_dir: str, version, info: WorldInfo, progress: Progress, move=None):
+def inject_from_java_modern(src: str, out_dir: str, version, info: WorldInfo, progress: Progress, move=None, depth=None):
     from ..java.modern import iter_modern_extras
 
     inj = BedrockInjector(out_dir, version, progress)
@@ -538,6 +645,8 @@ def inject_from_java_modern(src: str, out_dir: str, version, info: WorldInfo, pr
         for dim, cx, cz, tiles_raw, ents_raw in iter_modern_extras(src, progress, with_states=True):
             tl = [x for x in (t if isinstance(t, dict) else tiles.from_java_modern(t) for t in tiles_raw) if x is not None]
             el = ent.read_list(ents_raw, "java")
+            if depth is not None and dim == OVERWORLD:
+                tl, el = depth.move_canon(cx, cz, tl, el)       # with their blocks (worldbridge.depthfit)
             if tl or el:
                 if move is not None:
                     cx, cz = move.canon_chunk(dim, cx, cz, tl, el)
@@ -551,23 +660,361 @@ def inject_from_java_modern(src: str, out_dir: str, version, info: WorldInfo, pr
     _log_injector(inj, progress)
 
 
-def copy_bedrock_extras(src: str, dst: str, progress: Progress):
-    """Bedrock -> Bedrock (other version): keep actors, block entities, players,
-    maps and every other non-terrain record exactly as they were."""
+def _dump_list(tags: List[nbt.CompoundTag]) -> bytes:
+    return b"".join(nbt.dump(t, "", little_endian=True, escape=True) for t in tags)
+
+
+class _DepthMoved:
+    """The block entities and actors of the Overworld of a Caves & Cliffs world, moved with their
+    blocks (worldbridge.depthfit) for the raw copy of ``copy_bedrock_extras``; the ones whose blocks
+    were cut are dropped and counted in ``depth.lost``."""
+
+    def __init__(self, depth, sdb):
+        self.depth = depth
+        self.lost: Dict[Tuple[int, int], List[int]] = defaultdict(lambda: [0, 0])
+        self.digp: Dict[bytes, bytes] = {}                  # chunk's actor list -> the one that stays
+        self.actors: Dict[bytes, Optional[bytes]] = {}      # actor record -> its new bytes (None: dropped)
+        for key, value in sdb.iterate(b"digp", b"digq"):
+            k = bytes(key)
+            if len(k) == 12 and k.startswith(b"digp"):      # the Overworld: no dimension in the key
+                cx, cz = struct.unpack_from("<ii", k, 4)
+                keep = b""
+                value = bytes(value)
+                for i in range(0, len(value) // 8 * 8, 8):
+                    akey = b"actorprefix" + value[i:i + 8]
+                    raw = _get(sdb, akey)
+                    tags = read_nbt_list(raw) if raw else []
+                    if tags and self._actor(cx, cz, tags[0]):
+                        self.actors[akey] = _dump_list(tags[:1])
+                        keep += value[i:i + 8]
+                    else:
+                        self.actors[akey] = None
+                self.digp[k] = keep
+
+    def _actor(self, cx: int, cz: int, e: nbt.CompoundTag) -> bool:
+        pos = nbt.get_tag(e, "Pos")
+        if pos is None or len(pos) != 3:
+            return True
+        x, y, z = (float(v.py_data) for v in pos)
+        ny = self.depth.entity_y(x, y, z)
+        if ny is None:
+            self.lost[(cx, cz)][1] += 1
+            return False
+        e["Pos"] = nbt.ListTag([nbt.FloatTag(x), nbt.FloatTag(ny), nbt.FloatTag(z)], 5)
+        return True
+
+    def chunk_list(self, k: bytes, value: bytes) -> bytes:
+        """A chunk's block entities (key tag 0x31) or legacy actors (0x32) of the Overworld."""
+        cx, cz = struct.unpack_from("<ii", k, 0)
+        out = []
+        for t in read_nbt_list(value):
+            if k[-1] == ENTITY_TAG:
+                if self._actor(cx, cz, t):
+                    out.append(t)
+                continue
+            try:
+                x, y, z = (int(nbt.get(t, c)) for c in ("x", "y", "z"))
+            except (TypeError, ValueError):
+                out.append(t)
+                continue
+            ny = self.depth.block_y(x, y, z)
+            if ny is None:
+                self.lost[(cx, cz)][0] += 1
+                continue
+            t["y"] = nbt.IntTag(ny)
+            out.append(t)
+        return _dump_list(out)
+
+    def player(self, value: bytes) -> bytes:
+        """A player record (``~local_player``, ``player_server_*``): in the Overworld it stands on
+        the moved ground."""
+        try:
+            root = nbt.load(value, little_endian=True, compressed=False).tag
+            pos = nbt.get_tag(root, "Pos")
+            if pos is None or len(pos) != 3 or int(nbt.get(root, "DimensionId", 0) or 0) != 0:
+                return value
+            x, y, z = (float(v.py_data) for v in pos)
+            root["Pos"] = nbt.ListTag([nbt.FloatTag(x), nbt.FloatTag(self.depth.point(x, y, z)), nbt.FloatTag(z)], 5)
+            return nbt.dump(root, "", little_endian=True)
+        except Exception:  # noqa: BLE001
+            return value
+
+    def done(self) -> None:
+        for (cx, cz), (t, e) in self.lost.items():
+            self.depth.count_lost(cx, cz, t, e)
+
+
+# ------------------------------------------------------------------ Bedrock -> Bedrock
+
+_ITEM_LISTS = ("Inventory", "Armor", "Offhand", "Mainhand", "EnderChestInventory", "Items", "ChestItems")
+_NOT_CHUNK = (b"map_", b"digp", b"actorprefix", b"~", b"player", b"portals", b"scoreboard", b"mobevents")
+
+
+def _chunk_key(k: bytes) -> Optional[Tuple[int, int, int, int]]:
+    """(cx, cz, dimension index, tag) of a chunk record (a sub chunk has tag 0x2F), None for the other keys."""
+    if k.startswith(_NOT_CHUNK):
+        return None
+    if len(k) in (9, 13):
+        tag = k[-1]
+    elif len(k) in (10, 14) and k[-2] == 0x2F:
+        tag = 0x2F
+    else:
+        return None
+    cx, cz = struct.unpack_from("<ii", k, 0)
+    dim = struct.unpack_from("<i", k, 8)[0] if len(k) in (13, 14) else 0
+    return cx, cz, dim, tag
+
+
+def level_version(path: str) -> Optional[Tuple[int, ...]]:
+    """The game version a Bedrock world was last saved with (level.dat ``lastOpenedWithVersion``), as WorldBridge
+    numbers it; None when level.dat does not say."""
+    from .. import gameversion as gv
+
+    try:
+        with open(os.path.join(path, "level.dat"), "rb") as f:
+            root = nbt.load(f.read()[8:], little_endian=True, compressed=False).tag
+        v = [int(x.py_data) for x in nbt.get_tag(root, "lastOpenedWithVersion")]
+        return gv.bedrock(tuple(v[:3])) if len(v) >= 3 and v[0] >= 1 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def retarget_stack(t, version):
+    """A Bedrock item stack written the way Bedrock ``version`` names / stores it (an empty slot stays)."""
+    try:
+        it = items.from_bedrock(t)
+        new = items.to_bedrock(it, tuple(version)) if it is not None else None
+    except Exception:  # noqa: BLE001
+        return t
+    return new if new is not None else t
+
+
+def retarget_items(tag: nbt.CompoundTag, version) -> None:
+    """The item stacks held by an actor / player / block entity (inventory, armour, hands, ``Item``...)."""
+    for k in _ITEM_LISTS:
+        lst = nbt.get_tag(tag, k)
+        if isinstance(lst, nbt.ListTag):
+            tag[k] = nbt.ListTag([retarget_stack(x, version) if isinstance(x, nbt.CompoundTag) else x for x in lst], 10)
+    for k in ("Item", "RecordItem"):
+        if isinstance(nbt.get_tag(tag, k), nbt.CompoundTag):
+            tag[k] = retarget_stack(tag[k], version)
+
+
+def _shift_pos(e: nbt.CompoundTag, dx: int, dz: int) -> None:
+    pos = nbt.get_tag(e, "Pos")
+    if (dx or dz) and pos is not None and len(pos) == 3:
+        e["Pos"] = nbt.ListTag([nbt.FloatTag(float(pos[0].py_data) + dx * 16), pos[1],
+                                nbt.FloatTag(float(pos[2].py_data) + dz * 16)], 5)
+
+
+def _shift_tile(t: nbt.CompoundTag, dx: int, dz: int) -> None:
+    for k, d in (("x", dx * 16), ("z", dz * 16), ("pairx", dx * 16), ("pairz", dz * 16)):
+        if d and k in t:
+            t[k] = nbt.IntTag(int(t[k].py_data) + d)
+
+
+class _Downgrade:
+    """The block entities and actors of a Bedrock world written for an older version of Bedrock than the source's:
+    each in the form and the place that version has.  The block entities that have a canonical form (tiles) go through
+    it (signs, flower pots, items...), the others keep their tags; the actors keep their tags (variants, owners, unique
+    ids) with the items they hold renamed for the version, and go to the 0x32 list or to ``digp`` / ``actorprefix`` as
+    the version reads them.  What the version cannot hold is dropped and counted."""
+
+    def __init__(self, inj: "BedrockInjector", move, tally):
+        self.inj = inj
+        self.version = inj.version
+        self.move = move
+        self.tally = tally
+
+    def chunk(self, dim: int, cx: int, cz: int, tiles_raw: List[nbt.CompoundTag], actors_raw: List[nbt.CompoundTag]):
+        dx, dz = self.move.delta(dim) if self.move is not None else (0, 0)
+        canon, raw = [], []
+        for t in tiles_raw:
+            c = tiles.from_bedrock(t)
+            if c is not None:
+                if not tiles.exists_in_bedrock(c["kind"], self.version):
+                    self.tally.tiles += 1
+                    continue
+                if dx or dz:
+                    c["pos"] = (c["pos"][0] + dx * 16, c["pos"][1], c["pos"][2] + dz * 16)
+                    if c.get("pair"):
+                        c["pair"] = (c["pair"][0] + dx * 16, c["pair"][1] + dz * 16)
+                canon.append(c)
+                continue
+            if str(nbt.get(t, "id", "")) == "GlowItemFrame" and self.version < (1, 17, 0):
+                self.tally.tiles += 1
+                continue
+            retarget_items(t, self.version)
+            _shift_tile(t, dx, dz)
+            raw.append(t)
+        keep = []
+        for e in actors_raw:
+            ident = str(nbt.get(e, "identifier", "") or "")
+            if ident and not newcontent.bedrock_entity_exists(ident, self.version):
+                self.tally.entities += 1
+                continue
+            retarget_items(e, self.version)
+            _shift_pos(e, dx, dz)
+            keep.append(e)
+        if canon:
+            self.inj.put_chunk(dim, cx + dx, cz + dz, canon, [])
+        if raw:
+            self.inj.put_raw_tiles(dim, cx + dx, cz + dz, raw)
+        if keep:
+            self.inj.put_raw_actors(dim, cx + dx, cz + dz, keep)
+
+
+def _retarget_player(root: nbt.CompoundTag, version) -> None:
+    retarget_items(root, version)
+    gm = nbt.get(root, "PlayerGameMode")
+    if gm is not None and int(gm) == 6 and tuple(version) < (1, 21, 40):    # Spectator came with 1.21.40
+        root["PlayerGameMode"] = nbt.IntTag(1)
+
+
+def _player_record(v: bytes, moved, move, convert: bool, version) -> bytes:
+    """A player record of the source as the target has it: on the moved ground (depthfit), with its chunk (relocate),
+    with the items and the game mode of an older version."""
+    if moved is not None:
+        v = moved.player(v)
+    if move is None and not convert:
+        return v
+    try:
+        root = nbt.load(v, little_endian=True, compressed=False).tag
+        if move is not None:
+            move.move_bedrock_player(root)
+        if convert:
+            _retarget_player(root, version)
+        return nbt.dump(root, "", little_endian=True)
+    except Exception:  # noqa: BLE001
+        return v
+
+
+def drop_orphan_actors(db) -> int:
+    """The ``actorprefix`` records no ``digp`` list names (left behind when a chunk's list is replaced)."""
+    used = set()
+    for _k, v in db.iterate(b"digp", b"digq"):
+        v = bytes(v)
+        used.update(b"actorprefix" + v[i:i + 8] for i in range(0, len(v) // 8 * 8, 8))
+    orphans = [bytes(k) for k, _v in db.iterate(b"actorprefix", b"actorprefiy") if bytes(k) not in used]
+    for k in orphans:
+        try:
+            db.delete(k)
+        except KeyError:
+            pass
+    return len(orphans)
+
+
+def _delete_chunk_extras(db, tags) -> None:
+    """Every actor record (0x32 lists, ``digp``, ``actorprefix``) and the chunk records with a tag of ``tags``."""
+    out = []
+    for k, _v in db.iterate():
+        k = bytes(k)
+        c = _chunk_key(k)
+        if k.startswith((b"digp", b"actorprefix")) or (c is not None and c[3] in tags):
+            out.append(k)
+    for k in out:
+        try:
+            db.delete(k)
+        except KeyError:
+            pass
+
+
+def copy_bedrock_extras(src: str, dst: str, progress: Progress, depth=None, move=None, version=None,
+                        keep_state: bool = False):
+    """Bedrock -> Bedrock: the block entities, actors, players, maps and every other record of the source that
+    Amulet does not write, for the target ``version``.
+
+    * target not older than the source (copy): everything is copied as it was; Amulet's own actors go first (the
+      source's replace them: they would be stored twice, and the old ones left unreferenced);
+    * target older (convert): block entities and actors are rewritten for its version (``_Downgrade``) and go to the
+      format it reads (0x32 lists before 1.18.30, ``digp`` after), players keep their tags with the items renamed;
+    * chunks moved with --move-to (``move``): their block entities and actors are Amulet's own, already moved; the
+      players move with them.
+
+    ``depth``: the depthfit.DepthFit that moved the blocks of the Overworld: the extras follow them.  ``keep_state``:
+    the chunks the game had not finished keep their FinalizedState."""
+    from .. import gameversion as gv
+
     sdb = _db(src)
     ddb = _db(dst)
+    tally = newcontent.tally_of(progress)
+    version = gv.bedrock(tuple(version)) if version is not None else None
+    src_version = level_version(src)
+    used_depth = depth is not None and depth.used
+    convert = version is not None and (version[:3] < src_version[:3] if src_version is not None else used_depth)
     n = 0
     try:
+        moved = _DepthMoved(depth, sdb) if used_depth else None
+        inj = down = None
+        if convert:
+            _delete_chunk_extras(ddb, (BE_TAG, ENTITY_TAG))
+            ddb.close()
+            inj = BedrockInjector(dst, version, progress)       # opens the database again
+            ddb = inj.db
+            down = _Downgrade(inj, move, tally)
+        elif move is None:
+            _delete_chunk_extras(ddb, (ENTITY_TAG,))
+        pending: Dict[Tuple[int, int, int], List[list]] = defaultdict(lambda: [[], []])
         for key, value in sdb.iterate():
             k = bytes(key)
-            if len(k) in (9, 13) and k[-1] in (BE_TAG, ENTITY_TAG):
-                pass
-            elif len(k) in (9, 10, 13, 14) and (k[8 if len(k) in (9, 10) else 12] in range(0x2B, 0x3D) or k[8 if len(k) in (9, 10) else 12] == 0x76):
+            v = bytes(value)
+            ck = _chunk_key(k)
+            if k == b"~local_player" or k.startswith(b"player_server_"):
+                v = _player_record(v, moved, move, convert, version)
+            elif k.startswith(b"digp"):
+                if move is not None and not convert:
+                    continue                                    # Amulet's own, moved with the chunk
+                ref = moved.digp.get(k, v) if moved is not None else v
+                if convert:
+                    actors = []
+                    for i in range(0, len(ref) // 8 * 8, 8):
+                        akey = b"actorprefix" + ref[i:i + 8]
+                        raw = moved.actors.get(akey, _get(sdb, akey)) if moved is not None else _get(sdb, akey)
+                        actors.extend(read_nbt_list(raw)[:1] if raw else [])
+                    dim = DIM_FROM_BEDROCK.get(struct.unpack_from("<i", k, 12)[0] if len(k) == 16 else 0)
+                    if dim is not None:
+                        pending[(dim,) + struct.unpack_from("<ii", k, 4)][1].extend(actors)
+                    continue
+                if not ref:
+                    continue
+                v = ref
+            elif k.startswith(b"actorprefix"):
+                if convert or move is not None:
+                    continue
+                if moved is not None and k in moved.actors:
+                    if moved.actors[k] is None:
+                        continue                                # an actor whose blocks were cut
+                    v = moved.actors[k]
+            elif ck is not None and ck[3] in (BE_TAG, ENTITY_TAG):
+                if move is not None and not convert:
+                    continue                                    # Amulet's own, moved with the chunk
+                if moved is not None and len(k) == 9:
+                    v = moved.chunk_list(k, v)
+                    if not v:
+                        continue                                # everything in it stood on cut blocks
+                if convert:
+                    dim = DIM_FROM_BEDROCK.get(ck[2])
+                    if dim is not None:
+                        pending[(dim, ck[0], ck[1])][0 if ck[3] == BE_TAG else 1].extend(read_nbt_list(v))
+                    continue
+            elif ck is not None and ck[3] == 0x36:
+                if not keep_state or move is not None or _get(ddb, k) is None:
+                    continue
+            elif ck is not None and (0x2B <= ck[3] < 0x3D or ck[3] == 0x76):
                 continue  # terrain / version records written by Amulet
-            elif len(k) in (10, 14) and k[-2] == 0x2F:
+            elif ck is not None and 0x3D <= ck[3] <= 0x41 and version is not None and version < (1, 18, 0):
+                continue  # records of 1.18+ (blending data, digests...) in a world that does not know them
+            elif ck is not None and ck[3] == 0x2F:
                 continue  # sub chunks
-            ddb.put(k, bytes(value))
+            ddb.put(k, v)
             n += 1
+        if down is not None:
+            for (dim, cx, cz), (tl, al) in pending.items():
+                down.chunk(dim, cx, cz, tl, al)
+            n += inj.n_tiles + inj.n_ents
+        if moved is not None:
+            moved.done()
+        drop_orphan_actors(ddb)
         from . import terrain
 
         terrain.fix_height_maps(ddb)  # Amulet rewrote the terrain with empty height maps

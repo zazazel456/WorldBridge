@@ -21,6 +21,7 @@ from amulet_nbt import (  # noqa: F401  (re-exported)
     LongArrayTag,
     LongTag,
     NamedTag,
+    NBTError,
     ShortTag,
     StringTag,
 )
@@ -110,6 +111,12 @@ def get_tag(tag: CompoundTag, key: str, default=None):
         return tag[key]
     except (KeyError, TypeError):
         return default
+
+
+def pos_list(x, y, z) -> ListTag:
+    """3-element double list (Pos / Motion) from numbers or numeric tags; never reuses the
+    source tags (Indev stores floats, and amulet refuses mixed list types)."""
+    return ListTag([DoubleTag(float(getattr(v, "py_data", v))) for v in (x, y, z)], 6)
 
 
 def compound_list(items: Iterable[CompoundTag]) -> ListTag:
