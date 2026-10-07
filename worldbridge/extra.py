@@ -220,6 +220,25 @@ def _entity_inside(e) -> bool:
     return 0 <= float(pos[1].py_data) < 256
 
 
+def error_text(ex: BaseException) -> str:
+    """An exception as a readable label: a LevelDB ``KeyError`` carries the raw key (bytes) of the record that was
+    not there, shown as its chunk or its name."""
+    if isinstance(ex, KeyError) and ex.args and isinstance(ex.args[0], (bytes, bytearray)):
+        k = bytes(ex.args[0])
+        if len(k) in (10, 14) and k[-2] == 0x2F:           # a sub chunk: x, z, [dimension], tag 0x2F, y
+            import struct
+
+            cx, cz = struct.unpack_from("<ii", k, 0)
+            dim = struct.unpack_from("<i", k, 8)[0] if len(k) == 14 else 0
+            return tr("sub chunk {y} of chunk {cx}, {cz} (dimension {dim}) not found", y=struct.unpack_from("b", k, len(k) - 1)[0],
+                      cx=cx, cz=cz, dim=dim)
+        text = k.decode("ascii", "replace")
+        if not text.isprintable():
+            text = k.hex()
+        return tr("record {key} not found", key=text)
+    return str(ex)
+
+
 def inject_target_extras(hub_dir: str, out_dir: str, target, info: WorldInfo, progress: Progress, version=None) -> None:
     """After Amulet produced the target from the numeric hub: write block
     entities, entities and players in the target's native format."""
@@ -234,7 +253,7 @@ def inject_target_extras(hub_dir: str, out_dir: str, target, info: WorldInfo, pr
             inject_java(hub_dir, out_dir, info, progress)
             _copy_maps(hub_dir, out_dir, _map_colors(target, version))
     except Exception as ex:  # noqa: BLE001
-        progress.warn(tr("Entities / containers not fully transferred: {error}", error=ex))
+        progress.warn(tr("Entities / containers not fully transferred: {error}", error=error_text(ex)))
     _tidy_java_entities(out_dir, target)
 
 
@@ -274,7 +293,7 @@ def direct_extras(d, out_dir: str, target, info: WorldInfo, progress: Progress, 
 
             copy_bedrock_extras(d.path, out_dir, progress, depth, move, version or target.version, keep_state)
     except Exception as ex:  # noqa: BLE001
-        progress.warn(tr("Entities / containers not fully transferred: {error}", error=ex))
+        progress.warn(tr("Entities / containers not fully transferred: {error}", error=error_text(ex)))
     _tidy_java_entities(out_dir, target)
 
 

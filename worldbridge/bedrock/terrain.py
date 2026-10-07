@@ -257,7 +257,10 @@ def set_blocks(db, prefix_of, blocks: Dict[Tuple[int, int, int], tuple],
     done = []
     for (cx, sy, cz), items in groups.items():
         key = prefix_of(cx, cz) + bytes([SUBCHUNK]) + struct.pack("b", sy)
-        raw = db.get(key)
+        try:
+            raw = db.get(key)             # a missing sub chunk raises KeyError (the frame's chunk has no blocks there)
+        except KeyError:
+            raw = None
         if raw is None:
             continue
         raw = bytes(raw)

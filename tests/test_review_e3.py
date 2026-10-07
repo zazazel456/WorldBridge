@@ -96,3 +96,25 @@ def test_an_explicit_spawn_rises_with_the_world_kept_by_depth(tmp_path):
     out = str(tmp_path / "out")
     _to_numeric(src, out, depth="keep", selection=Selection(spawn=(3, -59, 3)))
     assert int(nbt.get(JavaNumericWorld(out).info.level, "SpawnY")) == 5          # -59 + 64, not -59 clamped
+
+
+def test_a_block_for_a_missing_sub_chunk_is_skipped_not_an_error(tmp_path):
+    from worldbridge.bedrock import terrain
+    from worldbridge.bedrock.extra import _db, chunk_prefix
+
+    (tmp_path / "w").mkdir()
+    db = _db(str(tmp_path / "w"), True)
+    try:
+        placed = terrain.set_blocks(db, lambda cx, cz: chunk_prefix(cx, cz, 0), {(5, 70, 5): ("minecraft:frame", {})})
+    finally:
+        db.close()
+    assert placed == []
+
+
+def test_a_missing_record_is_named_not_printed_as_bytes():
+    from worldbridge.extra import error_text
+
+    key = struct.pack("<ii", 3, -2) + bytes([0x2F]) + struct.pack("b", 4)
+    assert error_text(KeyError(key)) == "sub chunk 4 of chunk 3, -2 (dimension 0) not found"
+    assert error_text(KeyError(b"digp")) == "record digp not found"
+    assert error_text(ValueError("boom")) == "boom"

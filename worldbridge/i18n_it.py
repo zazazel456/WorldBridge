@@ -179,6 +179,10 @@ _SECTIONS = {
             '{dim}: non convertito, il gioco lo genera da capo al primo ingresso.',
         '{n} chunks the game had not finished (at the edge of the explored area: only planned or bare rock) are not converted: the game or the ring generates them properly.':
             "{n} chunk non ancora completati dal gioco (ai margini dell'area esplorata: solo pianificati o roccia nuda) non vengono convertiti: il gioco o il raccordo li generano come si deve.",
+        'sub chunk {y} of chunk {cx}, {cz} (dimension {dim}) not found':
+            'sub-chunk {y} del chunk {cx}, {cz} (dimensione {dim}) non trovato',
+        'record {key} not found':
+            'record {key} non trovato',
         '{n} chunks the game had not finished are kept: Minecraft finishes them when it loads them.':
             'I {n} chunk non ancora completati dal gioco vengono mantenuti: Minecraft li completa quando li carica.',
         'The {n} chunks Bedrock had not finished hold {tiles} block entities and {entities} entities (villages, dungeons...): they are lost with the chunks.':
