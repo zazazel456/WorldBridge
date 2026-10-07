@@ -3,12 +3,13 @@ block entity contents (chests, signs, …) and entities."""
 
 from __future__ import annotations
 
+import math
 import os
 from typing import Optional
 
 from . import amulet_bridge as ab
 from . import nbt
-from .model import OVERWORLD, Progress, WorldInfo
+from .model import OVERWORLD, Progress, WorldInfo, dimension_of
 from .i18n import tr
 
 
@@ -80,6 +81,16 @@ def read_amulet_info(d) -> WorldInfo:
             from .bedrock.extra import read_bedrock_players
 
             info.players.update(read_bedrock_players(d.path))
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if ab.bedrock_spawn_unset(root) and info.players:   # never set: the first player's position is the spawn
+                host = next(iter(info.players.values()))
+                pos = nbt.get_tag(host, "Pos")
+                if pos is not None and len(pos) == 3 and dimension_of(host) == OVERWORLD:
+                    x, y, z = (math.floor(float(v.py_data)) for v in pos)
+                    for k, v in zip(("SpawnX", "SpawnY", "SpawnZ"), (x, y, z)):
+                        info.level[k] = nbt.IntTag(v)
         except Exception:  # noqa: BLE001
             pass
         try:

@@ -894,12 +894,10 @@ def write_bedrock_level_dat(path: str, info: WorldInfo, version) -> None:
     """Merge the source level information into the Bedrock level.dat created by Amulet."""
     p = os.path.join(path, "level.dat")
     root = nbt.CompoundTag()
-    storage = 10
     if os.path.exists(p):
         with open(p, "rb") as f:
             raw = f.read()
         try:
-            storage = struct.unpack_from("<i", raw, 0)[0]
             root = nbt.load(raw[8:], little_endian=True, compressed=False).tag
         except Exception:  # noqa: BLE001
             root = nbt.CompoundTag()
@@ -908,7 +906,10 @@ def write_bedrock_level_dat(path: str, info: WorldInfo, version) -> None:
     root["LevelName"] = nbt.StringTag(info.name)
     root["lastOpenedWithVersion"] = nbt.ListTag([nbt.IntTag(i) for i in v], 3)
     root["MinimumCompatibleClientVersion"] = nbt.ListTag([nbt.IntTag(i) for i in v], 3)
-    root["StorageVersion"] = nbt.IntTag(10 if v[:3] >= (1, 18, 0) else 9 if v[:3] >= (1, 16, 0) else 8)
+    storage = gv.bedrock_storage_version(version)   # the header integer is the same number (Amulet's template says 9)
+    root["StorageVersion"] = nbt.IntTag(storage)
+    root["NetworkVersion"] = nbt.IntTag(gv.bedrock_protocol(version))
+    root["InventoryVersion"] = nbt.StringTag(".".join(str(i) for i in v[:3]))
     seed = nbt.get(src, "RandomSeed")
     if seed is None:
         wgs = nbt.get_tag(src, "WorldGenSettings")
@@ -946,14 +947,13 @@ def write_bedrock_level_dat(path: str, info: WorldInfo, version) -> None:
 
         for k, v in bedrock_rules(rules).items():
             root[k] = v
-    root.setdefault("NetworkVersion", nbt.IntTag(0))
     root.setdefault("Platform", nbt.IntTag(2))
     root.setdefault("SpawnMobs", nbt.ByteTag(1))
     root.setdefault("spawnMobs", nbt.ByteTag(1))
     root.setdefault("experiments", nbt.CompoundTag())
     payload = nbt.dump(root, "", little_endian=True)
     with open(p, "wb") as f:
-        f.write(struct.pack("<ii", max(storage, 8), len(payload)) + payload)
+        f.write(struct.pack("<ii", storage, len(payload)) + payload)
     with open(os.path.join(path, "levelname.txt"), "w", encoding="utf-8") as f:
         f.write(info.name)
     if info.thumbnail_png:
@@ -967,6 +967,14 @@ def read_bedrock_level_dat(path: str) -> nbt.CompoundTag:
     return nbt.load(raw[8:], little_endian=True, compressed=False).tag
 
 
+INT_MIN = -(1 << 31)
+
+
+def bedrock_spawn_unset(root: nbt.CompoundTag) -> bool:
+    """A Bedrock level.dat whose spawn was never set (Dedicated Server worlds: SpawnX/Y/Z are INT_MIN)."""
+    return any(int(nbt.get(root, k, 0) or 0) == INT_MIN for k in ("SpawnX", "SpawnZ"))
+
+
 def bedrock_info_to_java(root: nbt.CompoundTag) -> nbt.CompoundTag:
     """Bedrock level.dat -> Java-style Data compound (hub convention)."""
     out = nbt.CompoundTag()
@@ -974,7 +982,9 @@ def bedrock_info_to_java(root: nbt.CompoundTag) -> nbt.CompoundTag:
     out["RandomSeed"] = nbt.LongTag(int(nbt.get(root, "RandomSeed", 0) or 0))
     for k in ("SpawnX", "SpawnY", "SpawnZ"):
         out[k] = nbt.IntTag(int(nbt.get(root, k, 64 if k == "SpawnY" else 0) or 0))
-    if int(out["SpawnY"].py_data) > 320 or int(out["SpawnY"].py_data) < 0:
+    if bedrock_spawn_unset(root):                    # the game picks the spawn when the world is first opened: 0, 0
+        out["SpawnX"], out["SpawnZ"] = nbt.IntTag(0), nbt.IntTag(0)
+    if not -64 <= int(out["SpawnY"].py_data) <= 320:  # 32767 / INT_MIN: "on the ground"; a negative Y of 1.18+ is real
         out["SpawnY"] = nbt.IntTag(64)
     gt = int(nbt.get(root, "GameType", 0) or 0)
     out["GameType"] = nbt.IntTag(gt if gt in (0, 1, 2) else 0)

@@ -12,6 +12,7 @@ the numeric one (LCE, old Java, Pocket Edition, the DFU hub) moves the hub chunk
 
 from __future__ import annotations
 
+import math
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
@@ -121,7 +122,7 @@ class Relocation:
     def _moved(self, dim: int, x: float, z: float) -> Optional[Tuple[float, float]]:
         """Where a point of a moved chunk goes (None: its chunk was not selected)."""
         cs = (self.sel.chunks or {}).get(dim) or set()
-        if (int(x) >> 4, int(z) >> 4) not in cs:
+        if (math.floor(x) >> 4, math.floor(z) >> 4) not in cs:      # floor: x = -0.7 is in chunk -1, not 0
             return None
         dx, dz = self.delta(dim)
         return x + dx * 16, z + dz * 16
@@ -134,6 +135,8 @@ class Relocation:
         p = self._moved(OVERWORLD, x, z)
         if p is not None:
             return int(p[0]), int(y), int(p[1])
+        if self.sel.spawn is not None:                # chosen with --spawn: exactly there, not on the ground at the destination
+            return int(x), int(y), int(z)
         bx, bz = self.dest or (0, 0)
         return int(bx), int(self.top if self.top is not None else y), int(bz)
 
