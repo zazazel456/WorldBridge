@@ -68,6 +68,85 @@ def test_empty_lce_owner_is_removed_and_uuid_owner_converted():
     assert str(named["Owner"].py_data) == "Steve"
 
 
+def _java_mob(name, **fields):
+    e = nbt.CompoundTag({"id": nbt.StringTag("minecraft:" + name),
+                         "Pos": nbt.ListTag([nbt.DoubleTag(1.5), nbt.DoubleTag(64), nbt.DoubleTag(2.5)], 6),
+                         "Motion": nbt.ListTag([nbt.DoubleTag(0)] * 3, 6), "Rotation": nbt.ListTag([nbt.FloatTag(0)] * 2, 5)})
+    for k, v in fields.items():
+        e[k] = v
+    return e
+
+
+def _to_bedrock(name, version=(1, 21, 60), **fields):
+    from worldbridge import entities
+
+    c = entities.from_java_modern(_java_mob(name, **fields))
+    return entities.to_bedrock(c, -5, None, version)
+
+
+def _defs(b):
+    return {str(d.py_data) for d in b["definitions"]}
+
+
+def test_bedrock_actors_carry_variants_saddles_and_professions():
+    S, I, B = nbt.StringTag, nbt.IntTag, nbt.ByteTag
+    horse = _to_bedrock("horse", Variant=I(3 | 2 << 8), SaddleItem=nbt.CompoundTag({
+        "id": S("minecraft:saddle"), "Count": B(1)}), ArmorItem=nbt.CompoundTag({
+            "id": S("minecraft:iron_horse_armor"), "Count": B(1)}))
+    assert horse["Variant"].py_data == 3 and horse["MarkVariant"].py_data == 2 and horse["Saddled"].py_data == 1
+    assert {"+minecraft:base_brown", "+minecraft:markings_white_fields"} <= _defs(horse)
+    chest = {int(t["Slot"].py_data): t["Name"].py_data for t in horse["ChestItems"]}
+    assert chest == {0: "minecraft:saddle", 1: "minecraft:iron_horse_armor"}
+    pig = _to_bedrock("pig", Saddle=B(1))
+    assert pig["Saddled"].py_data == 1 and "+minecraft:pig_saddled" in _defs(pig)
+    assert "+minecraft:pig_unsaddled" in _defs(_to_bedrock("pig")) and _to_bedrock("pig")["Saddled"].py_data == 0
+    assert _to_bedrock("llama", Variant=I(2))["Variant"].py_data == 2
+    assert _to_bedrock("parrot", Variant=I(4))["Variant"].py_data == 4
+    assert _to_bedrock("cat", CatType=I(8))["Variant"].py_data == 0          # Java white = Bedrock 0
+    assert _to_bedrock("cat", variant=S("minecraft:tabby"))["Variant"].py_data == 8
+    assert _to_bedrock("rabbit", RabbitType=I(99))["Variant"].py_data == 99
+    assert _to_bedrock("axolotl", Variant=I(3))["Variant"].py_data == 1      # Java cyan = Bedrock 1
+    assert _to_bedrock("fox", Type=S("snow"))["Variant"].py_data == 1
+    moo = _to_bedrock("mooshroom", Type=S("brown"))
+    assert moo["Variant"].py_data == 1 and "+minecraft:mooshroom_brown" in _defs(moo)
+    vil = _to_bedrock("villager", VillagerData=nbt.CompoundTag({"profession": S("minecraft:librarian"), "level": I(3),
+                                                                "type": S("minecraft:plains")}))
+    assert vil["PreferredProfession"].py_data == "librarian" and "+librarian" in _defs(vil) and vil["TradeTier"].py_data == 2
+    legacy = _to_bedrock("villager", Profession=I(1))                      # Java 1.12 numbers
+    assert legacy["PreferredProfession"].py_data == "librarian"
+
+
+def test_bedrock_variants_read_back_as_java():
+    from worldbridge import entities
+
+    S, I, B = nbt.StringTag, nbt.IntTag, nbt.ByteTag
+    for name, fields in (("horse", dict(Variant=I(3 | 2 << 8), SaddleItem=nbt.CompoundTag({"id": S("minecraft:saddle"),
+                                                                                           "Count": B(1)}))),
+                         ("pig", dict(Saddle=B(1))), ("llama", dict(Variant=I(3))), ("cat", dict(CatType=I(4))),
+                         ("rabbit", dict(RabbitType=I(5))), ("axolotl", dict(Variant=I(2))), ("fox", dict(Type=S("snow"))),
+                         ("mooshroom", dict(Type=S("brown"))), ("parrot", dict(Variant=I(2)))):
+        b = _to_bedrock(name, **fields)
+        c = entities.from_bedrock(b)
+        out = entities.to_java_modern(c, 2724)
+        for k, v in fields.items():
+            if k != "SaddleItem":
+                assert out[k].py_data == v.py_data, (name, k)
+        if name == "horse":
+            assert out["SaddleItem"]["id"].py_data == "minecraft:saddle"
+    vil = _to_bedrock("villager", VillagerData=nbt.CompoundTag({"profession": S("minecraft:cleric"), "level": I(2),
+                                                                "type": S("minecraft:plains")}))
+    out = entities.to_java_modern(entities.from_bedrock(vil), 2724)
+    assert out["VillagerData"]["profession"].py_data == "minecraft:cleric" and out["VillagerData"]["level"].py_data == 2
+    assert entities.to_legacy(entities.from_bedrock(vil))["Profession"].py_data == 2
+    # a cat of Java 1.19+ has a name, not CatType
+    cat = entities.to_java_modern(entities.from_bedrock(_to_bedrock("cat", CatType=I(8))), 3700)
+    assert cat["variant"].py_data == "minecraft:white" and "CatType" not in cat
+    # a worn helmet is not horse armour, and horse armour is not worn
+    horse = _to_bedrock("horse", ArmorItem=nbt.CompoundTag({"id": S("minecraft:iron_horse_armor"), "Count": B(1)}))
+    c = entities.from_bedrock(horse)
+    assert c["equip"]["body"]["name"] == "iron_horse_armor" and not any(c["equip"]["armor"])
+
+
 def test_pocket_edition_entities_are_read_by_their_number():
     from worldbridge import entities
 
