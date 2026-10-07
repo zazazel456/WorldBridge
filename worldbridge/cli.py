@@ -15,16 +15,20 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import signal
 import sys
+import tempfile
+import threading
+import zipfile
 import zlib
 
 from . import APP_NAME, __version__, i18n
 from . import amulet_bridge as ab
-from .convert import TargetSpec, convert
+from .convert import TargetSpec, convert, validate_target
 from .detect import detect
 from .i18n import tr
-from .lce.container import LCEFormatError
-from .model import ConversionCancelled, ConversionError, Progress
+from .lce.container import PLATFORMS, LCEFormatError
+from .model import DIM_LABEL, NETHER, OVERWORLD, THE_END, ConversionCancelled, ConversionError, Progress
 from .nbt import NBTError
 
 
@@ -47,39 +51,117 @@ def _parse_version(s: str, family: str = "java"):
     return got
 
 
+_DIMS = {"overworld": OVERWORLD, "nether": NETHER, "end": THE_END, "the_nether": NETHER, "the_end": THE_END}
+
+
+def _split_dim(spec: str):
+    """``[DIM:]FILE`` -> (dimension, file)."""
+    head, _, rest = spec.partition(":")
+    if rest and head.lower() in _DIMS:
+        return _DIMS[head.lower()], rest
+    return OVERWORLD, spec
+
+
+def _ints(n: int):
+    """argparse type: ``n`` numbers separated by commas (``-20,-59,-20``) as a tuple of ints."""
+    def parse(text: str):
+        try:
+            v = tuple(int(float(x)) for x in text.split(","))
+        except (ValueError, OverflowError):
+            v = ()
+        if len(v) != n:
+            raise argparse.ArgumentTypeError(
+                tr("expected {n} numbers separated by commas (e.g. {example}), not '{value}'", n=n,
+                   example=",".join(["10", "-4", "7"][:n]), value=text))
+        return v
+    return parse
+
+
+def _move_to(text: str):
+    """argparse type of --move-to: ``center`` or ``X,Z``."""
+    if text.strip().lower() in ("centro", "center", "0"):
+        return (0, 0)
+    return _ints(2)(text)
+
+
+def _depth(text: str):
+    """argparse type of --depth: auto, cut, keep or the lowest y kept."""
+    if text in ("auto", "cut", "keep"):
+        return text
+    try:
+        return int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(tr("expected auto, cut, keep or a height such as -64, not '{value}'",
+                                            value=text))
+
+
+def _duration(text: str) -> int:
+    from .trim import parse_duration
+
+    try:
+        return parse_duration(text)
+    except ValueError as ex:
+        raise argparse.ArgumentTypeError(str(ex))
+
+
+def _existing_file(path: str) -> str:
+    if not os.path.isfile(path):
+        raise argparse.ArgumentTypeError(tr("file not found: {path}", path=path))
+    return path
+
+
+def _chunks_spec(spec: str) -> str:
+    _existing_file(_split_dim(spec)[1])
+    return spec
+
+
+def _biome_spec(spec: str) -> str:
+    from .biomes import parse
+
+    name, eq, rest = spec.partition("=")
+    if not eq or not name.strip() or not rest:
+        raise argparse.ArgumentTypeError(tr("expected BIOME=[DIM:]FILE, not '{value}'", value=spec))
+    try:
+        parse(name)
+    except ValueError as ex:
+        raise argparse.ArgumentTypeError(str(ex))
+    _existing_file(_split_dim(rest)[1])
+    return spec
+
+
+def _load_chunks(option: str, path: str):
+    from .selection import load_csv
+
+    found = load_csv(path)
+    if not found:
+        raise ConversionError(tr("{option} {file}: no chunk coordinates found (an MCA Selector CSV file is expected)",
+                                 option=option, file=path))
+    return found
+
+
 def _selection(args):
-    from .model import NETHER, OVERWORLD, THE_END
-    from .selection import PlayerLink, Selection, load_csv
+    from .selection import PlayerLink, Selection
 
     sel = Selection()
     if args.chunks:
         sel.chunks = {}
-        dims = {"overworld": OVERWORLD, "nether": NETHER, "end": THE_END, "the_nether": NETHER, "the_end": THE_END}
         for spec in args.chunks:
-            dim, path = OVERWORLD, spec
-            head, _, rest = spec.partition(":")
-            if rest and head.lower() in dims:
-                dim, path = dims[head.lower()], rest
-            sel.chunks.setdefault(dim, set()).update(load_csv(path))
-    dims = {"overworld": OVERWORLD, "nether": NETHER, "end": THE_END, "the_nether": NETHER, "the_end": THE_END}
+            dim, path = _split_dim(spec)
+            sel.chunks.setdefault(dim, set()).update(_load_chunks("--chunks", path))
     for spec in getattr(args, "biome", None) or []:
         from .biomes import parse
 
         name, _, rest = spec.partition("=")
-        dim, path = OVERWORLD, rest
-        head, _, tail = rest.partition(":")
-        if tail and head.lower() in dims:
-            dim, path = dims[head.lower()], tail
+        dim, path = _split_dim(rest)
         bid = parse(name)
-        sel.biomes.setdefault(dim, {}).update({c: bid for c in load_csv(path)})
+        sel.biomes.setdefault(dim, {}).update({c: bid for c in _load_chunks("--biome", path)})
     if args.spawn:
-        sel.spawn = tuple(int(float(v)) for v in args.spawn.split(","))
+        sel.spawn = tuple(args.spawn)
     move = getattr(args, "move_to", None)
     if move:
         if sel.chunks is None:
             raise SystemExit(tr("--move-to moves the selected chunks: give --chunks too"))
-        sel.move_to = (0, 0) if move.lower() in ("centro", "center", "0") else tuple(
-            int(float(v)) for v in move.split(","))[:2]
+        sel.move_to = tuple(move)
     if args.player:
         sel.players = []
         for i, spec in enumerate(args.player):
@@ -89,7 +171,7 @@ def _selection(args):
 
 
 def _trim_args(p, prefix: str) -> None:
-    p.add_argument(f"--{prefix}min-time", default="1m", metavar=tr("DURATION"),
+    p.add_argument(f"--{prefix}min-time", default="1m", metavar=tr("DURATION"), type=_duration,
                    help=tr("minimum time spent near a chunk to keep it (e.g. 30s, 1m, 5m, 2h or ticks; default 1m)"))
     p.add_argument(f"--{prefix}ring", type=int, default=1, metavar="N",
                    help=tr("chunks kept around every used chunk (default 1)"))
@@ -101,10 +183,10 @@ def _trim_args(p, prefix: str) -> None:
 
 
 def _trim_options(args, prefix: str):
-    from .trim import TrimOptions, parse_duration
+    from .trim import TrimOptions
 
     g = lambda k: getattr(args, (prefix + k).replace("-", "_"))  # noqa: E731
-    return TrimOptions(min_ticks=parse_duration(g("min-time")), ring=max(0, g("ring")), spawn_radius=g("spawn-radius"),
+    return TrimOptions(min_ticks=g("min-time"), ring=max(0, g("ring")), spawn_radius=g("spawn-radius"),
                        keep_forced=not g("drop-forced"), keep_unknown=not g("drop-unknown"))
 
 
@@ -116,6 +198,8 @@ def _cmd_trim(args) -> int:
     opt = _trim_options(args, "")
     prog = Progress(lambda f, m: (sys.stdout.write(f"\r[{int(f * 100):3d}%] {m[:70]:<70}"), sys.stdout.flush()),
                     lambda m: print("\n" + m))
+    if args.output and not args.dry_run:
+        trim.check_output(args.world, args.output)          # before the (long) scan, not after it
     try:
         sc = trim.scan(args.world, prog)
     except ConversionError as ex:
@@ -123,10 +207,10 @@ def _cmd_trim(args) -> int:
         return 1
     keep = trim.plan(sc, opt)
     print(f"\n{opt.describe()}")
-    names = {0: "overworld", -1: "nether", 1: "end"}
     for dim in trim.trim_dims(sc):
         tot = len(sc.inhabited[dim])
-        print("  " + tr("{dim}: kept {kept} / {total}", dim=names.get(dim, dim), kept=len(keep[dim]), total=tot))
+        print("  " + tr("{dim}: kept {kept} / {total}", dim=tr(DIM_LABEL[dim]) if dim in DIM_LABEL else dim,
+                        kept=len(keep[dim]), total=tot))
     print(tr("Total: {summary}", summary=trim.summary(sc, keep)))
     if args.csv:
         save_csv(args.csv, keep.get(0, set()))
@@ -138,16 +222,24 @@ def _cmd_trim(args) -> int:
     if not sc.can_copy:
         print(tr("For this format the trim is applied while converting: use 'convert ... --trim'."))
         return 1
-    before = trim.folder_size(args.world)
-    n = trim.trimmed_copy(args.world, args.output, keep, prog)
+    before = trim.folder_size(sc.path)
+    n = trim.trimmed_copy(sc.path, args.output, keep, prog)
     after = trim.folder_size(args.output)
     print("\n" + tr("Done: {n} chunks removed · {before} → {after}  ({path})", n=n, before=trim.human_size(before),
                      after=trim.human_size(after), path=args.output))
     return 0
 
 
+class _Parser(argparse.ArgumentParser):
+    """A usage error ends with status 1, like every other error of the program."""
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(1, f"{self.prog}: error: {message}\n")
+
+
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="worldbridge",
+    p = _Parser(prog="worldbridge",
                                 description=f"{APP_NAME} {__version__} – " + tr("universal Minecraft world converter"))
     p.add_argument("--lang", choices=tuple(i18n.LANGUAGES), default=None,
                    help=tr("language of the messages (default: the system's)"))
@@ -166,7 +258,7 @@ def build_parser() -> argparse.ArgumentParser:
                            "mcregion b1.3, b1.4, b1.5, b1.6, b1.7, b1.8, 1.0, 1.1; alpha: alpha (Alpha 1.2.x), b1.2 "
                            "(Beta 1.0 – 1.2_02, default)"))
     c.add_argument("--version", default=None, help=tr("target version (e.g. 1.20.1 or 1.21.0)"))
-    c.add_argument("--platform", default="win64",
+    c.add_argument("--platform", default="win64", choices=list(PLATFORMS), metavar="PLATFORM",
                    help=tr("LCE platform: win64, xbox360, ps3, wiiu, vita, ps4, xboxone, switch"))
     c.add_argument("--profile", default="", help=tr("LCE console version: tu54 (default), tu46, tu31. "
                                                     "Windows64 is always neoLegacy TU31"))
@@ -174,7 +266,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help=tr("width of the LCE world in chunks (54, 64, 192, 320; default 320 for "
                            "Windows64/PS4/XB1/Switch/Wii U, 54 for X360/PS3/Vita)"))
     c.add_argument("--center-on-spawn", action="store_true", help=tr("centre the LCE world on the spawn"))
-    c.add_argument("--offset", default="0,0", help=tr("source chunk that becomes the centre of the LCE world (x,z)"))
+    c.add_argument("--offset", default=(0, 0), type=_ints(2), metavar="X,Z", help=tr("source chunk that becomes the centre of the LCE world (x,z)"))
     c.add_argument("--name", default=None, help=tr("name of the target world"))
     c.add_argument("--player-id", default=None,
                    help=tr("LCE PC/Xbox: the XUID (file name in players/) for the main player"))
@@ -188,28 +280,28 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--tall-terrain", choices=("compress", "cut"), default="compress",
                    help=tr("128-block-high worlds (Alpha, Beta, Java 1.0 – 1.1, PE 0.x): taller mountains are "
                            "compressed (default: the surface comes down whole) or cut at y 127"))
-    c.add_argument("--depth", default="auto", metavar="auto|cut|keep|Y",
+    c.add_argument("--depth", default="auto", type=_depth, metavar="auto|cut|keep|Y",
                    help=tr("1.18+ worlds to games that start at y 0: auto = flat or low worlds keep their underground, "
                            "the others are cut (default); cut = the underground below y 0 is dropped, keep = everything "
                            "kept (the world rises by 64), negative Y = kept from that y"))
     c.add_argument("--regen", action="append", default=[], choices=("nether", "end"),
                    help=tr("do not convert the Nether / the End: the game generates them anew when first entered "
                            "(repeatable)"))
-    c.add_argument("--chunks", action="append", default=[], metavar="[DIM:]FILE",
+    c.add_argument("--chunks", action="append", default=[], metavar="[DIM:]FILE", type=_chunks_spec,
                    help=tr("convert only the chunks of an MCA Selector CSV file (DIM = overworld, nether, end; "
                            "repeatable). Dimensions without a file are left out"))
-    c.add_argument("--biome", action="append", default=[], metavar=tr("BIOME") + "=[DIM:]FILE",
+    c.add_argument("--biome", action="append", default=[], metavar=tr("BIOME") + "=[DIM:]FILE", type=_biome_spec,
                    help=tr("give a biome (name or number, e.g. plains, swampland, cherry_grove) to the chunks of an "
                            "MCA Selector CSV; repeatable"))
-    c.add_argument("--spawn", default=None, metavar="X,Y,Z", help=tr("new world spawn point"))
-    c.add_argument("--move-to", default=None, metavar="center|X,Z",
+    c.add_argument("--spawn", default=None, metavar="X,Y,Z", type=_ints(3), help=tr("new world spawn point"))
+    c.add_argument("--move-to", default=None, metavar="center|X,Z", type=_move_to,
                    help=tr("move the selected chunks (--chunks): their centre goes to the world centre (0, 0) or to "
                            "the given X,Z coordinates, with the entities, spawn and players on them"))
     c.add_argument("--player", action="append", default=[], metavar=tr("KEY") + "[=NICKNAME]",
                    help=tr("players to transfer (the first becomes the main player) and the nicknames to link them "
                            "to; KEY as shown by 'worldbridge players'. Repeatable"))
     c.add_argument("--offline", action="store_true", help=tr("Java: use offline UUIDs (non-premium servers)"))
-    c.add_argument("--bta-palette", default=None, metavar="FILE",
+    c.add_argument("--bta-palette", default=None, metavar="FILE", type=_existing_file,
                    help=tr("Better than Adventure: .properties file choosing the vanilla woods of BTA's painted wood "
                            "(see worldbridge/bta/data/palette.example.properties)"))
     c.add_argument("--bta-y-offset", type=int, default=None, metavar="N",
@@ -242,18 +334,90 @@ def _early_language(argv) -> None:
             i18n.set_language(a.split("=", 1)[1])
 
 
+_COORD_OPTIONS = ("--spawn", "--move-to", "--offset")
+_COORDS = re.compile(r"-\d+(?:\.\d+)?(?:,-?\d+(?:\.\d+)?)+")
+
+
+def _join_coordinates(argv):
+    """argparse takes ``--spawn -20,64,-20`` for an option (the value starts with '-'): the coordinates
+    that start with a minus sign are joined to their option (``--spawn=-20,64,-20``)."""
+    out, i = [], 0
+    while i < len(argv):
+        if argv[i] in _COORD_OPTIONS and i + 1 < len(argv) and _COORDS.fullmatch(argv[i + 1]):
+            out.append(f"{argv[i]}={argv[i + 1]}")
+            i += 2
+        else:
+            out.append(argv[i])
+            i += 1
+    return out
+
+
+_SIGTERM_HANDLER = False
+
+
+def _on_sigterm(_signum, _frame):
+    raise KeyboardInterrupt
+
+
+def _after_fork_in_child() -> None:
+    if _SIGTERM_HANDLER:                      # the workers are stopped with SIGTERM: they just stop
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_fork_in_child)
+
+
 def main(argv=None) -> int:
+    global _SIGTERM_HANDLER
+    argv = _join_coordinates(list(sys.argv[1:] if argv is None else argv))
     _early_language(argv)
-    args = build_parser().parse_args(argv)
+    old_term = None
+    if threading.current_thread() is threading.main_thread():
+        try:                                   # kill / timeout stop the run as Ctrl+C does: the temporary files go
+            old_term = signal.signal(signal.SIGTERM, _on_sigterm)
+            _SIGTERM_HANDLER = True
+        except (ValueError, OSError):
+            old_term = None
+    try:
+        try:
+            args = build_parser().parse_args(argv)
+        except SystemExit as ex:               # --help (0) and usage errors (1)
+            return ex.code if isinstance(ex.code, int) else 0
+        return _run_clean(args)
+    finally:
+        if old_term is not None:
+            _SIGTERM_HANDLER = False
+            signal.signal(signal.SIGTERM, old_term)
+
+
+def _run_clean(args) -> int:
     try:
         return _run(args)
+    except KeyboardInterrupt:
+        print("\n" + tr("Cancelled"))
+        return 130
     except ConversionCancelled:
         print("\n" + tr("Cancelled"))
         return 2
-    except (ConversionError, LCEFormatError, NBTError, OSError, EOFError, zlib.error) as ex:
+    except SystemExit as ex:                   # a message given to SystemExit
+        if isinstance(ex.code, int) or ex.code is None:
+            return ex.code or 0
+        print(tr("Error: {error}", error=ex.code), file=sys.stderr)
+        return 1
+    except (ConversionError, LCEFormatError, NBTError, OSError, EOFError, zlib.error, zipfile.BadZipFile,
+            ValueError) as ex:
         # a world that cannot be read: a message, not a traceback
         print(tr("Error: {error}", error=str(ex) or type(ex).__name__))
         return 1
+
+
+def _peek_archive(path: str):
+    """What an archive holds: the world inside it, recognised (None: no world)."""
+    from . import detect as det
+
+    with tempfile.TemporaryDirectory(prefix=".worldbridge_info_") as tmp:
+        return det.detect(det.extract_archive(path, os.path.join(tmp, "archive")))
 
 
 def _run(args) -> int:
@@ -262,6 +426,14 @@ def _run(args) -> int:
         if not d:
             print(tr("Format not recognised"))
             return 1
+        if d.kind == "archive":
+            inner = _peek_archive(d.path)
+            if inner is None:
+                print(tr("The archive does not contain a recognised world."))
+                return 1
+            print(f"{d.description}\n  " + tr("path: {path}", path=d.path))
+            print("  " + tr("contains: {description}", description=inner.description))
+            return 0
         print(f"{d.description}\n  " + tr("path: {path}", path=d.path))
         if d.kind == "bta":
             from .bta.world import BtaWorld, DIMENSION_NAMES, auto_shift, ocean_y
@@ -295,7 +467,7 @@ def _run(args) -> int:
         return 0
     if args.cmd == "convert":
         fam = {"pe-old": "pe_old"}.get(args.to, args.to)
-        ox, oz = (int(v) for v in args.offset.split(","))
+        ox, oz = args.offset
         t = TargetSpec(family=fam, java_mode=args.java_mode, java_version_limit=args.java_limit,
                        version=_parse_version(args.version, fam) if args.version else None, lce_platform=args.platform,
                        lce_profile=args.profile, lce_world_size=args.size, lce_offset=(ox, oz),
@@ -303,7 +475,8 @@ def _run(args) -> int:
                        y_offset=args.y_offset, blend=not args.no_blend, ring=not args.no_ring, bta_palette=args.bta_palette,
                        bta_y_offset=args.bta_y_offset, tall_terrain=args.tall_terrain,
                        regen=tuple({"nether": -1, "end": 1}[d] for d in dict.fromkeys(args.regen)),
-                       depth=args.depth if args.depth in ("auto", "cut", "keep") else int(args.depth))
+                       depth=args.depth)
+        validate_target(t)                       # before anything is read
         t.selection = _selection(args)
         if args.trim:
             t.trim = _trim_options(args, "trim_")

@@ -16,7 +16,7 @@ from . import amulet_bridge as ab
 from .i18n import N_, tr
 from . import detect as det
 from .model import (NETHER, OVERWORLD, THE_END, UNKNOWN_BIOME, BiomeFiller, ConversionCancelled, ConversionError, NumericChunk,
-                    Progress, WorldSource)
+                    Progress, WorldSource, copy_tree)
 from .selection import Selection, apply_to_info, prune_bedrock, prune_java, resolve_links
 
 
@@ -549,11 +549,69 @@ def _make_writer(t: TargetSpec, out: str, progress: Progress, src: WorldSource, 
     return JavaNumericWriter(out, opt, progress)
 
 
+def validate_target(t: TargetSpec) -> None:
+    """Refuses, before anything is read, the options the target cannot honour (``ConversionError``)."""
+    if t.family == "lce":
+        from .lce.container import PLATFORMS
+        from .lce.world import platform_profiles, platform_sizes
+
+        if t.lce_platform not in PLATFORMS:
+            raise ConversionError(tr("Unknown LCE platform: {platform} (choose from {choices})", platform=t.lce_platform,
+                                     choices=", ".join(PLATFORMS)))
+        if t.lce_world_size and t.lce_world_size not in platform_sizes(t.lce_platform):
+            raise ConversionError(tr("{size} chunks is not a world size {platform} has: use {choices}",
+                                     size=t.lce_world_size, platform=t.lce_platform,
+                                     choices=", ".join(str(v) for v in platform_sizes(t.lce_platform))))
+        if t.lce_profile and t.lce_profile not in platform_profiles(t.lce_platform):
+            raise ConversionError(tr("{profile} is not a console version {platform} has: use {choices}",
+                                     profile=t.lce_profile, platform=t.lce_platform,
+                                     choices=", ".join(platform_profiles(t.lce_platform))))
+    elif t.family == "java" and t.java_version_limit:
+        lim = t.java_version_limit
+        if t.java_mode in OLD_LIMITS:
+            choices = OLD_LIMITS[t.java_mode]
+        elif t.java_mode == "numeric":
+            choices = _numeric_limits()
+        else:
+            return
+        if lim not in choices:
+            raise ConversionError(tr("--java-limit {limit} is not valid for the {format} format: use {choices}",
+                                     limit=lim, format=t.java_mode, choices=", ".join(choices)))
+
+
+def _numeric_limits() -> Tuple[str, ...]:
+    from .blocks import _V
+
+    return tuple(v for v in _V if v.startswith("1."))
+
+
+def check_output_folder(src_path: str, out_dir: str) -> None:
+    """The output folder cannot be inside the source world (the working copy would copy itself) nor the
+    source inside the output folder (``ConversionError``)."""
+    if os.path.isfile(out_dir):
+        raise ConversionError(tr("The output path is a file, not a folder: {path}", path=out_dir))
+    src = os.path.realpath(src_path)
+    if not os.path.isdir(src):
+        return
+    out = os.path.realpath(out_dir)
+    try:
+        common = os.path.commonpath([src, out])
+    except ValueError:                                   # another drive
+        return
+    if common == src:
+        raise ConversionError(tr("The output folder cannot be inside the source world: {path}", path=out_dir))
+    if common == out:
+        raise ConversionError(tr("The source world cannot be inside the output folder: {path}", path=src_path))
+
+
 def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[Progress] = None) -> ConversionResult:
     progress = progress or Progress()
     t0 = time.time()
+    validate_target(target)
+    check_output_folder(src_path, out_dir)
     if os.path.exists(out_dir) and os.listdir(out_dir):
         raise ConversionError(tr("The output folder is not empty: {path}", path=out_dir))
+    created_out = not os.path.exists(out_dir)
     parent = os.path.dirname(os.path.abspath(out_dir)) or "."
     os.makedirs(parent, exist_ok=True)
     tmp = tempfile.mkdtemp(prefix=".worldbridge_", dir=parent)
@@ -563,6 +621,8 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
         d = det.detect(src_path)
         if d is None:
             raise ConversionError(tr("World format not recognised. Choose the world folder or the save file."))
+        if d.kind != "archive":
+            check_output_folder(d.path, out_dir)      # the world's folder when the save file or level.dat was given
         if d.kind == "archive":
             folder = det.extract_archive(d.path, os.path.join(tmp, "archive"))
             d = det.detect(folder)
@@ -612,12 +672,12 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
         if (same_edition and target.blend and old_source
                 and tuple(target.version or ab.latest("bedrock" if target.family == "bedrock" else "java")) >= CAVES_CLIFFS):
             progress.stage(tr("Copying the world (Minecraft will upgrade it with its own blending)"), 0.05, 0.95)
-            shutil.copytree(d.path, out_dir, dirs_exist_ok=True)
+            copy_tree(d.path, out_dir, progress)
             if sel.active:
                 _edit_copy(d, out_dir, target, sel, progress)
             progress.log(tr("The world is pre-1.18: it is kept as it is; when it is opened, Minecraft runs its own "
                             "upgrade, blending terrain and biomes."))
-            progress.update(1.0, tr("Completed"))
+            progress.done()
             return ConversionResult(out_dir, 0, time.time() - t0, list(progress.warnings))
         # ---- Java 1.13+ -> the same or a newer Java: the game's own upgrade keeps every block, item
         # component, book, mob and setting, which no translation does as well (before 1.18 the game
@@ -625,12 +685,12 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
         if (same_edition and target.family == "java" and _java_upgrade_only(d, target)
                 and (not target.ring or tuple(target.version or ab.latest("java")) >= CAVES_CLIFFS)):
             progress.stage(tr("Copying the world (Minecraft will upgrade it when it is opened)"), 0.05, 0.95)
-            shutil.copytree(d.path, out_dir, dirs_exist_ok=True)
+            copy_tree(d.path, out_dir, progress)
             if sel.active:
                 _edit_copy(d, out_dir, target, sel, progress)
             progress.log(tr("The target version is the same as the world's or newer: the world is kept as it is, and "
                             "Minecraft upgrades it with its own upgrade when it is opened."))
-            progress.update(1.0, tr("Completed"))
+            progress.done()
             return ConversionResult(out_dir, 0, time.time() - t0, list(progress.warnings))
 
         # ---- direct Amulet -> Amulet (keeps every modern block)
@@ -943,8 +1003,16 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
                     tr("{n} Update Aquatic blocks (LCE) were replaced with 1.12 equivalents: choose a specific "
                        "(pre-converted) Java version to keep them identical.", n=n_modern)
                 )
-        progress.update(1.0, tr("Completed"))
+        progress.done()
         return ConversionResult(out_path, written, time.time() - t0, list(progress.warnings))
+    except BaseException:
+        # cancelled or failed: an output folder this run created and left empty goes away with it
+        if created_out and os.path.isdir(out_dir) and not os.listdir(out_dir):
+            try:
+                os.rmdir(out_dir)
+            except OSError:
+                pass
+        raise
     finally:
         for folder in [tmp] + extra_tmp:
             shutil.rmtree(folder, ignore_errors=True)
@@ -1007,7 +1075,7 @@ def _convert_bta(d: det.Detected, out_dir: str, target: TargetSpec, progress: Pr
     progress.stage(tr("Writing the final files"), 0.97, 0.99)
     progress.log(tr("Open the world with Minecraft Java 26.3: on first start the game upgrades it (it may ask for a "
                     "backup) and blends the new terrain with the converted chunks."))
-    progress.update(1.0, tr("Completed"))
+    progress.done()
     return ConversionResult(out_dir, n, time.time() - t0, list(progress.warnings))
 
 
@@ -1067,7 +1135,7 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
             progress.warn(tr(CUSTOMIZED))
     if platform == "java" and target.ring and tuple(target.version or (99,)) < CAVES_CLIFFS:
         _rings3d_after_amulet(out_dir, target, info, wver, tmp, progress)
-    progress.update(1.0, tr("Completed"))
+    progress.done()
     return ConversionResult(out_dir, n or 0)
 
 
