@@ -68,9 +68,10 @@ class TargetSpec:
     # 128 high targets (Alpha, Beta, Java 1.0 - 1.1, PE 0.x): ground above their ceiling is
     # "compress"ed (mountains lowered keeping their surface, see worldbridge.heightfit) or "cut"
     tall_terrain: str = "compress"
-    # Caves & Cliffs worlds into games whose world starts at y 0 (worldbridge.depthfit): "cut" (the
-    # underground goes), "keep" (the world moves up by 64) or the lowest y kept (a negative number)
-    depth: object = "cut"
+    # Caves & Cliffs worlds into games whose world starts at y 0 (worldbridge.depthfit): "auto" (flat or
+    # low worlds are kept, the others cut), "cut" (the underground goes), "keep" (the world moves up by
+    # 64) or the lowest y kept (a negative number)
+    depth: object = "auto"
     # dimensions not converted: the game generates them anew (NETHER, THE_END)
     regen: Tuple[int, ...] = ()
 
@@ -256,7 +257,9 @@ def open_source(d: det.Detected, progress: Progress, tmp: str, for_amulet_target
         progress.log(tr("Translating the blocks to the numeric Java 1.12.2 format with Amulet…"))
         ab.amulet_convert(d.path, hub, "java", (1, 12, 2), progress, selection, depth)
         world = JavaNumericWorld(hub, progress=progress)
-        attach_source_extras(world, d, progress)
+        # block entities and entities come again from the original world (extra.py), at their old
+        # height: they go where Amulet's pass moved their blocks (depthfit)
+        attach_source_extras(world, d, progress, depth)
         _depth_players(world.info, depth, progress)
         read = world.read_chunk
 
@@ -265,10 +268,6 @@ def open_source(d: det.Detected, progress: Progress, tmp: str, for_amulet_target
             c = read(dim, cx, cz)
             if c is not None:
                 c.sky_light = c.block_light = None
-                if depth is not None and depth.active and dim == OVERWORLD:
-                    # block entities and entities come again from the original world (extra.py), at
-                    # their old height: they go where Amulet's pass moved their blocks
-                    depth.move_numeric(c)
             return c
 
         world.read_chunk = read_chunk
@@ -311,6 +310,9 @@ class _Done:
     chunk: object = None
     obs: object = None                        # blocks the rings look at (edge chunks)
     unreadable: int = 0
+    emptied: int = 0                          # nothing left of the chunk in the target's height (depthfit)
+    cut_tiles: int = 0                        # block entities / entities cut with their blocks (depthfit)
+    cut_entities: int = 0
     empty_chests: int = 0
     rows: int = 0
     top: object = None                        # Relocation.top, when this chunk has the destination
@@ -325,8 +327,9 @@ class _Pipeline:
     applies it: the result is the one of the plain loop."""
 
     def __init__(self, src: WorldSource, progress: Progress, rows, fit, shift_here: int, biomes, move,
-                 writer, observe: Dict[int, set], drawn_tiles: bool, filler: bool = False):
+                 writer, observe: Dict[int, set], drawn_tiles: bool, filler: bool = False, depth=None):
         self.src, self.progress = src, progress
+        self.depth = depth
         # BiomeFiller in the main loop: only chunks with every biome known are encoded here (the filler
         # reads them back from the writer when it needs them), the others go to it as they are
         self.filler = filler
@@ -350,8 +353,17 @@ class _Pipeline:
             self.rows.fix(dim, c)                   # rows of double chests: every pair drawn
             out.rows, self.rows.changed = self.rows.changed - before, before
         if c is None:
-            out.unreadable = 1
+            # a chunk the depth cut left without blocks is not a damaged one (None: it holds nothing)
+            had = self.depth.emptied.get((cx, cz)) if self.depth is not None and dim == OVERWORLD else None
+            if had is None:
+                out.unreadable = 1
+            elif had:
+                out.emptied = 1
+                emptied_extras = getattr(self.src, "emptied_extras", None)      # lost with their chunk's blocks
+                if emptied_extras is not None:
+                    out.cut_tiles, out.cut_entities = emptied_extras(dim, cx, cz)
             return out
+        out.cut_tiles, out.cut_entities = c.cut_extras
         if self.fit is not None and dim == OVERWORLD:
             c = self.fit.apply(c)
         if self.shift_here:
@@ -632,7 +644,7 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
         progress.stage(tr("Reading the source world"), 0.03, 0.35 if d.kind in AMULET_KINDS else 0.05)
         from . import depthfit
 
-        depth = depthfit.plan(target, d.kind in AMULET_KINDS and not old_source)
+        depth = depthfit.plan(target, d.kind in AMULET_KINDS and not old_source, d.path, progress)
         src_sel = sel
         if d.kind in AMULET_KINDS and target.family in ("lce", "pe_old"):
             # a finite map: only the part of the world that reaches it goes through Amulet
@@ -773,7 +785,7 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
             else:
                 fit = None
             progress.stage(tr("Converting {n} chunks", n=total), mid, end)
-        written = unreadable = empty_chests = 0
+        written = unreadable = emptied = cut_tiles = cut_entities = empty_chests = 0
         rows = None
         if _pairs_chests_itself(target):
             from .chestfix import ChestRows
@@ -783,7 +795,7 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
         if ring is not None:
             observe.setdefault(OVERWORLD, set()).update(ring.edge_chunks)
         pipe = _Pipeline(src, progress, rows, fit, shift_here, sel.biomes if not amulet_target else None,
-                         move, writer, observe, not amulet_target, filler is not None)
+                         move, writer, observe, not amulet_target, filler is not None, depth)
         written_ow = set()
         track_ow = ring is not None and plan.kind == "fill"      # only the fill needs them (finite maps)
         cur_dim = None
@@ -797,6 +809,9 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
                 cur_dim = res.dim
             pipe.merge(res)
             unreadable += res.unreadable
+            emptied += res.emptied
+            cut_tiles += res.cut_tiles
+            cut_entities += res.cut_entities
             empty_chests += res.empty_chests
             if res.obs is not None:
                 if ring is not None:
@@ -864,6 +879,8 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
         if empty_chests:
             progress.warn(tr("{n} chests had no contents (block entity) in the source world or in the translation: "
                              "they were written empty, so at least they are visible.", n=empty_chests))
+        _warn_emptied(progress, emptied)
+        _warn_cut_extras(progress, cut_tiles, cut_entities)
         if unreadable:
             progress.warn(tr("{n} chunks of the source world were unreadable (damaged or truncated) and were skipped: "
                              "Minecraft will generate them again.", n=unreadable))
@@ -1011,12 +1028,14 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
     progress.stage(tr("Converting with Amulet to {target}", target=target.describe()), 0.03, 0.75 if ring_here else 0.9)
     from . import depthfit
 
-    depth = depthfit.plan(target, not old_source)
+    depth = depthfit.plan(target, not old_source, d.path, progress)
     from .relocate import Relocation
 
     move = Relocation(sel)
     n = ab.amulet_convert(d.path, out_dir, platform, wver, progress, sel, depth, move if move.active else None)
     _depth_players(info, depth, progress)
+    if depth is not None:
+        _warn_emptied(progress, sum(1 for had in depth.emptied.values() if had))
     move.apply_info(info, progress)
     if move.active:
         sel = move.moved_selection()
@@ -1025,7 +1044,9 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
         ab.write_bedrock_level_dat(out_dir, info, wver)
     else:
         ab.write_java_level_dat(out_dir, info, target.version)
-    direct_extras(d, out_dir, target, info, progress, wver, move if move.active else None)
+    direct_extras(d, out_dir, target, info, progress, wver, move if move.active else None, depth)
+    if depth is not None:
+        _warn_cut_extras(progress, depth.lost_tiles, depth.lost_entities)
     if sel.filters:  # entities/block entities are only attached to written chunks, but be sure
         (prune_bedrock if platform == "bedrock" else prune_java)(out_dir, sel)
     # the ring comes last: the selection would remove it, and the source's entities and block
@@ -1040,6 +1061,24 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
         _rings3d_after_amulet(out_dir, target, info, wver, tmp, progress)
     progress.update(1.0, tr("Completed"))
     return ConversionResult(out_dir, n or 0)
+
+
+def _warn_emptied(progress: Progress, n: int) -> None:
+    """Chunks of a Caves & Cliffs world that have nothing left in the target's height (0 - 255)."""
+    if n:
+        progress.warn(tr("{n} chunks were left empty by the height limit: everything in them lies outside the target "
+                         "game's world (y 0 to 255), mostly below y 0. To keep what lies below y 0 use --depth keep "
+                         "(the world rises by 64 blocks) or a lower Y, e.g. --depth -32 (in the app: Underground of "
+                         "1.18+ worlds).", n=n))
+
+
+def _warn_cut_extras(progress: Progress, n_tiles: int, n_ents: int) -> None:
+    """Block entities / entities of a Caves & Cliffs world whose blocks did not fit the target's
+    0 - 255 (underground or mountain tops cut, rock removed by the compression): lost with them."""
+    if n_tiles or n_ents:
+        progress.warn(tr("Height limit: {tiles} block entities (chests, signs, spawners…) and {entities} entities stood "
+                         "on blocks that were cut (under the kept underground, above y 255 or inside the rock removed "
+                         "from the mountains) and were lost with them.", tiles=n_tiles, entities=n_ents))
 
 
 def _depth_players(info, depth, progress: Progress) -> None:

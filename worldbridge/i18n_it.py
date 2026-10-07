@@ -73,8 +73,8 @@ _SECTIONS = {
             'niente anello di raccordo di WorldBridge (Java Alpha 1.2 – 1.17, neoLegacy, Nether ed End) e niente riempimento delle mappe finite (PE 0.x, LCE 54 / 64 chunk)',
         '128-block-high worlds (Alpha, Beta, Java 1.0 – 1.1, PE 0.x): taller mountains are compressed (default: the surface comes down whole) or cut at y 127':
             'mondi alti 128 blocchi (Alpha, Beta, Java 1.0 – 1.1, PE 0.x): le montagne più alte vengono compresse (predefinito: la superficie scende intera) oppure tagliate a y 127',
-        '1.18+ worlds to games that start at y 0: cut = the underground below y 0 is dropped (default), keep = everything kept (the world rises by 64), negative Y = kept from that y':
-            'mondi 1.18+ verso giochi che partono da y 0: cut = il sottosuolo sotto y 0 sparisce (predefinito), keep = tutto tenuto (il mondo sale di 64), Y negativo = tenuto da quella y',
+        '1.18+ worlds to games that start at y 0: auto = flat or low worlds keep their underground, the others are cut (default); cut = the underground below y 0 is dropped, keep = everything kept (the world rises by 64), negative Y = kept from that y':
+            'mondi 1.18+ verso giochi che partono da y 0: auto = i mondi piatti o bassi tengono il sottosuolo, gli altri vengono tagliati (predefinito); cut = il sottosuolo sotto y 0 sparisce, keep = tutto tenuto (il mondo sale di 64), Y negativo = tenuto da quella y',
         'do not convert the Nether / the End: the game generates them anew when first entered (repeatable)':
             "non converte il Nether / l'End: il gioco li genera da capo al primo ingresso (ripetibile)",
         'convert only the chunks of an MCA Selector CSV file (DIM = overworld, nether, end; repeatable). Dimensions without a file are left out':
@@ -217,6 +217,16 @@ _SECTIONS = {
             '{n} casse non avevano il loro contenuto (blocco-entità) nel mondo di origine o nella traduzione: sono state scritte vuote, così almeno si vedono.',
         '{n} chunks of the source world were unreadable (damaged or truncated) and were skipped: Minecraft will generate them again.':
             '{n} chunk del mondo di origine erano illeggibili (danneggiati o troncati) e sono stati saltati: Minecraft li rigenererà.',
+        '{n} chunks were left empty by the height limit: everything in them lies outside the target game\'s world (y 0 to 255), mostly below y 0. To keep what lies below y 0 use --depth keep (the world rises by 64 blocks) or a lower Y, e.g. --depth -32 (in the app: Underground of 1.18+ worlds).':
+            '{n} chunk sono rimasti vuoti per il limite di altezza: tutto quello che contengono sta fuori dal mondo del gioco di destinazione (da y 0 a 255), per lo più sotto y 0. Per tenere quello che sta sotto y 0 usa --depth keep (il mondo sale di 64 blocchi) o una Y più bassa, ad es. --depth -32 (nell\'app: Sottosuolo dei mondi 1.18+).',
+        'Height limit: {tiles} block entities (chests, signs, spawners…) and {entities} entities stood on blocks that were cut (under the kept underground, above y 255 or inside the rock removed from the mountains) and were lost with them.':
+            'Limite di altezza: {tiles} blocchi-entità (casse, cartelli, spawner…) e {entities} entità stavano su blocchi tagliati (sotto il sottosuolo tenuto, sopra y 255 o dentro la roccia tolta dalle montagne) e sono andati persi con loro.',
+        'Underground (automatic): no blocks found in the sampled chunks, what lies below y 0 is cut (--depth keep keeps it).':
+            'Sottosuolo (automatico): nessun blocco trovato nei chunk campionati, quello che sta sotto y 0 viene tagliato (--depth keep lo tiene).',
+        'Underground (automatic): the surface of this world is mostly below y 0 (median y {y}): the whole underground is kept and the world rises by 64 blocks.':
+            'Sottosuolo (automatico): la superficie di questo mondo sta per lo più sotto y 0 (mediana y {y}): tutto il sottosuolo viene tenuto e il mondo sale di 64 blocchi.',
+        'Underground (automatic): the surface of this world is above y 0 (median y {y}): what lies below y 0 is cut (--depth keep keeps it).':
+            'Sottosuolo (automatico): la superficie di questo mondo sta sopra y 0 (mediana y {y}): quello che sta sotto y 0 viene tagliato (--depth keep lo tiene).',
         'Mountain compression: {n} block entities (chests, spawners…) were inside the removed rock and were lost.':
             'Compressione delle montagne: {n} blocchi-entità (casse, spawner…) erano dentro la roccia tolta e sono andati persi.',
         'Writing the final files':
@@ -1129,8 +1139,8 @@ _SECTIONS = {
             "Per mondi nati prima della 1.18 (LCE, vecchie Java / Bedrock, Pocket Edition) convertiti in Java o Bedrock 1.18+: i chunk vengono scritti come chunk pre-1.18, così Minecraft all'apertura li fonde col terreno nuovo (altezze e biomi) e genera la parte sotto y 0.\nTogliendo la spunta i chunk sono scritti nel formato nuovo: niente fusione, niente terreno sotto y 0.",
         "For the games that do not blend (Java Alpha 1.2 – 1.17, LCE neoLegacy): WorldBridge writes around the converted world a ring of terrain made by the game's generator (same seed), which passes smoothly from the converted edge to that version's terrain; in the Nether and the End too.\nPocket Edition 0.x and LCE with a 54 / 64-chunk map: the world is finite and is written whole, with natural terrain joining the converted world around it.":
             "Per i giochi che non fanno blending (Java Alpha 1.2 – 1.17, LCE neoLegacy): WorldBridge scrive intorno al mondo convertito un anello di terreno generato col generatore del gioco (stesso seed), che passa dolcemente dal bordo convertito al terreno di quella versione; anche nel Nether e nell'End.\nPocket Edition 0.x e LCE con mappa da 54 / 64 chunk: il mondo è finito e viene scritto per intero, con terreno naturale raccordato intorno al mondo convertito.",
-        '1.18+ worlds (y −64 to 319) to games whose world starts at y 0 (Java 1.2 – 1.17, LCE, Bedrock up to 1.17, and older versions).\nCut: what lies below y 0 disappears, the rest stays at its height.\nKeep everything: nothing disappears below, the world rises by 64 blocks (useful if you built below y 0); the mountains that no longer fit are compressed or cut as you choose below.\nFrom a chosen y: below that y it disappears, the rest rises to start from y 0.':
-            'Mondi 1.18+ (da y −64 a 319) verso giochi il cui mondo parte da y 0 (Java 1.2 – 1.17, LCE, Bedrock fino alla 1.17, e le versioni più vecchie).\nTaglia: quello che sta sotto y 0 sparisce, il resto resta alla sua altezza.\nMantieni tutto: niente sparisce sotto, il mondo sale di 64 blocchi (utile se hai costruito sotto y 0); le montagne che non entrano più vengono compresse o tagliate come scegli qui sotto.\nDa una y scelta: sotto quella y sparisce, il resto sale fino a partire da y 0.',
+        '1.18+ worlds (y −64 to 319) to games whose world starts at y 0 (Java 1.2 – 1.17, LCE, Bedrock up to 1.17, and older versions).\nAutomatic: a flat or low world (its surface mostly below y 0, like superflat) keeps everything, a normal one is cut.\nCut: what lies below y 0 disappears, the rest stays at its height.\nKeep everything: nothing disappears below, the world rises by 64 blocks (useful if you built below y 0); the mountains that no longer fit are compressed or cut as you choose below.\nFrom a chosen y: below that y it disappears, the rest rises to start from y 0.':
+            'Mondi 1.18+ (da y −64 a 319) verso giochi il cui mondo parte da y 0 (Java 1.2 – 1.17, LCE, Bedrock fino alla 1.17, e le versioni più vecchie).\nAutomatico: un mondo piatto o basso (la superficie quasi tutta sotto y 0, come il superpiatto) tiene tutto, uno normale viene tagliato.\nTaglia: quello che sta sotto y 0 sparisce, il resto resta alla sua altezza.\nMantieni tutto: niente sparisce sotto, il mondo sale di 64 blocchi (utile se hai costruito sotto y 0); le montagne che non entrano più vengono compresse o tagliate come scegli qui sotto.\nDa una y scelta: sotto quella y sparisce, il resto sale fino a partire da y 0.',
         "When the terrain does not fit the target game's height: the mountains of 1.18+ worlds (up to y 319, and even more if you keep the underground) to the games 256 blocks high, and to those 128 blocks high (Alpha, Beta, Java 1.0 – 1.1, Pocket Edition 0.x).\nCompress: nothing changes at the bottom; higher up every column loses a band of rock under the surface, so mountains stay mountains (lower) with grass, snow, trees and buildings intact. Bases dug into the mountain come down whole.\nCut: everything above the limit disappears and flat stone plateaus remain.":
             "Quando il terreno non entra nell'altezza del gioco di destinazione: le montagne dei mondi 1.18+ (fino a y 319, e ancora di più se tieni il sottosuolo) verso i giochi alti 256 blocchi, e verso quelli alti 128 (Alpha, Beta, Java 1.0 – 1.1, Pocket Edition 0.x).\nComprimi: in basso non cambia nulla; più su ogni colonna perde una fascia di roccia sotto la superficie, così le montagne restano montagne (più basse) con erba, neve, alberi e costruzioni intatti. Le basi scavate dentro la montagna scendono intere.\nTaglia: tutto quello che sta sopra il limite sparisce e restano tavolati di pietra piatti.",
         'The game loads the main player from players/<XUID>.dat: the XUID is a number the game gives your user, not the nickname. With “From my world…” you take it from a world you have already played.':
@@ -1211,8 +1221,10 @@ _SECTIONS = {
             'Intorno al mondo convertito, terreno generato come nel gioco di destinazione',
         'Terrain border:':
             'Raccordo col terreno:',
-        'Cut below y 0 (default)':
-            'Taglia sotto y 0 (predefinito)',
+        'Automatic (keep the underground of flat or low worlds)':
+            'Automatico (tiene il sottosuolo dei mondi piatti o bassi)',
+        'Cut below y 0':
+            'Taglia sotto y 0',
         'Keep everything (the world rises by 64 blocks)':
             'Mantieni tutto (il mondo sale di 64 blocchi)',
         'Keep from a chosen y':

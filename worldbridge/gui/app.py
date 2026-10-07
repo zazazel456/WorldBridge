@@ -52,6 +52,8 @@ HELP_RING = N_("For the games that do not blend (Java Alpha 1.2 – 1.17, LCE ne
                "with natural terrain joining the converted world around it.")
 HELP_DEPTH = N_("1.18+ worlds (y −64 to 319) to games whose world starts at y 0 (Java 1.2 – 1.17, LCE, Bedrock up "
                 "to 1.17, and older versions).\n"
+                "Automatic: a flat or low world (its surface mostly below y 0, like superflat) keeps everything, "
+                "a normal one is cut.\n"
                 "Cut: what lies below y 0 disappears, the rest stays at its height.\n"
                 "Keep everything: nothing disappears below, the world rises by 64 blocks (useful if you built "
                 "below y 0); the mountains that no longer fit are compressed or cut as you choose below.\n"
@@ -477,7 +479,8 @@ class MainWindow(QMainWindow):
         self.borders = borders
         f.addRow(tr("Terrain border:"), borders)
         self.depth = QComboBox()
-        self.depth.addItem(tr("Cut below y 0 (default)"), "cut")
+        self.depth.addItem(tr("Automatic (keep the underground of flat or low worlds)"), "auto")
+        self.depth.addItem(tr("Cut below y 0"), "cut")
         self.depth.addItem(tr("Keep everything (the world rises by 64 blocks)"), "keep")
         self.depth.addItem(tr("Keep from a chosen y"), "custom")
         self.depth.setToolTip(tr("What happens to what lies below y 0 in 1.18+ worlds"))

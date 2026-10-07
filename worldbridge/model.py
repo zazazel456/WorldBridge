@@ -111,6 +111,8 @@ class NumericChunk:
     # LCE pass-through (kept when writing LCE again so LCE -> LCE is lossless)
     lce_terrain_flags: Optional[int] = None
     lce_heightmap: Optional[np.ndarray] = None
+    # block entities and entities of the source dropped with their blocks (worldbridge.depthfit)
+    cut_extras: Tuple[int, int] = (0, 0)
 
     def __post_init__(self):
         if self.blocks is None:

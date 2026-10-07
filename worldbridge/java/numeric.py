@@ -52,11 +52,17 @@ def detect_java_numeric(path: str) -> Optional[str]:
     """Return 'anvil' / 'mcregion' / 'alpha' when ``path`` is a numeric Java world."""
     if not os.path.isfile(os.path.join(path, "level.dat")):
         return None
-    reg = os.path.join(path, "region")
-    if os.path.isdir(reg):
+    # the Overworld's chunks, else the Nether's or the End's: a world whose Overworld was left out (all
+    # of it cut by the depth, or not converted) has only DIM-1 / DIM1
+    for sub in ("region", os.path.join("DIM-1", "region"), os.path.join("DIM1", "region")):
+        reg = os.path.join(path, sub)
+        if not os.path.isdir(reg):
+            continue
         files = os.listdir(reg)
         mca = [f for f in files if f.endswith(".mca")]
         mcr = [f for f in files if f.endswith(".mcr")]
+        if not (mca or mcr):
+            continue
         if mca:
             # numeric only if chunks carry no block palette (<1.13): sniff real chunks
             verdict = _sniff_anvil(reg, mca)
@@ -73,10 +79,11 @@ def detect_java_numeric(path: str) -> Optional[str]:
             return "anvil"
         if mcr:
             return "mcregion"
-    for entry in os.listdir(path):
-        full = os.path.join(path, entry)
-        if os.path.isdir(full) and re.fullmatch(r"-?[0-9a-z]{1,2}", entry):
-            return "alpha"
+    for base in (path, os.path.join(path, "DIM-1"), os.path.join(path, "DIM1")):
+        for entry in os.listdir(base) if os.path.isdir(base) else ():
+            full = os.path.join(base, entry)
+            if os.path.isdir(full) and re.fullmatch(r"-?[0-9a-z]{1,2}", entry):
+                return "alpha"
     return None
 
 

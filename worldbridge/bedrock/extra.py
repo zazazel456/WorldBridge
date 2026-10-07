@@ -335,6 +335,8 @@ class BedrockExtras:
         return out
 
     def chunk_extras(self, dim: int, cx: int, cz: int):
+        """At their height in the source world: extra._wrap_reader moves them with the blocks (depthfit)
+        and drops those that end out of 0 - 255."""
         prefix = chunk_prefix(cx, cz, dim)
         try:
             raw = _get(self.db, prefix + bytes([BE_TAG]))
@@ -343,13 +345,12 @@ class BedrockExtras:
             if raw:
                 raw_tiles = read_nbt_list(raw)
                 canon = [c for c in (tiles.from_bedrock(t) for t in raw_tiles) if c is not None]
-                canon = [c for c in canon if 0 <= c["pos"][1] < 256]
                 tl = tiles.write_list(canon, "legacy")
                 frames = [t for t in raw_tiles if is_frame_tile(t)]
             el = [e for e in (self._frame(prefix, t) for t in frames) if e is not None]
             for e in self._actors(prefix):
                 c = ent.from_bedrock(e)
-                if c is not None and 0 <= c["pos"][1] < 256:
+                if c is not None:
                     le = ent.to_legacy(c)
                     if le is not None:
                         el.append(le)
@@ -533,7 +534,7 @@ def inject_from_hub(hub_dir: str, out_dir: str, version, info: WorldInfo, progre
     _log_injector(inj, progress)
 
 
-def inject_from_java_modern(src: str, out_dir: str, version, info: WorldInfo, progress: Progress, move=None):
+def inject_from_java_modern(src: str, out_dir: str, version, info: WorldInfo, progress: Progress, move=None, depth=None):
     from ..java.modern import iter_modern_extras
 
     inj = BedrockInjector(out_dir, version, progress)
@@ -541,6 +542,8 @@ def inject_from_java_modern(src: str, out_dir: str, version, info: WorldInfo, pr
         for dim, cx, cz, tiles_raw, ents_raw in iter_modern_extras(src, progress, with_states=True):
             tl = [x for x in (t if isinstance(t, dict) else tiles.from_java_modern(t) for t in tiles_raw) if x is not None]
             el = ent.read_list(ents_raw, "java")
+            if depth is not None and dim == OVERWORLD:
+                tl, el = depth.move_canon(cx, cz, tl, el)       # with their blocks (worldbridge.depthfit)
             if tl or el:
                 if move is not None:
                     cx, cz = move.canon_chunk(dim, cx, cz, tl, el)
@@ -554,23 +557,125 @@ def inject_from_java_modern(src: str, out_dir: str, version, info: WorldInfo, pr
     _log_injector(inj, progress)
 
 
-def copy_bedrock_extras(src: str, dst: str, progress: Progress):
+def _dump_list(tags: List[nbt.CompoundTag]) -> bytes:
+    return b"".join(nbt.dump(t, "", little_endian=True, escape=True) for t in tags)
+
+
+class _DepthMoved:
+    """The block entities and actors of the Overworld of a Caves & Cliffs world, moved with their
+    blocks (worldbridge.depthfit) for the raw copy of ``copy_bedrock_extras``; the ones whose blocks
+    were cut are dropped and counted in ``depth.lost``."""
+
+    def __init__(self, depth, sdb):
+        self.depth = depth
+        self.lost: Dict[Tuple[int, int], List[int]] = defaultdict(lambda: [0, 0])
+        self.digp: Dict[bytes, bytes] = {}                  # chunk's actor list -> the one that stays
+        self.actors: Dict[bytes, Optional[bytes]] = {}      # actor record -> its new bytes (None: dropped)
+        for key, value in sdb.iterate(b"digp", b"digp\xff"):
+            k = bytes(key)
+            if len(k) == 12 and k.startswith(b"digp"):      # the Overworld: no dimension in the key
+                cx, cz = struct.unpack_from("<ii", k, 4)
+                keep = b""
+                value = bytes(value)
+                for i in range(0, len(value) // 8 * 8, 8):
+                    akey = b"actorprefix" + value[i:i + 8]
+                    raw = _get(sdb, akey)
+                    tags = read_nbt_list(raw) if raw else []
+                    if tags and self._actor(cx, cz, tags[0]):
+                        self.actors[akey] = _dump_list(tags[:1])
+                        keep += value[i:i + 8]
+                    else:
+                        self.actors[akey] = None
+                self.digp[k] = keep
+
+    def _actor(self, cx: int, cz: int, e: nbt.CompoundTag) -> bool:
+        pos = nbt.get_tag(e, "Pos")
+        if pos is None or len(pos) != 3:
+            return True
+        x, y, z = (float(v.py_data) for v in pos)
+        ny = self.depth.entity_y(x, y, z)
+        if ny is None:
+            self.lost[(cx, cz)][1] += 1
+            return False
+        e["Pos"] = nbt.ListTag([nbt.FloatTag(x), nbt.FloatTag(ny), nbt.FloatTag(z)], 5)
+        return True
+
+    def chunk_list(self, k: bytes, value: bytes) -> bytes:
+        """A chunk's block entities (key tag 0x31) or legacy actors (0x32) of the Overworld."""
+        cx, cz = struct.unpack_from("<ii", k, 0)
+        out = []
+        for t in read_nbt_list(value):
+            if k[-1] == ENTITY_TAG:
+                if self._actor(cx, cz, t):
+                    out.append(t)
+                continue
+            try:
+                x, y, z = (int(nbt.get(t, c)) for c in ("x", "y", "z"))
+            except (TypeError, ValueError):
+                out.append(t)
+                continue
+            ny = self.depth.block_y(x, y, z)
+            if ny is None:
+                self.lost[(cx, cz)][0] += 1
+                continue
+            t["y"] = nbt.IntTag(ny)
+            out.append(t)
+        return _dump_list(out)
+
+    def player(self, value: bytes) -> bytes:
+        """A player record (``~local_player``, ``player_server_*``): in the Overworld it stands on
+        the moved ground."""
+        try:
+            root = nbt.load(value, little_endian=True, compressed=False).tag
+            pos = nbt.get_tag(root, "Pos")
+            if pos is None or len(pos) != 3 or int(nbt.get(root, "DimensionId", 0) or 0) != 0:
+                return value
+            x, y, z = (float(v.py_data) for v in pos)
+            root["Pos"] = nbt.ListTag([nbt.FloatTag(x), nbt.FloatTag(self.depth.point(x, y, z)), nbt.FloatTag(z)], 5)
+            return nbt.dump(root, "", little_endian=True)
+        except Exception:  # noqa: BLE001
+            return value
+
+    def done(self) -> None:
+        for (cx, cz), (t, e) in self.lost.items():
+            self.depth.count_lost(cx, cz, t, e)
+
+
+def copy_bedrock_extras(src: str, dst: str, progress: Progress, depth=None):
     """Bedrock -> Bedrock (other version): keep actors, block entities, players,
-    maps and every other non-terrain record exactly as they were."""
+    maps and every other non-terrain record exactly as they were.  ``depth``: the
+    depthfit.DepthFit that moved the blocks of the Overworld: they follow them."""
     sdb = _db(src)
     ddb = _db(dst)
     n = 0
     try:
+        moved = _DepthMoved(depth, sdb) if depth is not None and depth.used else None
         for key, value in sdb.iterate():
             k = bytes(key)
+            v = bytes(value)
             if len(k) in (9, 13) and k[-1] in (BE_TAG, ENTITY_TAG):
-                pass
+                if moved is not None and len(k) == 9:
+                    v = moved.chunk_list(k, v)
+                    if not v:
+                        continue                              # everything in it stood on cut blocks
             elif len(k) in (9, 10, 13, 14) and (k[8 if len(k) in (9, 10) else 12] in range(0x2B, 0x3D) or k[8 if len(k) in (9, 10) else 12] == 0x76):
                 continue  # terrain / version records written by Amulet
             elif len(k) in (10, 14) and k[-2] == 0x2F:
                 continue  # sub chunks
-            ddb.put(k, bytes(value))
+            elif moved is not None and (k == b"~local_player" or k.startswith(b"player_server_")):
+                v = moved.player(v)
+            elif moved is not None and k in moved.digp:
+                v = moved.digp[k]
+                if not v:
+                    continue
+            elif moved is not None and moved.actors.get(k, b"") is None:
+                continue  # an actor whose blocks were cut
+            elif moved is not None and k in moved.actors:
+                v = moved.actors[k]
+            ddb.put(k, v)
             n += 1
+        if moved is not None:
+            moved.done()
         from . import terrain
 
         terrain.fix_height_maps(ddb)  # Amulet rewrote the terrain with empty height maps
