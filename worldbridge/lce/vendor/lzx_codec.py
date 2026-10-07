@@ -979,10 +979,17 @@ def _lzx_real_frames(data):
         prev_byte, prev_out = edge_byte, edge_out
     return frames
 
-def lzx_compress_frames(data):
+# The real encoder writes ONE verbatim block whose size field has 24 bits: it can never handle more.
+REAL_LZX_MAX = (1 << 24) - 1
+
+def lzx_compress_frames(data, max_real=REAL_LZX_MAX):
     """(raw_size, frame_bytes) per 32 KB frame. Uses the real verbatim-block
     compressor, self-verifies by decoding, and falls back to uncompressed
-    blocks if anything is off — so the output is always valid."""
+    blocks if anything is off — so the output is always valid.  Data larger than
+    ``max_real`` (and always larger than REAL_LZX_MAX) skips the pure-Python
+    encoder and goes straight to uncompressed blocks."""
+    if len(data) > min(max_real, REAL_LZX_MAX):
+        return _lzx_uncompressed_frames(data)
     try:
         frames = _lzx_real_frames(data)
         stream = b"".join(fb for _r, fb in frames)
@@ -1017,11 +1024,11 @@ def rle_encode(data):
         i += run
     return bytes(out)
 
-def xmem_compress(blob):
-    """Bytes following the 8-byte container header: per-frame chunk framing
+def xmem_compress(blob, max_real=REAL_LZX_MAX):
+    """Bytes following the container header: per-frame chunk framing
     (short u16 header for full frames, 0xFF long header for the final one)."""
     out = bytearray()
-    for raw, fb in lzx_compress_frames(blob):
+    for raw, fb in lzx_compress_frames(blob, max_real):
         if raw == FRAME:
             out += struct.pack(">H", len(fb)) + fb
         else:

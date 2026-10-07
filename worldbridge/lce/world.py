@@ -23,6 +23,9 @@ from ..i18n import N_, tr
 _REGION_RE = re.compile(r"^(DIM-1|DIM1/)?r\.(-?\d+)\.(-?\d+)\.mcr$")
 # PS3 / Vita / PS4 player files: P_<12 hex>_<8 digits>_<online id>.dat (FileHeader::getValidPlayerDatFiles)
 _SONY_PLAYER = re.compile(r"^[PN]_[0-9A-Fa-f]{12}_\d{8}.*\.dat$")
+# the oldest Xbox 360 saves (save version 1, before TU1) keep the player at the top of the listing:
+# players_<XUID>.dat instead of players/<XUID>.dat
+_FLAT_PLAYER = re.compile(r"^players_(\d{1,20})\.dat$")
 SONY = ("ps3", "vita", "ps4")
 _DIM_PREFIX = {OVERWORLD: "", NETHER: "DIM-1", THE_END: "DIM1/"}
 _SPLIT_DIM = {0: OVERWORLD, 1: NETHER, 2: THE_END}
@@ -104,6 +107,9 @@ def save_players(path: str) -> Dict[str, str]:
     c = SaveContainer.load(path)
     out: Dict[str, str] = {}
     for key, blob in sorted(c.files.items()):
+        flat = _FLAT_PLAYER.match(key)
+        if flat:
+            key = f"players/{flat.group(1)}.dat"
         if not (key.startswith("players/") and key.endswith(".dat")):
             continue
         fid = key[len("players/"):-4]
@@ -166,6 +172,9 @@ class LCEWorld(WorldSource):
             data["LevelName"] = nbt.StringTag(c.display_name)
         info.level = data
         for name, blob in c.files.items():
+            flat = _FLAT_PLAYER.match(name)
+            if flat:
+                name = f"players/{flat.group(1)}.dat"
             base = name.rsplit("/", 1)[-1]
             if name.endswith(".dat") and (name.startswith("players/") or _SONY_PLAYER.match(base)):
                 try:
