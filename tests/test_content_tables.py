@@ -195,6 +195,19 @@ def test_bedrock_block_items_carry_their_variant_in_damage():
     assert _from_bedrock("wool", 14) == "red_wool"
 
 
+def test_java_stone_stairs_are_bedrocks_normal_stone_stairs():
+    for v in ((1, 12, 0), (1, 16, 220), (1, 21, 60)):
+        assert _bedrock("stone_stairs", v)[0] == "normal_stone_stairs", v
+        assert _bedrock("cobblestone_stairs", v)[0] == "stone_stairs", v
+        t = items.to_bedrock(Item(name="stone_stairs", count=1, damage=0), v)
+        assert t["Block"]["name"].py_data == "minecraft:normal_stone_stairs"
+        # and back, with and without the Block compound
+        assert items.from_bedrock(t)["name"] == "stone_stairs"
+        t.pop("Block")
+        assert items.from_bedrock(t)["name"] == "stone_stairs"
+    assert _from_bedrock("stone_stairs") == "cobblestone_stairs"
+
+
 # ------------------------------------------------------------------ block entities of Java 1.14+ / Bedrock
 JAVA_NEW, BEDROCK_NEW = 4189, (1, 21, 60)          # 1.21.4 / Bedrock 1.21.60
 JAVA_OLD, BEDROCK_OLD = 3700, (1, 20, 40)          # 1.20.4 (items with tag) / Bedrock 1.20.40

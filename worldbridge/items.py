@@ -90,7 +90,8 @@ JAVA_TO_BEDROCK_NAME = {"nether_brick": "netherbrick", "oak_sign": "oak_sign", "
                         "tipped_arrow": "arrow", "enchanted_golden_apple": "enchanted_golden_apple",
                         "snowball": "snowball", "turtle_scute": "turtle_scute", "scute": "turtle_scute",
                         "oak_door": "wooden_door", "item_frame": "frame", "glow_item_frame": "glow_frame",
-                        "map": "empty_map", "zombified_piglin_spawn_egg": "zombie_pigman_spawn_egg"}
+                        "map": "empty_map", "zombified_piglin_spawn_egg": "zombie_pigman_spawn_egg",
+                        "stone_stairs": "normal_stone_stairs"}   # Bedrock's own stone_stairs are the cobblestone ones
 BEDROCK_TO_JAVA_NAME = {"netherbrick": "nether_brick", "appleenchanted": "enchanted_golden_apple",
                         "appleEnchanted": "enchanted_golden_apple", "clownfish": "tropical_fish",
                         "cooked_fish": "cooked_cod", "fish": "cod", "reeds": "sugar_cane", "speckled_melon":
@@ -100,7 +101,8 @@ BEDROCK_TO_JAVA_NAME = {"netherbrick": "nether_brick", "appleenchanted": "enchan
                         "popped_chorus_fruit", "map": "filled_map", "emptymap": "map", "empty_map": "map",
                         "muttoncooked": "cooked_mutton", "muttonraw": "mutton", "short_grass": "grass",
                         "frame": "item_frame", "glow_frame": "glow_item_frame",
-                        "zombie_pigman_spawn_egg": "zombified_piglin_spawn_egg"}
+                        "zombie_pigman_spawn_egg": "zombified_piglin_spawn_egg",
+                        "normal_stone_stairs": "stone_stairs"}
 # 1.11 entity ids (spawn eggs of Java 1.11 - 1.12) -> 1.13+ names
 _ENTITY_113 = {"vindication_illager": "vindicator", "evocation_illager": "evoker", "illusion_illager": "illusioner",
                "zombie_pigman": "zombified_piglin", "villager_golem": "iron_golem", "snowman": "snow_golem"}
@@ -739,6 +741,9 @@ def to_java_modern(it: Item, data_version: int) -> nbt.CompoundTag:
 # ------------------------------------------------------------------ Bedrock
 @functools.lru_cache(maxsize=None)
 def _bedrock_block_for_flat(name: str, version: Tuple[int, ...]) -> Optional[Tuple[str, dict]]:
+    if name == "stone_stairs":  # the numeric table has no plain stone stairs (67 is cobblestone): Bedrock's are normal_
+        b = _bedrock_block_for_flat("cobblestone_stairs", version)
+        return None if b is None else ("minecraft:normal_stone_stairs", b[1])
     leg = flat_to_legacy(name)
     if leg is None or leg[0] >= 256:
         return None
