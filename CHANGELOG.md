@@ -19,6 +19,13 @@ A full review of the code with 110 real worlds downloaded from the web (Java Cla
   entities on the Java 1.13+ and Bedrock routes.
 - **LZ4-compressed regions** (`region-file-compression=lz4`, 1.20.5+) lost chests, signs and mobs;
   chunks over 1 MiB were dropped instead of written to `.mcc` files.
+- **Chests of donkeys, mules and llamas were lost** (and a llama's carpet landed on the wrong slot): the
+  chest, `ChestedHorse` / `Chested`, the `*_chested` definitions and the saddle / carpet slots now follow
+  each game's layout (Java slots 2-16 before 1.20.5 and 0-14 after, Bedrock `ChestItems` 1-15, LCE 2-16).
+- **Bedrock targets older than the source**: mobs the old game lacks (parrot 1.2, fish and dolphins 1.4, turtle,
+  phantom, cat, panda, pillager, fox, bee... camel husk, nautilus, sulfur cube) are removed and counted on every
+  route, villagers / zombie villagers become the pre-1.11 `villager` / `zombie_villager` and trader llamas the
+  pre-1.19.10 `llama`, instead of being dropped.
 - **`--version 26.3` wrote 26.2** (and `1.21` wrote 1.20.5): short versions now mean x.y.0;
   releases WorldBridge does not list (1.21.11) are written as the nearest earlier one with a note,
   unknown versions are refused with a clear message.

@@ -321,6 +321,16 @@ def _iter_chunks(world: str, sub: str, dim: int):
             yield rx * 32 + lx, rz * 32 + lz, root
 
 
+def _stamp_dv(root: nbt.CompoundTag, entities) -> None:
+    """Marks every entity with the data version of its chunk: the layout of a donkey's chest depends on it."""
+    dv = nbt.get(root, "DataVersion")
+    if dv is None:
+        return
+    for e in entities:
+        if isinstance(e, nbt.CompoundTag):
+            e[ent.DV_STAMP] = nbt.IntTag(int(dv))
+
+
 def iter_modern_extras(world: str, progress: Optional[Progress] = None,
                        with_states: bool = False) -> Iterator[Tuple[int, int, int, list, list]]:
     """Yield (dim, cx, cz, block_entities, entities) of a Java 1.13+ world.  with_states: the
@@ -330,6 +340,7 @@ def iter_modern_extras(world: str, progress: Optional[Progress] = None,
         per_chunk: Dict[Tuple[int, int], List[list]] = defaultdict(lambda: [[], []])
         for cx, cz, root in _iter_chunks(world, "region", dim):
             te, en = _chunk_parts(root)
+            _stamp_dv(root, en)
             te = list(te)
             if with_states:
                 te = merge_state_tiles(te, state_tiles(root, cx, cz))
@@ -338,6 +349,7 @@ def iter_modern_extras(world: str, progress: Optional[Progress] = None,
                 per_chunk[(cx, cz)][1].extend(en)
         for cx, cz, root in _iter_chunks(world, "entities", dim):
             en = nbt.get_tag(root, "Entities") or []
+            _stamp_dv(root, en)
             if len(en):
                 per_chunk[(cx, cz)][1].extend(en)
         for (cx, cz), (te, en) in per_chunk.items():

@@ -499,6 +499,8 @@ _SECTIONS = {
             '{n} blocchi non esistenti nella versione di destinazione sono stati sostituiti.',
         'Content that does not exist in {version}: removed {items} items, {entities} entities and {tiles} block entities.':
             'Contenuti non esistenti in {version}: rimossi {items} oggetti, {entities} entità e {tiles} blocchi-entità.',
+        '{n} entities were renamed to the identifiers of {version} (villagers, trader llamas).':
+            '{n} entità rinominate con gli identificatori di {version} (abitanti, lama mercante).',
     },
     'worldbridge/bedrock/extra.py': {
         'Height maps not recomputed: {error}':

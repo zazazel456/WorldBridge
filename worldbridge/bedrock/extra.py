@@ -472,11 +472,17 @@ class BedrockInjector:
         if ent_canon:
             actors = []
             keys = []
+            tally = newcontent.tally_of(self.progress)
             for c in ent_canon:
                 key, uid = self.ids.next()
                 e = ent.to_bedrock(c, uid, self.player_uid, self.version)
                 if e is None:
+                    if not c.get("skip") and ent.TO_BEDROCK.get(c.get("name"), c.get("name")) and \
+                            not newcontent.bedrock_entity_exists(ent.TO_BEDROCK.get(c["name"], c["name"]), self.version):
+                        tally.entities += 1               # a mob this Bedrock version does not have
                     continue
+                if str(e["identifier"].py_data) != "minecraft:" + ent.TO_BEDROCK.get(c["name"], c["name"]):
+                    tally.renamed += 1                    # villager_v2 -> villager, trader_llama -> llama
                 actors.append((key, e))
             if not actors:
                 return
@@ -849,10 +855,12 @@ class _Downgrade:
             raw.append(t)
         keep = []
         for e in actors_raw:
-            ident = str(nbt.get(e, "identifier", "") or "")
-            if ident and not newcontent.bedrock_entity_exists(ident, self.version):
+            verdict = newcontent.downgrade_actor(e, self.version)   # villager_v2 -> villager...; None: as it is
+            if verdict == "removed":
                 self.tally.entities += 1
                 continue
+            if verdict == "renamed":
+                self.tally.renamed += 1
             retarget_items(e, self.version)
             _shift_pos(e, dx, dz)
             keep.append(e)
