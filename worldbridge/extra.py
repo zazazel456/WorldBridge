@@ -247,7 +247,7 @@ def _tidy_java_entities(out_dir: str, target) -> None:
 
 
 def direct_extras(d, out_dir: str, target, info: WorldInfo, progress: Progress, version=None, move=None,
-                  depth=None) -> None:
+                  depth=None, keep_state: bool = False) -> None:
     """Amulet -> Amulet conversions (Java 1.13+ <-> Bedrock); ``move``: the chunks moved (relocate);
     ``depth``: the depthfit.DepthFit that moved the blocks of the Overworld (they go with them)."""
     try:
@@ -272,7 +272,7 @@ def direct_extras(d, out_dir: str, target, info: WorldInfo, progress: Progress, 
         elif target.family == "bedrock" and d.kind == "bedrock":
             from .bedrock.extra import copy_bedrock_extras
 
-            copy_bedrock_extras(d.path, out_dir, progress, depth)
+            copy_bedrock_extras(d.path, out_dir, progress, depth, move, version or target.version, keep_state)
     except Exception as ex:  # noqa: BLE001
         progress.warn(tr("Entities / containers not fully transferred: {error}", error=ex))
     _tidy_java_entities(out_dir, target)

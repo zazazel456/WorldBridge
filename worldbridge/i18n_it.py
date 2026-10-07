@@ -179,6 +179,10 @@ _SECTIONS = {
             '{dim}: non convertito, il gioco lo genera da capo al primo ingresso.',
         '{n} chunks the game had not finished (at the edge of the explored area: only planned or bare rock) are not converted: the game or the ring generates them properly.':
             "{n} chunk non ancora completati dal gioco (ai margini dell'area esplorata: solo pianificati o roccia nuda) non vengono convertiti: il gioco o il raccordo li generano come si deve.",
+        '{n} chunks the game had not finished are kept: Minecraft finishes them when it loads them.':
+            'I {n} chunk non ancora completati dal gioco vengono mantenuti: Minecraft li completa quando li carica.',
+        'The {n} chunks Bedrock had not finished hold {tiles} block entities and {entities} entities (villages, dungeons...): they are lost with the chunks.':
+            'I {n} chunk non completati da Bedrock contengono {tiles} blocchi-entità e {entities} entità (villaggi, dungeon...): vanno persi insieme ai chunk.',
         'Copying the world (Minecraft will upgrade it with its own blending)':
             'Copia del mondo (Minecraft lo aggiornerà con il blending ufficiale)',
         'Copying the world (Minecraft will upgrade it when it is opened)':

@@ -412,7 +412,8 @@ def amulet_convert(src_path: str, dst_path: str, platform: str, version, progres
     if depth is not None:
         depth.used = True
     painted = {AMULET_DIMS[d]: v for d, v in (getattr(selection, "biomes", None) or {}).items() if v}
-    job = _AmuletJob(src_path, platform, version, depth, floor, painted, move)
+    job = _AmuletJob(src_path, platform, version, depth, floor, painted, move,
+                     keep_unfinished=bool(getattr(selection, "keep_unfinished", False)))
     if platform in ("java", "bedrock") and (_java_world(src_path) or _bedrock_world(src_path)):
         from .parallel import can_fork, workers
 
@@ -466,19 +467,25 @@ def _bedrock_world(path: str) -> bool:
 class _AmuletJob:
     """What happens to every chunk Amulet reads (the same in this process and in the workers)."""
 
-    def __init__(self, src, platform, version, depth, floor, painted, move):
+    def __init__(self, src, platform, version, depth, floor, painted, move, keep_unfinished=False):
         self.src, self.platform, self.version = src, platform, tuple(version)
         self.depth, self.floor, self.painted, self.move = depth, floor, painted, move
+        self.keep_unfinished = keep_unfinished
 
     def hook(self, level) -> None:
         depth, floor, painted, move = self.depth, self.floor, self.painted, self.move
-        if not (depth is not None or floor or painted or move is not None):
+        keep = self.keep_unfinished
+        if not (depth is not None or floor or painted or move is not None or keep):
             return
         by_dim = {name: dim for dim, name in AMULET_DIMS.items()}
         load = level.level_wrapper.load_chunk
+        if keep:
+            from amulet.api.chunk.status import StatusFormats
 
         def transformed(cx, cz, dimension, *a, **kw):
             chunk = load(cx, cz, dimension, *a, **kw)
+            if keep and chunk.status.as_type(StatusFormats.Java_14) != "full":
+                chunk.status = "full"        # Amulet's save only writes finished chunks (the state is restored afterwards)
             if depth is not None and dimension == "minecraft:overworld":
                 depth.apply(chunk)
             if floor and dimension == "minecraft:overworld":
@@ -797,7 +804,7 @@ LEGACY_LEVEL_DV = 1343   # Java 1.12.2: the level and players rebuilt in the num
 SPAWN_COMPOUND_DV = 4548  # Java 1.21.9: spawn: {dimension, pos, yaw, pitch} replaces SpawnX/Y/Z
 
 
-def write_java_level_dat(path: str, info: WorldInfo, target_version) -> None:
+def write_java_level_dat(path: str, info: WorldInfo, target_version, progress: Optional[Progress] = None) -> None:
     """The level.dat (and the linked players' playerdata) of a Java world opened by
     ``target_version``, which upgrades it with its data fixers.
 
@@ -807,8 +814,11 @@ def write_java_level_dat(path: str, info: WorldInfo, target_version) -> None:
       Java 1.15.2 level, so its players' items keep their modern names;
     * everything else is a Java 1.12.2 level with players in the numeric layout."""
     from .java.numeric import JavaWriteOptions, build_java_level, write_java_players
+    from .newcontent import tally_of
 
     target_dv = java_data_version(target_version)
+    tally = tally_of(progress) if progress is not None else None
+    target = tuple(target_version)
     level_dv = int(nbt.get(info.level, "DataVersion", 0) or 0)
     players = "playerdata"
     if 1451 <= level_dv <= target_dv:
@@ -825,7 +835,7 @@ def write_java_level_dat(path: str, info: WorldInfo, target_version) -> None:
         # the level fields are rebuilt in the 1.12 layout: the game turns them into
         # WorldGenSettings only from data older than 1.16 (data version 2550)
         dv = host_dv if 1451 <= host_dv < 2550 and host_dv <= target_dv else LEGACY_LEVEL_DV
-        data = build_java_level(info, JavaWriteOptions(kind="anvil", player_dv=dv))
+        data = build_java_level(info, JavaWriteOptions(kind="anvil", player_dv=dv, target=target, tally=tally))
         data["DataVersion"] = nbt.IntTag(dv)
         data["Version"] = nbt.CompoundTag({"Id": nbt.IntTag(dv), "Name": nbt.StringTag(""), "Snapshot": nbt.ByteTag(0)})
         if dv >= 1506 and str(nbt.get(data, "generatorName", "")).lower() == "flat":
@@ -833,7 +843,7 @@ def write_java_level_dat(path: str, info: WorldInfo, target_version) -> None:
     with open(os.path.join(path, "level.dat"), "wb") as f:
         f.write(nbt.dump(nbt.CompoundTag({"Data": data}), "", compressed=True))
     # playerdata files are upgraded from their own DataVersion
-    write_java_players(path, info, JavaWriteOptions(kind="anvil", player_dv=target_dv), players)
+    write_java_players(path, info, JavaWriteOptions(kind="anvil", player_dv=target_dv, target=target, tally=tally), players)
 
 
 PLAYERS_26 = os.path.join("players", "data")

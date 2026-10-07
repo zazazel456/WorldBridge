@@ -45,6 +45,8 @@ class Selection:
     players: Optional[List[PlayerLink]] = None
     # chunks never converted whatever the selection: those the game has not finished generating
     exclude: Optional[Dict[int, Set[Chunk]]] = None
+    # Bedrock -> Bedrock: the chunks the game has not finished stay (it finishes them itself, see worldbridge.incomplete)
+    keep_unfinished: bool = False
     # dimensions left out entirely: the game generates them anew (Nether, End)
     drop: Set[int] = field(default_factory=set)
     # dimension -> chunk -> biome (numeric Java 1.12 id, see worldbridge.biomes) painted on the chunk

@@ -660,10 +660,23 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
 
         excl = incomplete_chunks(d.kind, d.path, sel.chunks)
         if excl:
-            sel.exclude = excl
+            from .incomplete import bedrock_held, keep_for
+
             n = sum(len(v) for v in excl.values())
-            progress.log(tr("{n} chunks the game had not finished (at the edge of the explored area: only planned or "
-                            "bare rock) are not converted: the game or the ring generates them properly.", n=n))
+            if keep_for(d.kind, target.family):
+                sel.keep_unfinished = True
+                progress.log(tr("{n} chunks the game had not finished are kept: Minecraft finishes them when it loads "
+                                "them.", n=n))
+            else:
+                sel.exclude = excl
+                progress.log(tr("{n} chunks the game had not finished (at the edge of the explored area: only planned or "
+                                "bare rock) are not converted: the game or the ring generates them properly.", n=n))
+                if d.kind == "bedrock":
+                    held_t, held_e = bedrock_held(d.path, excl)
+                    if held_t or held_e:
+                        progress.warn(tr("The {n} chunks Bedrock had not finished hold {tiles} block entities and "
+                                         "{entities} entities (villages, dungeons...): they are lost with the chunks.",
+                                         n=n, tiles=held_t, entities=held_e))
         old_source = _source_is_pre118(d)
         same_edition = (not sel.biomes and sel.move_to is None and target.family in ("java", "bedrock")
                         and d.kind == ("bedrock" if target.family == "bedrock" else "java_modern")
@@ -1119,8 +1132,9 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
     if platform == "bedrock":
         ab.write_bedrock_level_dat(out_dir, info, wver)
     else:
-        ab.write_java_level_dat(out_dir, info, target.version)
-    direct_extras(d, out_dir, target, info, progress, wver, move if move.active else None, depth)
+        ab.write_java_level_dat(out_dir, info, target.version, progress)
+    direct_extras(d, out_dir, target, info, progress, wver, move if move.active else None, depth, sel.keep_unfinished)
+    _warn_missing_content(progress, platform, wver)
     if depth is not None:
         _warn_cut_extras(progress, depth.lost_tiles, depth.lost_entities)
     if sel.filters:  # entities/block entities are only attached to written chunks, but be sure
@@ -1137,6 +1151,15 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
         _rings3d_after_amulet(out_dir, target, info, wver, tmp, progress)
     progress.done()
     return ConversionResult(out_dir, n or 0)
+
+
+def _warn_missing_content(progress: Progress, platform: str, version) -> None:
+    """The items, mobs and block entities of a newer game that the (older) target version does not have were
+    removed on the way: say how many (newcontent.Tally)."""
+    from .newcontent import java_version_label, tally_of
+
+    label = java_version_label(tuple(version)) if platform == "java" else "Bedrock " + ab.version_str(version)
+    tally_of(progress).warn(progress, label)
 
 
 def _warn_emptied(progress: Progress, n: int) -> None:

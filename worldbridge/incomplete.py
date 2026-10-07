@@ -4,6 +4,10 @@ Around the explored area Java 1.14+ keeps proto chunks (``Status`` structure_sta
 terrain, light...): planned or bare stone, with no surface or trees yet; Bedrock marks them with
 ``FinalizedState`` < 2.  Converted as they are they become flat stone blocks and holes in the
 new world, so they are left out: the game (1.18+) or WorldBridge's ring generates them again.
+
+Bedrock -> Bedrock is the exception: the Bedrock game finishes such a chunk itself when it loads it
+(population, instatick of the structures it holds), whatever the target version, so they are kept
+(``keep_for``); toward every other target they stay out and ``bedrock_held`` says what they held.
 """
 
 from __future__ import annotations
@@ -111,6 +115,31 @@ def bedrock_incomplete(db) -> Dict[int, Set[Chunk]]:
                 dim = {1: NETHER, 2: THE_END}.get(dim, OVERWORLD)
                 out.setdefault(dim, set()).add((cx, cz))
     return out
+
+
+def keep_for(kind: str, family: str) -> bool:
+    """Whether the unfinished chunks of a ``kind`` source are converted for a ``family`` target: Bedrock to Bedrock
+    (the game finishes them when it loads them: villages, dungeons and their chests are in them)."""
+    return kind == "bedrock" and family == "bedrock"
+
+
+def bedrock_held(path: str, excl: Dict[int, Set[Chunk]]) -> Tuple[int, int]:
+    """(block entities, entities) held by the unfinished chunks ``excl`` of a Bedrock world."""
+    from .bedrock.extra import ENTITY_TAG, BE_TAG, _db, _get, chunk_prefix, read_nbt_list
+
+    db = _db(path)
+    tiles = ents = 0
+    try:
+        for dim, chunks in excl.items():
+            for cx, cz in chunks:
+                prefix = chunk_prefix(cx, cz, dim)
+                tiles += len(read_nbt_list(_get(db, prefix + bytes([BE_TAG])) or b""))
+                ents += len(read_nbt_list(_get(db, prefix + bytes([ENTITY_TAG])) or b""))
+                digp = _get(db, b"digp" + prefix) or b""
+                ents += len(digp) // 8
+    finally:
+        db.close()
+    return tiles, ents
 
 
 def incomplete_chunks(kind: str, path: str, only: Optional[Dict[int, Set[Chunk]]] = None) -> Dict[int, Set[Chunk]]:
