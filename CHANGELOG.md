@@ -23,6 +23,15 @@ A full review of the code with 110 real worlds downloaded from the web (Java Cla
   releases WorldBridge does not list (1.21.11) are written as the nearest earlier one with a note,
   unknown versions are refused with a clear message.
 
+**Legacy Console Edition**
+- **Real Xbox 360 saves were not recognised** (`savegame.dat` starts with `[BE u32 size][BE u64
+  decompressed size]`, not with a zero): they are read, loose, in a CON package, in a `Save<date>.bin`
+  folder or as `savegame-*.dat`; saves of version 1 (`players_<XUID>.dat`) show their player. New
+  Xbox 360 saves are written with the same header.
+- **Xbox 360 conversions of big worlds took more than 15 minutes** in "Writing the final files":
+  above 1 MiB the container is stored in LZX uncompressed blocks (seconds), the real compressor is
+  kept for small ones.
+
 **Content tables**
 - 1.13 dye and stone-slab names, 1.13 – 1.15 zombie pigman eggs, Java 1.9 – 1.12 spawn eggs (were
   dropped), 1.11 mob ids (evokers, vindicators, illusioners vanished), `sweeping` /

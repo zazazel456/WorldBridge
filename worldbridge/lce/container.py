@@ -4,6 +4,8 @@ On disk (``saveData.ms`` / ``savegame.dat`` / ``GAMEDATA``)::
 
     compressed:    [u32 0][u32 decompressed size][platform compressed listing]
     uncompressed:  the listing itself (PS3)
+    Xbox 360:      [BE u32 size][BE u64 decompressed size][XMemCompress LZX listing][00]
+                   then a few bytes of slack (zeros or leftovers) up to the end of the file
 
 The listing (see Minecraft.World/FileHeader.cpp)::
 
@@ -14,6 +16,13 @@ The listing (see Minecraft.World/FileHeader.cpp)::
     ... file data ...
     file table: 144 byte entries  { wchar name[64]; u32 length; u32 offset; u64 mtime }
                 (136 byte entries without mtime for version 1)
+
+The Xbox 360 layout is the one of every real ``savegame.dat`` checked (TU0 to TU75, loose or inside a
+CON package; 22 saves): the storage layer compresses the listing itself.  The first u32 counts the whole
+file up to the end of the LZX frames plus one zero byte (12 + frames + 1, every sample matches to the
+byte); the u64 is the sum of the frames' raw sizes, i.e. the listing size; the slack after it (4 to 500
+bytes in real files) is not part of the save.  WorldBridge up to 0.2.x wrote Xbox 360 saves as
+``[u32 0][BE u32 size]`` + LZX instead; those are still read.
 
 Endianness is big endian on Xbox 360 / PS3 / Wii U and little endian on
 Windows64 / PS Vita / PS4 / Xbox One / Switch.
@@ -64,6 +73,12 @@ PLATFORMS: Dict[str, Platform] = {
 ENTRY_V2 = 144
 ENTRY_V1 = 136
 HEADER_SIZE = 12
+X360_HEADER = 12  # BE u32 size (header included) + BE u64 decompressed size
+_MAX_LISTING = 1 << 31
+# Above this size the Xbox 360 container is written with LZX uncompressed blocks instead of the
+# pure-Python compressor (minutes for tens of MB, for a few percent: the region chunks inside are
+# already compressed one by one).
+X360_REAL_LZX_MAX = 1 << 20
 
 _SPLIT_RE = re.compile(r"^GAMEDATA_([0-9A-Fa-f]{8})$")
 
@@ -174,6 +189,17 @@ class SaveContainer:
     def _decode(cls, raw: bytes, path: str, hint: Optional[str]) -> "SaveContainer":
         candidates: List[Tuple[str, bytes, str]] = []  # (container kind, listing, endian)
         errors = []
+        x360 = x360_header(raw)
+        if x360 is not None:
+            csize, dsize = x360
+            try:
+                blob = comp.xmem_decompress(raw[X360_HEADER:csize], dsize)
+                if len(blob) == dsize:
+                    candidates.append(("lzx", blob, ">"))
+                else:
+                    errors.append(f"lzx: {len(blob)} bytes instead of {dsize}")
+            except Exception as ex:  # noqa: BLE001
+                errors.append(f"lzx: {ex}")
         if len(raw) >= 8 and struct.unpack_from("<I", raw, 0)[0] == 0:
             size_be = struct.unpack_from(">I", raw, 4)[0]
             size_le = struct.unpack_from("<I", raw, 4)[0]
@@ -241,7 +267,10 @@ class SaveContainer:
         if kind == "vita":
             return struct.pack("<II", 0, len(listing)) + comp.vita_encode(listing)
         if kind == "lzx":
-            return struct.pack(">II", 0, len(listing)) + comp.xmem_compress(listing)
+            # the layout of real Xbox 360 saves (see the module docstring): the size counts the
+            # header, the frames and a zero byte; then 4 zero bytes, the least slack seen in real files
+            body = comp.xmem_compress(listing, max_real=X360_REAL_LZX_MAX) + b"\x00"
+            return struct.pack(">IQ", X360_HEADER + len(body), len(listing)) + body + bytes(4)
         raise ValueError(kind)
 
     def save(self, folder: str, filename: Optional[str] = None) -> str:
@@ -316,6 +345,38 @@ def split_compress(data: bytes) -> bytes:
 
 
 # ---------------------------------------------------------------- detection
+
+
+def x360_header(raw: bytes) -> Optional[Tuple[int, int]]:
+    """(end of the compressed data, decompressed size) when ``raw`` starts like a real Xbox 360
+    savegame.dat (BE u32 size counted from the start of the file, BE u64 decompressed size,
+    XMemCompress frames), else None.  The compressed data is ``raw[12:end]``.
+    The sizes must fit the file and the first LZX frame must fit the compressed data.  Never matches
+    the other containers: they start with ``u32 0`` (zlib, Vita, older WorldBridge Xbox 360) or with
+    a listing whose file count makes the u64 huge (PS3 / uncompressed Windows64)."""
+    return _x360_header(raw, len(raw))
+
+
+def _x360_header(head: bytes, file_size: int) -> Optional[Tuple[int, int]]:
+    if len(head) < X360_HEADER + 5:
+        return None
+    csize, dsize = struct.unpack_from(">IQ", head, 0)
+    if not (X360_HEADER < csize <= file_size and 0 < dsize < _MAX_LISTING):
+        return None
+    # first XMemCompress frame: [0xFF, u16 raw size, u16 size] (last frame) or [u16 size] (32 KB)
+    p = X360_HEADER
+    if head[p] == 0xFF:
+        raw_len, clen = struct.unpack_from(">HH", head, p + 1)
+        hdr = 5
+        if raw_len == 0:
+            return None
+    else:
+        clen = struct.unpack_from(">H", head, p)[0]
+        hdr = 2
+    if clen == 0 or p + hdr + clen > csize:
+        return None
+    return csize, dsize
+
 
 MAIN_NAMES = ("saveData.ms", "savegame.dat", "GAMEDATA", "GAMEDATA.bin", "SAVEDATA")
 # Wii U (Cemu): the save is named after its date, e.g. 250703210031, next to 250703210031.ext (its name)
@@ -410,7 +471,7 @@ def looks_like_lce(path: str) -> bool:
         return False
     try:
         with open(main, "rb") as f:
-            head = f.read(16)
+            head = f.read(32)
     except OSError:
         return False
     if head[:4] in (b"CON ", b"LIVE", b"PIRS"):
@@ -419,12 +480,17 @@ def looks_like_lce(path: str) -> bool:
         return False
     if struct.unpack_from("<I", head, 0)[0] == 0:
         return True  # compressed container
+    try:
+        size = os.path.getsize(main)
+    except OSError:
+        return False
+    if _x360_header(head, size) is not None:
+        return True  # real Xbox 360 savegame.dat
     # uncompressed listing: plausible header
     for e in "<>":
         off, cnt = struct.unpack_from(e + "II", head, 0)
         _o, v = struct.unpack_from(e + "hh", head, 8)
         if 0 < v < 20 and 0 < cnt < 100000 and off > 12:
-            size = os.path.getsize(main)
             if off + min(cnt, 1) * ENTRY_V1 <= size:
                 return True
     return False

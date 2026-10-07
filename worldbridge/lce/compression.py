@@ -222,5 +222,7 @@ def xmem_decompress(body: bytes, out_len: int = 0) -> bytes:
     return bytes(_lzx.lzx_decompress_chunk(payload, out_len, _SLOTS, _EXTRA, _BASE))
 
 
-def xmem_compress(data: bytes) -> bytes:
-    return _lzx.xmem_compress(data)
+def xmem_compress(data: bytes, max_real: int = _lzx.REAL_LZX_MAX) -> bytes:
+    """XMemCompress framing.  Data above ``max_real`` bytes (never above 16 MiB, the 24 bit block size
+    of the real encoder) is stored in LZX uncompressed blocks: valid for every reader, no search."""
+    return _lzx.xmem_compress(data, max_real)
