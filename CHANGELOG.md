@@ -67,6 +67,41 @@ A full review of the code with 110 real worlds downloaded from the web (Java Cla
   (crash in old games), the void biome on 1.9 – 1.12, tall grass and dead bush from Beta 1.6, the
   inverted daylight detector, old Bedrock bucket / boat / horse armour items.
 
+**Block entities of Java 1.14+ / Bedrock**
+- Decorated pots, campfires, beehives and bee nests, lecterns, chiseled bookshelves, suspicious
+  sand / gravel, crafters, shelves, vaults, trial spawners and jigsaws reached the other edition
+  with the source game's fields (Java NBT under Bedrock ids and the reverse): sherds, items, bees,
+  books and slots are now converted, and only for the versions that have each block entity.
+- Soul campfires, creaking hearts and copper golem statues were missing; trapped chests, soul
+  campfires and bee nests read from Bedrock became chests, campfires and beehives.
+- Ender chests of LCE TU69+ saves (`minecraft:ender_Chest`) lost their block entity.
+
+**Interface**
+- A trim scan of a world could finish after another world was opened and "Apply to the world"
+  then removed the second world's chunks; the trim button stays off while a scan runs.
+- Closing the window could abort the program (an analysis started on focus-out), and during a
+  conversion it left Amulet's worker processes and `.worldbridge_*` folders behind: the window now
+  waits for the cancel. A slower, older analysis no longer overwrites a newer one.
+- Painted biomes, Nether / End regeneration and "move" no longer carry over to the next world;
+  unsaved world-management edits ask before being discarded; the `.wb-backup` keeps the original.
+- Map: select-all and the heat map repaint in a fraction of the time, and a rubber band over a
+  dimension still loading no longer freezes the program. The error banner is shortened.
+
+**Command line**
+- Malformed options (`--platform`, `--offset`, `--spawn`, `--move-to`, `--depth`, `--chunks`,
+  `--biome`, `--size`, `--profile`, `--java-limit`, `--bta-palette`, `--min-time`) are refused
+  before the world is read, with a message instead of a traceback; negative coordinates work
+  without `=` (`--spawn -20,-59,-20`). An empty or invalid `--chunks` file is an error, not an
+  empty world.
+- An output folder inside the source world (or the other way round) is refused; it used to copy
+  the world into itself until the path was too long.
+- Progress reaches 100%, the copy routes show progress and can be cancelled; Ctrl+C and SIGTERM
+  end cleanly and remove an empty output folder the run created.
+- `info` looks inside archives; `trim` uses the world folder when given `level.dat`, lists the
+  Overworld first and speaks the chosen language; LCE "outside the limits" counts per dimension.
+- Running two conversions at once in one process (the GUI's preview and a conversion) could mix
+  their results (`parallel.ordered_map`).
+
 **Tools**
 - `tools/matrix.py`: the probe read only numeric item ids and failed every route since 0.2.1.
 
