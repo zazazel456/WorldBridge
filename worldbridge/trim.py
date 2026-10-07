@@ -25,8 +25,8 @@ from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from . import nbt
-from .i18n import N_, tr
-from .model import ConversionError, NETHER, OVERWORLD, Progress, THE_END
+from .i18n import N_, language, tr
+from .model import ConversionError, NETHER, OVERWORLD, Progress, THE_END, copy_tree
 
 Chunk = Tuple[int, int]
 TICKS_PER_SECOND = 20
@@ -80,6 +80,7 @@ class TrimScan:
     forced: Dict[int, Set[Chunk]] = field(default_factory=dict)
     spawn: Tuple[int, int, int] = (0, 64, 0)
     can_copy: bool = False            # a trimmed copy can be written in the same format
+    path: str = ""                    # the world's folder (the detected root, not the level.dat that may have been given)
 
     def total(self) -> int:
         return sum(len(v) for v in self.inhabited.values())
@@ -159,7 +160,7 @@ def scan(path: str, progress: Optional[Progress] = None) -> TrimScan:
         raise TrimUnavailable(tr(why))
     m = open_map(d.path, progress)
     try:
-        res = TrimScan(d.kind, spawn=tuple(int(v) for v in m.spawn))
+        res = TrimScan(d.kind, spawn=tuple(int(v) for v in m.spawn), path=d.path)
         if d.kind in ("java_modern", "java_numeric"):
             _scan_java(d.path, res, progress)
             res.can_copy = True
@@ -251,7 +252,10 @@ def summary(scan_: TrimScan, keep: Dict[int, Set[Chunk]]) -> str:
     tot = scan_.total()
     kept = sum(len(v) for v in keep.values())
     pct = 100 * (tot - kept) / tot if tot else 0
-    return f"tenuti {kept:,} chunk su {tot:,} · rimossi {tot - kept:,} ({pct:.0f}%)".replace(",", ".")
+    sep = "." if language() == "it" else ","
+    num = lambda n: f"{n:,}".replace(",", sep)  # noqa: E731
+    return tr("kept {kept} of {total} chunks · removed {removed} ({pct}%)", kept=num(kept), total=num(tot),
+              removed=num(tot - kept), pct=f"{pct:.0f}")
 
 
 # ------------------------------------------------------------------ writing a trimmed copy
@@ -334,16 +338,24 @@ def prune_java_raw(world: str, keep: Dict[int, Set[Chunk]], progress: Optional[P
     return removed
 
 
+def check_output(src: str, out: str) -> None:
+    """The folder of a trimmed copy must be new (or empty) and outside the world (``ConversionError``)."""
+    from .convert import check_output_folder
+
+    check_output_folder(src, out)
+    if os.path.exists(out) and os.listdir(out):
+        raise ConversionError(tr("The output folder is not empty: {path}", path=out))
+
+
 def trimmed_copy(src: str, out: str, keep: Dict[int, Set[Chunk]], progress: Optional[Progress] = None) -> int:
     """A trimmed copy of a Java world (the source is never modified).  Returns the chunks removed."""
     progress = progress or Progress()
-    if os.path.exists(out) and os.listdir(out):
-        raise ConversionError(tr("The output folder is not empty: {path}", path=out))
+    check_output(src, out)
     progress.stage(tr("Copying the world"), 0.0, 0.4)
-    shutil.copytree(src, out, dirs_exist_ok=True, ignore=shutil.ignore_patterns("session.lock"))
+    copy_tree(src, out, progress, ignore=shutil.ignore_patterns("session.lock"))
     progress.stage(tr("Removing the unused chunks"), 0.4, 1.0)
     n = prune_java_raw(out, keep, progress)
-    progress.update(1.0, tr("Completed"))
+    progress.done()
     return n
 
 
@@ -372,4 +384,5 @@ def selection_for(keep: Dict[int, Set[Chunk]], dims: Iterable[int]) -> Dict[int,
 
 
 def trim_dims(scan_: TrimScan) -> List[int]:
-    return sorted(scan_.inhabited)
+    """The scanned dimensions, the Overworld first (then the Nether and the End)."""
+    return sorted(scan_.inhabited, key=lambda d: {OVERWORLD: 0, NETHER: 1, THE_END: 2}.get(d, 3))

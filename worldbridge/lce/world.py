@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import struct
+from collections import Counter
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -13,7 +14,7 @@ import numpy as np
 from .. import blocks as blk
 from .. import entities as _ent
 from .. import ids, nbt
-from ..model import NETHER, OVERWORLD, THE_END, NumericChunk, Progress, WorldInfo, WorldSource, dimension_of
+from ..model import DIM_LABEL, NETHER, OVERWORLD, THE_END, NumericChunk, Progress, WorldInfo, WorldSource, dimension_of
 from . import chunk as lch
 from . import compat as _compat
 from . import region as lreg
@@ -298,7 +299,7 @@ class LCEWriter:
         self.chunk_version = options.chunk_format or self.profile.chunk_version
         self.regions: Dict[Tuple[int, int, int], Dict[Tuple[int, int], Tuple[bytes, int]]] = {}
         self.replaced_blocks = 0
-        self.skipped_outside = 0
+        self.skipped_outside: Counter = Counter()        # per dimension: the chunks the map's limits left out
         # items, enchantments and entities the target game has (neoLegacy: from its source)
         self.compat = _compat.compat_for(self.profile.key, self.platform.key, self.profile.allowed)
         self.dropped: Dict[str, int] = {}
@@ -336,12 +337,12 @@ class LCEWriter:
         return None
 
     def add_chunk(self, dim: int, chunk: NumericChunk, shift: bool = True):
-        self.store(self.encode(dim, chunk, shift))
+        self.store(self.encode(dim, chunk, shift), dim)
 
-    def store(self, rec) -> None:
-        """Keeps a chunk made by ``encode`` (in this process, in the conversion's order)."""
+    def store(self, rec, dim: Optional[int] = None) -> None:
+        """Keeps a chunk made by ``encode`` (in this process, in the conversion's order); ``dim``: its dimension."""
         if rec is None:
-            self.skipped_outside += 1
+            self.skipped_outside[OVERWORLD if dim is None else dim] += 1
             return
         key, loc, entry, replaced = rec[:4]
         self.replaced_blocks += replaced
@@ -489,11 +490,13 @@ class LCEWriter:
                 tr("{n} blocks that do not exist in {version} were replaced with equivalents.", n=self.replaced_blocks,
                    version=tr(self.profile.label))
             )
-        if self.skipped_outside:
-            self.progress.warn(
-                tr("{n} chunks outside the LCE world's limits ({size}×{size} chunks) were left out.",
-                   n=self.skipped_outside, size=self.opt.world_size)
-            )
+        for dim in (OVERWORLD, NETHER, THE_END):
+            if self.skipped_outside[dim]:
+                lo, hi = self.bounds(dim)
+                self.progress.warn(
+                    tr("{n} chunks outside the LCE world's limits ({dim}, {size}×{size} chunks) were left out.",
+                       n=self.skipped_outside[dim], dim=tr(DIM_LABEL[dim]), size=hi - lo)
+                )
         for what, n in self.compat.dropped.items():                       # the players' items
             self.dropped[what] = self.dropped.get(what, 0) + n
         if self.dropped:

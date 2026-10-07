@@ -423,7 +423,7 @@ class JavaNumericWriter:
             old.dropped_items, old.dropped_entities, old.dropped_tiles = before
         return dim, c.cx, c.cz, comp, n, modern, wl, dropped
 
-    def store(self, rec) -> None:
+    def store(self, rec, dim: Optional[int] = None) -> None:
         """Keeps a chunk made by ``encode`` (in this process, in the conversion's order)."""
         if rec is None:
             return

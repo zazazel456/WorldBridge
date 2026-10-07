@@ -288,3 +288,36 @@ def test_workers_that_open_leveldb_do_not_wait_for_the_parents_thread(tmp_path):
         assert [f.result(timeout=120) for f in futures] == [str(tmp_path / f"w{k}") for k in range(2)]
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _tag_square(state, x):
+    return ("map", state, x * x)
+
+
+def _tag_negate(state, x):
+    return ("convert", state, -x)
+
+
+def test_ordered_map_is_safe_for_concurrent_callers(monkeypatch):
+    """The GUI's map loader and a conversion run ordered_map at the same time: each gets its own function and state."""
+    import threading
+
+    monkeypatch.setenv("WORLDBRIDGE_WORKERS", "3")
+    bad = []
+
+    def run(fn, tag, expect):
+        for _ in range(8):
+            try:
+                got = list(parallel.ordered_map(fn, tag, list(range(120)), batch=8))
+                if got != [expect(tag, x) for x in range(120)]:
+                    bad.append(tag)
+            except Exception as ex:  # noqa: BLE001
+                bad.append(repr(ex))
+
+    ts = [threading.Thread(target=run, args=(_tag_square, "MAP", lambda s, x: ("map", s, x * x))),
+          threading.Thread(target=run, args=(_tag_negate, "CONV", lambda s, x: ("convert", s, -x)))]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert not bad, bad[:3]

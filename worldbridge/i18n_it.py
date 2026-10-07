@@ -131,6 +131,18 @@ _SECTIONS = {
             'Errore: {error}',
         'Done: {path}  ({n} chunks, {seconds}s)':
             'Fatto: {path}  ({n} chunk, {seconds}s)',
+        "expected {n} numbers separated by commas (e.g. {example}), not '{value}'":
+            "servono {n} numeri separati da virgole (es. {example}), non '{value}'",
+        "expected auto, cut, keep or a height such as -64, not '{value}'":
+            "serve auto, cut, keep o un'altezza come -64, non '{value}'",
+        'file not found: {path}':
+            'file non trovato: {path}',
+        "expected BIOME=[DIM:]FILE, not '{value}'":
+            "serve BIOMA=[DIM:]FILE, non '{value}'",
+        '{option} {file}: no chunk coordinates found (an MCA Selector CSV file is expected)':
+            '{option} {file}: nessuna coordinata di chunk trovata (serve un file CSV di MCA Selector)',
+        'contains: {description}':
+            'contiene: {description}',
     },
     'worldbridge/convert.py': {
         'Finite map: only the chunks that reach it (with a margin for its edge) are translated.':
@@ -289,6 +301,18 @@ _SECTIONS = {
             '{target}: viene trasferito solo il giocatore principale ({player}); gli altri giocatori selezionati sono ignorati.',
         'Selection: {n} unselected chunks removed.':
             'Selezione: {n} chunk non selezionati rimossi.',
+        'Unknown LCE platform: {platform} (choose from {choices})':
+            'Piattaforma LCE sconosciuta: {platform} (scegli tra {choices})',
+        '{size} chunks is not a world size {platform} has: use {choices}':
+            '{size} chunk non è una dimensione del mondo disponibile per {platform}: usa {choices}',
+        '{profile} is not a console version {platform} has: use {choices}':
+            '{profile} non è una versione delle console disponibile per {platform}: usa {choices}',
+        'The output path is a file, not a folder: {path}':
+            'Il percorso di destinazione è un file, non una cartella: {path}',
+        'The output folder cannot be inside the source world: {path}':
+            'La cartella di destinazione non può trovarsi dentro al mondo di origine: {path}',
+        'The source world cannot be inside the output folder: {path}':
+            'Il mondo di origine non può trovarsi dentro alla cartella di destinazione: {path}',
     },
     'worldbridge/terrain/policy.py': {
         "No terrain border yet for {target}: where the converted world ends the game will put its own terrain with a step. For an edge without steps choose Java 1.18 or later (the game's blending) or Java Alpha 1.2 – 1.12 (WorldBridge's ring).":
@@ -355,6 +379,8 @@ _SECTIONS = {
             'Rimozione dei chunk inutilizzati',
         'Completed':
             'Completato',
+        'kept {kept} of {total} chunks · removed {removed} ({pct}%)':
+            'tenuti {kept} chunk su {total} · rimossi {removed} ({pct}%)',
     },
     'worldbridge/lce/world.py': {
         'TU31 – 1.8 blocks (neoLegacy on PC, Bountiful consoles)':
@@ -369,8 +395,6 @@ _SECTIONS = {
             "«{name}» non è un XUID: il gioco carica il giocatore da players/<numero>.dat, quindi partirà dallo spawn con l'inventario vuoto. Indica il numero (il nome del tuo file in players/ di un mondo già giocato, o usa «Dal mio mondo…» nella GUI).",
         '{n} blocks that do not exist in {version} were replaced with equivalents.':
             '{n} blocchi non esistenti in {version} sono stati sostituiti con equivalenti.',
-        "{n} chunks outside the LCE world's limits ({size}×{size} chunks) were left out.":
-            '{n} chunk fuori dai limiti del mondo LCE ({size}×{size} chunk) sono stati esclusi.',
         '{n} items':
             '{n} oggetti',
         '{n} enchantments':
@@ -381,6 +405,14 @@ _SECTIONS = {
             ' e ',
         '{version} does not have {what} of the source world: removed (the game does not know them); new arrows, boats and potions become their classic versions.':
             '{version} non ha {what} del mondo di origine: tolti (il gioco non li conosce); frecce, barche e pozioni nuove diventano le loro versioni classiche.',
+        "{n} chunks outside the LCE world's limits ({dim}, {size}×{size} chunks) were left out.":
+            '{n} chunk fuori dai limiti del mondo LCE ({dim}, {size}×{size} chunk) sono stati esclusi.',
+        'Overworld':
+            'Overworld',
+        'Nether':
+            'Nether',
+        'End':
+            'End',
     },
     'worldbridge/lce/compat.py': {
     },
@@ -439,6 +471,8 @@ _SECTIONS = {
             'Formato del mondo non riconosciuto.',
         'The archive does not contain a recognised world.':
             "L'archivio non contiene un mondo riconosciuto.",
+        'Copying files {done}/{total}':
+            'Copia dei file {done}/{total}',
     },
     'worldbridge/java/numeric.py': {
         'Java chunk {cx},{cz} unreadable, skipped: {error}':

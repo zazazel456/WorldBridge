@@ -97,3 +97,65 @@ def test_formats_without_inhabited_time(tmp_path):
     world = _java_world(tmp_path / "old", kind="mcregion")
     with pytest.raises(trim.TrimUnavailable):
         trim.scan(world)
+
+
+# ------------------------------------------------------------------ the command line
+
+
+def test_cli_trim_dry_run_lists_the_overworld_first_and_speaks_both_languages(tmp_path, capsys):
+    from worldbridge.cli import main
+    from worldbridge.model import NETHER
+
+    world = _java_world(tmp_path / "w")
+    # a Nether with a region too: its id (-1) sorts before the Overworld's
+    nether = os.path.join(world, "DIM-1", "region")
+    os.makedirs(nether)
+    import shutil
+
+    shutil.copy(os.path.join(world, "region", "r.0.0.mca"), nether)
+    assert trim.trim_dims(trim.scan(world)) == [OVERWORLD, NETHER]
+    assert main(["--lang", "en", "trim", world, "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert out.index("Overworld:") < out.index("Nether:")
+    assert "kept" in out and "tenuti" not in out
+    assert main(["--lang", "it", "trim", world, "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "Totale: tenuti" in out and "chunk su" in out and "rimossi" in out
+
+
+def test_trim_summary_goes_through_the_translation():
+    from worldbridge import i18n
+
+    sc = trim.TrimScan("java_numeric", inhabited={0: {(x, 0): 0 for x in range(2000)}})
+    i18n.set_language("en")
+    assert trim.summary(sc, {0: {(0, 0)}}) == "kept 1 of 2,000 chunks · removed 1,999 (100%)"
+    i18n.set_language("it")
+    try:
+        assert trim.summary(sc, {0: {(0, 0)}}) == "tenuti 1 chunk su 2.000 · rimossi 1.999 (100%)"
+    finally:
+        i18n.set_language("en")
+
+
+def test_cli_trim_uses_the_world_folder_and_refuses_bad_outputs(tmp_path, capsys):
+    from worldbridge.cli import main
+
+    world = _java_world(tmp_path / "w")
+    # the level.dat given instead of the folder: the world is the folder that holds it
+    out = str(tmp_path / "out")
+    assert main(["--lang", "en", "trim", os.path.join(world, "level.dat"), out, "--ring", "0", "--spawn-radius", "-1"]) == 0
+    assert os.path.isfile(os.path.join(out, "level.dat"))
+    assert sorted(JavaRegion(os.path.join(out, "region", "r.0.0.mca")).chunks()) == [(2, 2), (2, 3), (3, 2), (3, 3)]
+    capsys.readouterr()
+    # not empty / a file / inside the world: one line and status 1, before the scan
+    assert main(["--lang", "en", "trim", world, out]) == 1
+    assert "not empty" in capsys.readouterr().out
+    afile = tmp_path / "afile"
+    afile.write_text("x")
+    assert main(["--lang", "en", "trim", world, str(afile)]) == 1
+    assert "is a file" in capsys.readouterr().out
+    assert main(["--lang", "en", "trim", world, os.path.join(world, "inside")]) == 1
+    assert "inside the source world" in capsys.readouterr().out
+    # a bad duration is a usage error, not a traceback
+    assert main(["--lang", "en", "trim", world, "--min-time", "abc"]) == 1
+    err = capsys.readouterr().err
+    assert "invalid duration" in err and "Traceback" not in err
