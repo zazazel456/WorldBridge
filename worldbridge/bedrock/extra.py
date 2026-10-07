@@ -165,6 +165,22 @@ def abilities_tag(values: dict) -> nbt.CompoundTag:
     return t
 
 
+BEDROCK_SPECTATOR = 6                      # GameType / PlayerGameMode of Spectator
+BEDROCK_SPECTATOR_FROM = (1, 21, 40)       # before it Bedrock has no Spectator
+
+
+def bedrock_game_mode(java_mode: Optional[int], version) -> Optional[int]:
+    """A Java game mode (0 - 3) as Bedrock ``version`` stores it: Spectator is 6 from Bedrock 1.21.40,
+    before it the nearest is Creative.  The world's GameType and the player's PlayerGameMode use the
+    same mapping, so a player in the world's mode still follows it."""
+    if java_mode is None:
+        return None
+    m = int(java_mode)
+    if m == 3:
+        return BEDROCK_SPECTATOR if tuple(version)[:3] >= BEDROCK_SPECTATOR_FROM else 1
+    return m if m in (0, 1, 2) else 0
+
+
 def legacy_player_to_bedrock(p: nbt.CompoundTag, version, uid: int, world_game_type: Optional[int] = None) -> nbt.CompoundTag:
     """world_game_type: the world's game mode; a player in that same mode follows the world
     setting (Bedrock "default" personal mode), so changing the world's mode changes the player's."""
@@ -221,10 +237,9 @@ def legacy_player_to_bedrock(p: nbt.CompoundTag, version, uid: int, world_game_t
     out["EnderChestInventory"] = nbt.ListTag([ender[i] if ender[i] is not None else empty(i) for i in range(27)], 10)
     gt = nbt.get(p, "playerGameType")
     gt = int(gt) if gt is not None and int(gt) in (0, 1, 2, 3) else None
-    # Spectator is 6 from Bedrock 1.21.40; before, the nearest is Creative
-    spectator = 6 if tuple(version) >= (1, 21, 40) else 1
-    mode = {3: spectator}.get(gt, gt)
-    if gt is None or (world_game_type is not None and mode == {3: spectator}.get(world_game_type, world_game_type)):
+    mode = bedrock_game_mode(gt, version)
+    # compared with the world's mode as write_bedrock_level_dat writes it
+    if gt is None or (world_game_type is not None and mode == bedrock_game_mode(world_game_type, version)):
         out["PlayerGameMode"] = nbt.IntTag(5)  # "default": follows the world
     else:
         out["PlayerGameMode"] = nbt.IntTag(mode)

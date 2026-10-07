@@ -892,9 +892,6 @@ def _flat_options() -> nbt.CompoundTag:
         "structures": nbt.CompoundTag({"village": nbt.CompoundTag()})})
 
 
-BEDROCK_GAMETYPE = {0: 0, 1: 1, 2: 2, 3: 1}
-
-
 def write_bedrock_level_dat(path: str, info: WorldInfo, version) -> None:
     """Merge the source level information into the Bedrock level.dat created by Amulet."""
     p = os.path.join(path, "level.dat")
@@ -922,7 +919,9 @@ def write_bedrock_level_dat(path: str, info: WorldInfo, version) -> None:
     sx, sy, sz = info.spawn
     root["SpawnX"], root["SpawnY"], root["SpawnZ"] = nbt.IntTag(sx), nbt.IntTag(sy), nbt.IntTag(sz)
     gt = int(nbt.get(src, "GameType", 0) or 0)
-    root["GameType"] = nbt.IntTag(BEDROCK_GAMETYPE.get(gt, 0))
+    from .bedrock.extra import bedrock_game_mode
+
+    root["GameType"] = nbt.IntTag(bedrock_game_mode(gt, version))   # Spectator 3 is 6 where Bedrock has it
     diff = nbt.get(src, "Difficulty")
     root["Difficulty"] = nbt.IntTag(2 if diff is None else int(diff))  # 0 is Peaceful, not "missing"
     gen = str(nbt.get(src, "generatorName", "default") or "default").lower()
@@ -982,7 +981,7 @@ def bedrock_info_to_java(root: nbt.CompoundTag) -> nbt.CompoundTag:
     if int(out["SpawnY"].py_data) > 320 or int(out["SpawnY"].py_data) < 0:
         out["SpawnY"] = nbt.IntTag(64)
     gt = int(nbt.get(root, "GameType", 0) or 0)
-    out["GameType"] = nbt.IntTag(gt if gt in (0, 1, 2) else 0)
+    out["GameType"] = nbt.IntTag(gt if gt in (0, 1, 2) else 3 if gt == 6 else 0)   # 6: Spectator (3 is not)
     diff = nbt.get(root, "Difficulty")
     out["Difficulty"] = nbt.ByteTag(2 if diff is None else int(diff))  # 0 is Peaceful, not "missing"
     out["Time"] = nbt.LongTag(int(nbt.get(root, "currentTick", 0) or 0))
