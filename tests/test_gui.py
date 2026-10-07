@@ -7,7 +7,7 @@ import time
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+QtWidgets = pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)   # pytest >= 8.2: a broken libEGL skips
 
 from PySide6.QtGui import QColor, QPalette  # noqa: E402
 
