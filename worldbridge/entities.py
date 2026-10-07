@@ -442,8 +442,27 @@ def from_java_modern(e: nbt.CompoundTag) -> Optional[dict]:
     return c
 
 
+# Pocket Edition 0.9 - 0.16 (LevelDB) saved an entity by its number, ``id`` (a few later versions OR the
+# category into the high bytes): the numbers are Bedrock's legacy ones.  The names are Java's, or the
+# Bedrock identifier FROM_BEDROCK translates.
+PE_ENTITY_NUMBERS = {
+    **items.BEDROCK_ENTITY_NAMES, 51: "npc", 52: "wither", 53: "ender_dragon", 63: "player", 64: "item", 65: "tnt",
+    66: "falling_block", 68: "xp_bottle", 69: "xp_orb", 70: "eye_of_ender_signal", 71: "ender_crystal",
+    72: "fireworks_rocket", 73: "thrown_trident", 76: "shulker_bullet", 77: "fishing_hook", 79: "dragon_fireball",
+    80: "arrow", 81: "snowball", 82: "egg", 83: "painting", 84: "minecart", 85: "fireball", 86: "splash_potion",
+    87: "ender_pearl", 88: "leash_knot", 89: "wither_skull", 90: "boat", 91: "wither_skull", 93: "lightning_bolt",
+    94: "small_fireball", 95: "area_effect_cloud", 96: "hopper_minecart", 97: "tnt_minecart", 98: "chest_minecart",
+    100: "command_block_minecart", 101: "lingering_potion", 102: "llama_spit", 103: "evocation_fang"}
+
+
 def from_bedrock(e: nbt.CompoundTag) -> Optional[dict]:
     ident = str(nbt.get(e, "identifier", "") or "")
+    pe_numeric = False
+    if not ident:
+        num = nbt.get(e, "id")
+        if isinstance(num, int) and not isinstance(num, bool):     # Pocket Edition 0.9 - 0.16
+            ident = PE_ENTITY_NUMBERS.get(num & 0xFF, "")
+            pe_numeric = True
     if not ident:
         return None
     n = ident.split(":", 1)[-1]
@@ -457,10 +476,10 @@ def from_bedrock(e: nbt.CompoundTag) -> Optional[dict]:
     if nbt.get(e, "CustomNameVisible"):
         c["name_visible"] = True
     for a in nbt.get_tag(e, "Attributes") or []:
-        if nbt.get(a, "Name") == "minecraft:health":
+        if nbt.get(a, "Name") in ("minecraft:health", "generic.health"):
             c["health"] = float(nbt.get(a, "Current", 20.0))
     c["extra"] = {}
-    if nbt.get(e, "IsBaby"):
+    if nbt.get(e, "IsBaby") or (pe_numeric and int(nbt.get(e, "Age", 0) or 0) < 0):
         c["extra"]["Age"] = nbt.IntTag(-24000)
     if "Color" in e and n == "sheep":
         c["extra"]["Color"] = nbt.ByteTag(int(nbt.get(e, "Color")))

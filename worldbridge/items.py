@@ -904,10 +904,55 @@ def _bedrock_block_to_flat(name: str, states_key: tuple, version: Optional[Tuple
         return None
 
 
+# Pocket Edition 0.9 - 0.16 item ids that are not Java's: (Java id, Damage) of the Java 1.8 - 1.12 item
+_PE_ITEM_IDS = {457: (434, 0), 458: (435, 0), 459: (436, 0), 460: (349, 1), 461: (349, 2), 462: (349, 3),
+                463: (350, 1), 466: (322, 1)}
+
+
+def _from_pe_numeric(t: nbt.CompoundTag) -> Optional[Item]:
+    """An item of a Pocket Edition 0.9 - 0.16 world: ``{id: short, Damage, Count, tag}`` with the numeric
+    ids of the time (Java's, bar a few blocks and items) and no Name."""
+    iid = nbt.get(t, "id")
+    if isinstance(iid, str) or not isinstance(iid, int) or iid <= 0 or int(nbt.get(t, "Count", 1) or 0) <= 0:
+        return None            # id 0, or Count 0 / -1: an empty slot (the hotbar's links are id 255, Count -1)
+    dmg = int(nbt.get(t, "Damage", 0) or 0)
+    if iid < 256:
+        from .bedrock.pe_old import PE_TO_JAVA
+
+        iid, dmg = PE_TO_JAVA.get(iid, (iid, dmg))
+    iid, dmg = _PE_ITEM_IDS.get(iid, (iid, dmg))
+    if iid == 383:  # a spawn egg: the Damage is Bedrock's entity number
+        mob = BEDROCK_ENTITY_NAMES.get(dmg & 0xFF)
+        if mob is None:
+            return None
+        it = Item(name=f"{mob}_spawn_egg", count=int(nbt.get(t, "Count", 1) or 1), damage=0, slot=nbt.get(t, "Slot"))
+    else:
+        t2 = nbt.CompoundTag({"id": nbt.ShortTag(iid), "Damage": nbt.ShortTag(dmg),
+                              "Count": nbt.ByteTag(int(nbt.get(t, "Count", 1) or 1))})
+        if nbt.get(t, "Slot") is not None:
+            t2["Slot"] = nbt.ByteTag(int(nbt.get(t, "Slot")))
+        it = from_legacy(t2)
+        if it is None or it["name"] == "air":
+            return None
+    tag = nbt.get_tag(t, "tag")
+    if tag is not None:
+        ench = _ench_list(nbt.get_tag(tag, "ench"), dict(enumerate(BEDROCK_ENCH)))   # Bedrock's enchantment ids
+        it["stored" if it["name"] == "enchanted_book" else "ench"] = ench
+        disp = nbt.get_tag(tag, "display")
+        if disp is not None:
+            if "Name" in disp:
+                it["custom_name"] = str(nbt.get(disp, "Name"))
+            if "Lore" in disp:
+                it["lore"] = [str(x.py_data) for x in disp["Lore"]]
+        if "customColor" in tag:
+            it["color"] = int(nbt.get(tag, "customColor")) & 0xFFFFFF
+    return it
+
+
 def from_bedrock(t: nbt.CompoundTag) -> Optional[Item]:
     name = str(nbt.get(t, "Name", "") or "")
     if not name:
-        return None
+        return _from_pe_numeric(t) if nbt.get(t, "id") is not None else None
     n = name.split(":", 1)[-1]
     dmg = int(nbt.get(t, "Damage", 0) or 0)
     it = Item(count=int(nbt.get(t, "Count", 1) or 1), damage=0, slot=nbt.get(t, "Slot"))

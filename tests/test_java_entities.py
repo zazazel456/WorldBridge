@@ -68,6 +68,29 @@ def test_empty_lce_owner_is_removed_and_uuid_owner_converted():
     assert str(named["Owner"].py_data) == "Steve"
 
 
+def test_pocket_edition_entities_are_read_by_their_number():
+    from worldbridge import entities
+
+    def pe(num, **kw):
+        e = nbt.CompoundTag({"id": nbt.IntTag(num), "Pos": nbt.ListTag([nbt.FloatTag(1.5), nbt.FloatTag(64), nbt.FloatTag(2.5)], 5),
+                             "Motion": nbt.ListTag([nbt.FloatTag(0)] * 3, 5), "Rotation": nbt.ListTag([nbt.FloatTag(10), nbt.FloatTag(0)], 5)})
+        for k, v in kw.items():
+            e[k] = v
+        return entities.from_bedrock(e)
+
+    assert [pe(n)["name"] for n in (10, 11, 12, 13, 14, 16, 32, 33, 34, 35, 36, 38, 65)] == [
+        "chicken", "cow", "pig", "sheep", "wolf", "mooshroom", "zombie", "creeper", "skeleton", "spider",
+        "zombified_piglin", "enderman", "tnt"]
+    assert pe(13, Color=nbt.ByteTag(5), Sheared=nbt.ByteTag(1))["extra"]["Color"].py_data == 5
+    assert pe(0x0B0D)["name"] == "sheep"                        # the category in the high byte
+    assert pe(12, Age=nbt.IntTag(-100))["extra"]["Age"].py_data == -24000
+    assert pe(99) is None and pe(63) is None
+    item = pe(64, Item=nbt.CompoundTag({"id": nbt.ShortTag(297), "Damage": nbt.ShortTag(0), "Count": nbt.ByteTag(2)}))
+    assert item["name"] == "item" and item["item"]["name"] == "bread" and item["item"]["count"] == 2
+    assert entities.to_legacy(pe(13))["id"].py_data == "Sheep"
+    assert pe(69)["name"] == "experience_orb" and pe(83)["name"] == "painting"
+
+
 def test_bedrock_numeric_era_item_names_with_damage_zero():
     from worldbridge import items
 
