@@ -294,6 +294,11 @@ def _install_legacy_fallback(version_obj=None) -> None:
         return got if isinstance(got[0], Block) and got[0].base_name != "air" else None
 
     def from_universal(self, block, *a, **kw):
+        if block.base_name == "item_frame_block" and self._parent_version.platform == "java":
+            # Bedrock's frame is a block with a block entity, Java's an entity (written from the block
+            # entity): the block is air, PyMCTranslate's stand-in is stone, which pops the frame off
+            old = tuple(self._parent_version.version_number) < (1, 13)
+            return (Block("minecraft", "air", {"block_data": an.IntTag(0)} if old else {}), None, False)
         out = orig(self, block, *a, **kw)
         try:
             res = out[0]
