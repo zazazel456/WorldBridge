@@ -276,10 +276,13 @@ def resolve_kinds(root: nbt.CompoundTag, canon: List[dict]) -> int:
     names = blocks_at(root, [tuple(c["pos"]) for c in shared])
     n = 0
     for c in shared:
-        k = tiles.JAVA_TO_KIND.get(names.get(tuple(c["pos"]), ""))
+        name = names.get(tuple(c["pos"]), "")
+        k = tiles.JAVA_TO_KIND.get(name)
         if k is not None and k != c["kind"] and tiles.KINDS[k][2] == tiles.KINDS[c["kind"]][2]:
             c["kind"] = k
             n += 1
+        if k == "chest" and name.endswith("copper_chest"):   # the block entity has the id of its block
+            c["java_id"] = name
     return n
 
 

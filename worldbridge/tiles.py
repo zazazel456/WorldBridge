@@ -156,6 +156,9 @@ def from_legacy(t: nbt.CompoundTag) -> Optional[dict]:
     src = "legacy"
     if kind in CONTAINERS or "Items" in t:
         c["items"] = _items_from(nbt.get_tag(t, "Items"), src)
+    if kind in CONTAINERS and nbt.get(t, "LootTable"):   # Java 1.9 - 1.12 chests of dungeons, mineshafts...
+        name = str(nbt.get(t, "LootTable"))
+        c["loot"] = (name if ":" in name else "minecraft:" + name, int(nbt.get(t, "LootTableSeed", 0) or 0))
     if "CustomName" in t:
         c["custom_name"] = items.plain_text(nbt.get(t, "CustomName"))
     if kind == "sign":
@@ -216,6 +219,7 @@ def from_java_modern(t: nbt.CompoundTag) -> Optional[dict]:
     c = {"kind": kind, "pos": _pos(t)}
     if kind in CONTAINERS:
         c["items"] = _items_from(nbt.get_tag(t, "Items"), "java")
+        _read_loot_java(c, t)
     if "CustomName" in t:
         cn = nbt.get_tag(t, "CustomName")
         c["custom_name"] = items._component_text(cn)
@@ -284,6 +288,7 @@ def from_bedrock(t: nbt.CompoundTag) -> Optional[dict]:
     c = {"kind": kind, "pos": _pos(t)}
     if kind in CONTAINERS:
         c["items"] = _items_from(nbt.get_tag(t, "Items"), "bedrock")
+        _read_loot_bedrock(c, t)
         if kind == "chest" and "pairx" in t:
             c["pair"] = (int(nbt.get(t, "pairx")), int(nbt.get(t, "pairz")))
     if "CustomName" in t:
@@ -349,6 +354,8 @@ def to_legacy(c: dict, lce: bool = False) -> Optional[nbt.CompoundTag]:
     t = nbt.CompoundTag({"id": nbt.StringTag(lid), "x": nbt.IntTag(x), "y": nbt.IntTag(y), "z": nbt.IntTag(z)})
     if "items" in c:
         t["Items"] = _items_to(c["items"], "legacy")
+    if kind in CONTAINERS and not lce:                    # Java 1.9+; the older games ignore them
+        _write_loot_java(c, t)
     if c.get("custom_name"):
         t["CustomName"] = nbt.StringTag(c["custom_name"])
     if kind in ("sign", "hanging_sign"):
@@ -413,6 +420,8 @@ def to_bedrock(c: dict, version) -> Optional[nbt.CompoundTag]:
     if "items" in c:
         t["Items"] = _items_to(c["items"], "bedrock", version=tuple(version))
         t["Findable"] = nbt.ByteTag(0)
+        if kind in CONTAINERS:
+            _write_loot_bedrock(c, t)
     if c.get("pair"):
         t["pairx"], t["pairz"] = nbt.IntTag(c["pair"][0]), nbt.IntTag(c["pair"][1])
         t["pairlead"] = nbt.ByteTag(1 if (x, z) < tuple(c["pair"]) else 0)
@@ -481,12 +490,16 @@ def to_java_modern(c: dict, data_version: int) -> Optional[nbt.CompoundTag]:
     jid = KINDS[kind][1]
     if jid is None or not exists_in_java(kind, data_version):
         return None
+    if kind == "chest" and c.get("java_id"):             # a copper chest block (java.modern.resolve_kinds)
+        jid = c["java_id"]
     if kind == "mob_spawner" and data_version >= 3818:
         jid = "spawner"
     x, y, z = c["pos"]
     t = nbt.CompoundTag({"id": nbt.StringTag("minecraft:" + jid), "x": nbt.IntTag(x), "y": nbt.IntTag(y), "z": nbt.IntTag(z)})
     if "items" in c:
         t["Items"] = _items_to(c["items"], "java", data_version=data_version)
+    if kind in CONTAINERS:
+        _write_loot_java(c, t)
     if c.get("custom_name"):
         t["CustomName"] = nbt.StringTag(c["custom_name"] if data_version >= items.TEXT_NBT_DV
                                         else items.json_text(c["custom_name"]))
