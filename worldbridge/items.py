@@ -220,16 +220,22 @@ def _tm():
     return translation_manager()
 
 
+def _placed_data(bid: int, dmg: int) -> int:
+    """The data value of the block an item of numeric block ``bid`` and Damage ``dmg`` places: the
+    Damage is not always a placed state (a torch is 0 in an inventory, 5 on the ground)."""
+    if bid == 145:
+        return (dmg & 3) << 2
+    if bid in (50, 75, 76):
+        return 5
+    if bid in (54, 61, 65, 130, 146, 23, 158):
+        return 2
+    return dmg & 15
+
+
 @functools.lru_cache(maxsize=None)
 def legacy_block_item_name(bid: int, dmg: int) -> Optional[str]:
     """(numeric block id, item damage) -> flattened Java name."""
-    data = dmg & 15
-    if bid == 145:
-        data = (dmg & 3) << 2
-    elif bid in (50, 75, 76):
-        data = 5
-    elif bid in (54, 61, 65, 130, 146, 23, 158):
-        data = 2
+    data = _placed_data(bid, dmg)
     try:
         v12 = _tm().get_version("java", (1, 12, 2))
         v13 = _tm().get_version("java", (1, 13, 2))
@@ -748,12 +754,14 @@ def _bedrock_block_for_flat(name: str, version: Tuple[int, ...]) -> Optional[Tup
     if leg is None or leg[0] >= 256:
         return None
     bid, d = leg
-    data = d if bid != 145 else (d & 3) << 2
+    data = _placed_data(bid, d)
     try:
         v12 = _tm().get_version("java", (1, 12, 2))
         vb = _tm().get_version("bedrock", version)
         u = v12.block.to_universal(v12.ints_to_block(bid, data))[0]
         b = vb.block.from_universal(u)[0]
+        if tuple(version) >= (1, 13, 0) and "block_data" in b.properties:
+            return None  # no state of this block: written without a Block, the game places its default
         return b.namespaced_name, dict(b.properties)
     except Exception:  # noqa: BLE001
         return None

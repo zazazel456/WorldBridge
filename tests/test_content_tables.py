@@ -195,6 +195,22 @@ def test_bedrock_block_items_carry_their_variant_in_damage():
     assert _from_bedrock("wool", 14) == "red_wool"
 
 
+def test_block_items_of_bedrock_1_13_plus_never_carry_block_data():
+    """Bedrock 1.13+ has block states, no block_data: a torch's Damage is not a placed state."""
+    for v in ((1, 13, 0), (1, 16, 220), (1, 21, 60), (26, 50, 0)):
+        for name in ("torch", "redstone_torch", "furnace", "ladder", "ender_chest", "trapped_chest", "chest", "pumpkin",
+                     "structure_block", "dispenser", "anvil", "oak_planks", "red_wool"):
+            t = items.to_bedrock(Item(name=name, count=1, damage=0), v)
+            blk = t.get("Block")
+            assert blk is None or "block_data" not in blk["states"], (name, v)
+        t = items.to_bedrock(Item(name="torch", count=1, damage=0), v)
+        assert "Block" not in t or t["Block"]["name"].py_data == "minecraft:torch"
+    # a valid state is still written
+    assert items.to_bedrock(Item(name="red_wool", count=1, damage=0), (1, 16, 20))["Block"]["states"]["color"].py_data == "red"
+    # before 1.13 the numeric era's block_data is the state
+    assert "block_data" in items.to_bedrock(Item(name="torch", count=1, damage=0), (1, 12, 0))["Block"]["states"]
+
+
 def test_java_stone_stairs_are_bedrocks_normal_stone_stairs():
     for v in ((1, 12, 0), (1, 16, 220), (1, 21, 60)):
         assert _bedrock("stone_stairs", v)[0] == "normal_stone_stairs", v
