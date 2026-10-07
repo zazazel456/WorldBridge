@@ -520,6 +520,7 @@ def _within(coords: List[Tuple[int, int]], box: Optional[Tuple[int, int, int, in
 
 def _make_writer(t: TargetSpec, out: str, progress: Progress, src: WorldSource, spawn=None):
     """``spawn``: the spawn of the converted world when it is not the source's (chunks moved)."""
+    moved = spawn
     spawn = spawn or src.info.spawn
     if t.family == "lce":
         from .lce.world import LCEWriteOptions, LCEWriter
@@ -530,10 +531,13 @@ def _make_writer(t: TargetSpec, out: str, progress: Progress, src: WorldSource, 
                                               offset_x=ox, offset_z=oz, world_name=t.world_name,
                                               host_player_id=t.lce_player_id), progress)
     if t.family == "pe_old":
-        from .bedrock.pe_old import PEOldWriter
+        from .bedrock.pe_old import PEOldWorld, PEOldWriter
 
         sx, _sy, sz = spawn
-        return PEOldWriter(out, progress, world_name=t.world_name, origin=((sx >> 4) - 8, (sz >> 4) - 8))
+        origin = ((sx >> 4) - 8, (sz >> 4) - 8)
+        if isinstance(src, PEOldWorld) and moved is None:
+            origin = (0, 0)  # a PE 0.x map is already 16 x 16 chunks from (0, 0): converting it changes nothing
+        return PEOldWriter(out, progress, world_name=t.world_name, origin=origin)
     from .java.numeric import JavaNumericWriter, JavaWriteOptions
 
     if t.family == "java" and t.java_mode in ("mcregion", "alpha"):
