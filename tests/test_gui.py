@@ -413,3 +413,292 @@ def test_source_world_edit_answers_in_the_interface_thread(app, tmp_path, monkey
         t.shutdown()
         t.close()
         app.processEvents()
+
+
+# ============================================================ review fixes (stale answers, closing, unsaved changes)
+
+
+def _java_world(tmp_path, name):
+    from .test_chunkedit import _java
+
+    return _java(tmp_path, name)[0]
+
+
+def _lce_world(tmp_path, name="lce"):
+    src = SyntheticWorld(radius=1, dims=(0,))
+    w = LCEWriter(str(tmp_path / name), LCEWriteOptions(platform="win64"), Progress())
+    for cx, cz in src.chunk_coords(0):
+        w.add_chunk(0, src.read_chunk(0, cx, cz))
+    w.finish(src.info)
+    return str(tmp_path / name)
+
+
+def _map_tab(app):
+    from worldbridge.gui.mapwidget import MapTab
+
+    t = MapTab()
+    t.show()
+    return t
+
+
+def _close_map_tab(app, t):
+    t.shutdown()
+    t.close()
+    app.processEvents()
+
+
+def test_a_trim_scan_of_another_world_is_dropped(app, tmp_path, monkeypatch):
+    """The scan of world A finishing after world B was opened was applied to B (and "Apply to the world"
+    then deleted B's chunks): the scan is cancelled when the world changes and its answer ignored."""
+    import threading
+
+    from PySide6.QtCore import QObject, Signal
+
+    from worldbridge.gui import mapwidget
+
+    release = threading.Event()
+    made = []
+
+    class SlowScan(QObject):
+        progress = Signal(float, str)
+        done = Signal(object)
+        failed = Signal(str)
+
+        def __init__(self, path):
+            super().__init__()
+            self.path = path
+            self.prog = Progress()
+            made.append(self)
+
+        def run(self):
+            release.wait(30)
+            self.done.emit(object())             # ignores the cancel: the worst case
+
+    monkeypatch.setattr(mapwidget, "ScanWorker", SlowScan)
+    applied = []
+    a, b = _java_world(tmp_path, "a"), _java_world(tmp_path, "b")
+    t = _map_tab(app)
+    try:
+        monkeypatch.setattr(t, "_apply_trim", lambda ask: applied.append(ask))
+        t.set_source(a)
+        assert _wait(app, lambda: t._meta is not None)
+        t.run_trim()
+        assert not t.trim_btn.isEnabled()                        # no second scan, no trim while one runs
+        assert all(not b_.isEnabled() for b_ in t._edit_buttons)
+        t.set_source(b)
+        assert made[0].prog.cancelled                            # the scan of A was told to stop
+        assert t.trim_btn.isEnabled()                            # B can be scanned at once
+        release.set()
+        end = time.time() + 1.5
+        while time.time() < end:
+            app.processEvents()
+            time.sleep(0.02)
+        assert t._trim_scan is None and applied == []            # nothing of A reached B
+        assert t.trim_btn.isEnabled() and all(b_.isEnabled() for b_ in t._edit_buttons)
+    finally:
+        release.set()
+        _close_map_tab(app, t)
+
+
+def test_a_new_world_starts_without_the_choices_of_the_previous_one(app, tmp_path):
+    a, b = _java_world(tmp_path, "a"), _java_world(tmp_path, "b")
+    t = _map_tab(app)
+    try:
+        t.set_source(a)
+        assert _wait(app, lambda: t._meta is not None)
+        t.painted = {0: {(1, 1): 37, (0, 0): 37}}
+        t._update_biome_status()
+        t.regen_nether.setChecked(True)
+        t.regen_end.setChecked(True)
+        t.move_sel.setChecked(True)
+        t.set_source(b)
+        assert t.painted == {} and t.biome_overrides() == {} and not t.biome_status.isVisible()
+        assert t.regen_dims() == () and not t.move_sel.isChecked() and t.move_target() is None
+        assert t.summary() == "The whole world"
+    finally:
+        _close_map_tab(app, t)
+
+
+def test_the_source_is_analysed_once_and_never_after_closing(win, app, tmp_path):
+    """Closing the window made the box lose the focus (editingFinished) and started an analysis whose thread
+    outlived the window (abort of the whole program); the same signal re-analysed a world at every focus-out."""
+    world = _java_world(tmp_path, "w")
+    win.src_edit.setText(world)
+    win._on_source_changed(force=True)
+    assert _wait(app, lambda: win._src_kind == "java_numeric")
+    seq = win._detect_seq
+    win._on_source_changed()                                     # focus-out: the same path
+    assert win._detect_seq == seq
+    win._on_source_changed(force=True)                           # picked again on purpose
+    assert win._detect_seq == seq + 1
+    assert _wait(app, lambda: not win._threads)
+    win.src_edit.setText(str(tmp_path / "other"))
+    win.close()
+    seq = win._detect_seq
+    win._on_source_changed()                                     # the focus-out caused by the close
+    win._on_source_changed(force=True)
+    assert win._detect_seq == seq and not win._threads
+
+
+def test_a_slower_older_analysis_does_not_overwrite_a_newer_one(win, app, tmp_path, monkeypatch):
+    import threading
+
+    from worldbridge.gui import app as gui_app
+
+    slow_path = _lce_world(tmp_path)
+    fast_path = _java_world(tmp_path, "java")
+    gate = threading.Event()
+
+    class Gated(gui_app.DetectWorker):
+        def run(self):
+            if self.path == slow_path:
+                gate.wait(30)
+            super().run()
+
+    monkeypatch.setattr(gui_app, "DetectWorker", Gated)
+    try:
+        win.src_edit.setText(slow_path)
+        win._on_source_changed(force=True)
+        win.src_edit.setText(fast_path)
+        win._on_source_changed(force=True)
+        assert _wait(app, lambda: win._src_kind == "java_numeric")
+        gate.set()
+        assert _wait(app, lambda: not win._threads)
+        assert win._src_kind == "java_numeric" and win.map_tab._path == fast_path     # not the LCE world's answer
+    finally:
+        gate.set()
+
+
+def test_closing_during_a_conversion_waits_for_the_cancel(win, app):
+    """Closing at once left Amulet's processes and the .worldbridge_* folders behind: the window stays until
+    the conversion has stopped (it is cancelled), then closes."""
+    cancelled = []
+
+    class Fake:
+        def cancel(self):
+            cancelled.append(True)
+
+    win._worker = Fake()
+    win.close()
+    app.processEvents()
+    assert win.isVisible() and cancelled == [True]
+    win.close()                                                  # asked again: still one cancel
+    assert win.isVisible() and cancelled == [True]
+    win._on_finished(False, "Conversion cancelled.", [])
+    app.processEvents()
+    assert not win.isVisible() and win._worker is None
+
+
+def test_world_management_asks_before_discarding_changes(app, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    from worldbridge.gui.manageui import ManageTab
+
+    a, b = _java_world(tmp_path, "a"), _java_world(tmp_path, "b")
+    answers = []
+    asked = []
+
+    def fake_exec(self):
+        asked.append(self.text())
+        return answers.pop(0)
+
+    monkeypatch.setattr(QMessageBox, "exec", fake_exec)
+    tab = ManageTab()
+    try:
+        tab.open(a)
+        assert tab.world is not None and tab.maybe_discard() and asked == []      # nothing to lose
+        tab.world.docs[0].dirty = True
+        answers[:] = [QMessageBox.Cancel]
+        assert tab.open(b) is False
+        assert os.path.abspath(tab.world.path) == os.path.abspath(a) and tab.has_changes()
+        tab.path_edit.setText(b)
+        answers[:] = [QMessageBox.Cancel]
+        tab._typed_path()                                        # Enter in the box
+        assert os.path.abspath(tab.world.path) == os.path.abspath(a) and tab.path_edit.text() == tab.world.path
+        answers[:] = [QMessageBox.Cancel]
+        tab._reload()
+        assert tab.has_changes()
+        answers[:] = [QMessageBox.Save]
+        assert tab.open(b) and not tab.has_changes()             # saved first, then the other world
+        assert os.path.exists(os.path.join(a, "level.dat.wb-backup"))
+        assert os.path.abspath(tab.world.path) == os.path.abspath(b)
+        tab.world.docs[0].dirty = True
+        answers[:] = [QMessageBox.Discard]
+        tab._reload()
+        assert not tab.has_changes() and len(asked) == 5 and answers == []
+    finally:
+        tab.close()
+
+
+def test_closing_the_window_asks_about_unsaved_world_changes(win, app, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    win.manage_tab.open(_java_world(tmp_path, "w"))
+    win.manage_tab.world.docs[0].dirty = True
+    answers = [QMessageBox.Cancel, QMessageBox.Discard]
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: answers.pop(0))
+    win.close()
+    assert win.isVisible() and win.manage_tab.has_changes()
+    win.close()
+    assert not win.isVisible() and answers == []
+
+
+def test_the_failure_banner_is_short_and_names_the_error(monkeypatch):
+    from worldbridge.gui import app as gui_app
+    from worldbridge.model import ConversionError
+
+    assert gui_app._failure_text(KeyError("foo")) == "KeyError: 'foo'"
+    assert gui_app._failure_text(ConversionError("Nothing to convert.")) == "Nothing to convert."
+    long = gui_app._failure_text(ConversionError("x" * 60000))
+    assert len(long) < 330 and long.endswith("… (see the log)")
+    monkeypatch.setattr(gui_app, "convert", lambda *a, **k: (_ for _ in ()).throw(ValueError("bad " * 500)))
+    w = gui_app.ConvertWorker("s", "o", None)
+    got = []
+    w.finished.connect(lambda ok, msg, warns: got.append((ok, msg)))
+    w.run()
+    assert got and got[0][0] is False and got[0][1].startswith("ValueError: bad") and len(got[0][1]) < 330
+
+
+def test_trimmed_copy_of_a_world_opened_as_a_file(app, tmp_path, monkeypatch):
+    """"Save trimmed world" on a world opened through its level.dat copied the file's path: Not a directory."""
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+
+    world = _java_world(tmp_path, "w")
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(dest)))
+    shown = []
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: shown.append(a[2])))
+    monkeypatch.setattr(QMessageBox, "critical", staticmethod(lambda *a, **k: shown.append("FAILED " + a[2])))
+    t = _map_tab(app)
+    try:
+        t.set_source(os.path.join(world, "level.dat"))
+        assert _wait(app, lambda: t._meta is not None)
+        t._save_trimmed({0: {(0, 0)}})
+        assert _wait(app, lambda: shown, 60)
+        assert not shown[0].startswith("FAILED"), shown
+        assert sorted(os.listdir(dest)) == ["w_trim"] and os.path.isfile(dest / "w_trim" / "level.dat")
+    finally:
+        _close_map_tab(app, t)
+
+
+def test_trim_settings_do_not_touch_the_user_settings_when_not_remembered(app, monkeypatch):
+    from worldbridge.gui import trimui
+    from worldbridge.gui.app import MainWindow
+
+    def forbidden():
+        raise AssertionError("the real user settings were used")
+
+    monkeypatch.setattr(trimui, "_settings", forbidden)
+    w = MainWindow(remember=False)
+    try:
+        ts = w.map_tab.trim_settings
+        ts.amount.setValue(ts.amount.value() + 5)               # would be written
+        ts.heat.setChecked(True)
+        assert ts.show_heat() and not ts._remember
+    finally:
+        w.close()
+    s = trimui.TrimSettings(remember=False)
+    s.ring.setValue(9)
+    assert s.options().ring == 9
+    s.close()

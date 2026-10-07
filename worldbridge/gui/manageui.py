@@ -125,7 +125,7 @@ class ManageTab(QWidget):
         bottom.addWidget(self.state, 1)
         self.btn_reload = QPushButton(theme.icon("view-refresh", fallback=QStyle.SP_BrowserReload), tr("Reload"))
         self.btn_reload.setToolTip(tr("Read the world from disk again (unsaved changes are lost)"))
-        self.btn_reload.clicked.connect(self._open_path)
+        self.btn_reload.clicked.connect(self._reload)
         self.btn_save = QPushButton(theme.icon("document-save", fallback=QStyle.SP_DialogSaveButton), tr("&Save changes"))
         self.btn_save.setToolTip(tr("Write the changes into the world (a *.wb-backup copy first)"))
         self.btn_save.clicked.connect(self._save)
@@ -135,9 +135,33 @@ class ManageTab(QWidget):
         v.addLayout(bottom)
 
     # ------------------------------------------------------------------ opening
-    def open(self, path: str) -> None:
+    def open(self, path: str, manual=None) -> bool:
+        """Opens ``path``, after asking what to do with unsaved changes (False: the user cancelled)."""
+        if not self.maybe_discard():
+            return False
+        if manual is not None:
+            self._manual = manual
         self.path_edit.setText(path)
         self._open_path()
+        return True
+
+    def _reload(self):
+        if self.maybe_discard():
+            self._open_path()
+
+    def maybe_discard(self) -> bool:
+        """True when the world has no unsaved changes or the user chose to save or discard them."""
+        if not self.has_changes():
+            return True
+        box = QMessageBox(QMessageBox.Question, tr("Unsaved changes"),
+                          tr("The world has unsaved changes. Save them before going on?"),
+                          QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel, self)
+        box.setDefaultButton(QMessageBox.Save)
+        r = box.exec()
+        if r == QMessageBox.Save:
+            self._save()
+            return not self.has_changes()
+        return r == QMessageBox.Discard
 
     def follow_source(self, path: str) -> None:
         """The world of the conversion tab is the one managed here, unless another one was opened by
@@ -166,18 +190,20 @@ class ManageTab(QWidget):
     def _pick_dir(self):
         d = QFileDialog.getExistingDirectory(self, tr("World folder"), self.path_edit.text())
         if d:
-            self._manual = True
-            self.open(d)
+            self.open(d, manual=True)
 
     def _pick_file(self):
         f, _ = QFileDialog.getOpenFileName(self, tr("Save file (LCE: saveData.ms, savegame.dat, GAMEDATA…)"),
                                            self.path_edit.text())
         if f:
-            self._manual = True
-            self.open(f)
+            self.open(f, manual=True)
 
     def _typed_path(self):
-        self._manual = self.path_edit.text().strip() != getattr(self, "_source", "")
+        typed = self.path_edit.text().strip()
+        if not self.maybe_discard():
+            self.path_edit.setText(self.world.path)            # stays on the world with the changes
+            return
+        self._manual = typed != getattr(self, "_source", "")
         self._open_path()
 
     def _open_path(self):

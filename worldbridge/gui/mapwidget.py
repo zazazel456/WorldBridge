@@ -254,16 +254,17 @@ class MapCanvas(QWidget):
         self.selection_changed.emit()
         self.update()
 
-    def _heat_image(self, rx: int, rz: int) -> Optional[QImage]:
+    def _heat_image(self, rx: int, rz: int, items=None) -> Optional[QImage]:
+        """The heat map of one region; ``items`` = its (chunk, InhabitedTime) pairs (grouped once per paint)."""
         key = (self.dim, rx, rz)
         img = self._heat_img.get(key)
         if img is None:
             arr = np.zeros((32, 32, 4), np.uint8)
             lo = max(1, self.heat_min)
             span = math.log(max(lo * 2, 72000 * 10) / lo)  # threshold .. 10 hours
-            for (cx, cz), t in self.heat.get(self.dim, {}).items():
-                if cx >> 5 != rx or cz >> 5 != rz:
-                    continue
+            if items is None:
+                items = [(c, t) for c, t in self.heat.get(self.dim, {}).items() if c[0] >> 5 == rx and c[1] >> 5 == rz]
+            for (cx, cz), t in items:
                 if t is None:
                     col = (140, 140, 160, 120)
                 elif t < self.heat_min:
@@ -364,16 +365,17 @@ class MapCanvas(QWidget):
         self.selection_changed.emit()
         self.update()
 
-    def _selection_image(self, rx: int, rz: int) -> Optional[QImage]:
+    def _selection_image(self, rx: int, rz: int, chunks=None) -> Optional[QImage]:
+        """The selection of one region; ``chunks`` = its selected chunks (grouped once per paint)."""
         key = (self.dim, rx, rz)
         img = self._sel_img.get(key)
         if img is None:
-            s = self.selection.get(self.dim, set())
+            if chunks is None:
+                chunks = [c for c in self.selection.get(self.dim, ()) if c[0] >> 5 == rx and c[1] >> 5 == rz]
             arr = np.zeros((32, 32, 4), np.uint8)
             base_x, base_z = rx * 32, rz * 32
-            for cx, cz in s:
-                if cx >> 5 == rx and cz >> 5 == rz:
-                    arr[cz - base_z, cx - base_x] = (60, 150, 255, 110)
+            for cx, cz in chunks:
+                arr[cz - base_z, cx - base_x] = (60, 150, 255, 110)
             if not arr[..., 3].any():
                 self._sel_img[key] = QImage()
                 return None
@@ -391,22 +393,27 @@ class MapCanvas(QWidget):
         rx1, rz1 = math.floor(br.x() / 512), math.floor(br.y() / 512)
         p.setRenderHint(QPainter.SmoothPixmapTransform, self.scale < 1)
         regs = self.regions.get(self.dim, {})
-        sel_regions = {(cx >> 5, cz >> 5) for cx, cz in self.selection.get(self.dim, ())}
         for (rx, rz), img in regs.items():
             if rx0 <= rx <= rx1 and rz0 <= rz <= rz1:
                 a = self.to_screen(rx * 512, rz * 512)
                 p.drawImage(QRectF(a.x(), a.y(), 512 * self.scale, 512 * self.scale), img)
         p.setRenderHint(QPainter.SmoothPixmapTransform, False)
         if self.show_heat and self.heat.get(self.dim):
-            for rx, rz in {(cx >> 5, cz >> 5) for cx, cz in self.heat[self.dim]}:
+            by_reg: Dict[Chunk, list] = {}
+            for c, t in self.heat[self.dim].items():       # grouped once: not a scan per region
+                by_reg.setdefault((c[0] >> 5, c[1] >> 5), []).append((c, t))
+            for (rx, rz), items in by_reg.items():
                 if rx0 <= rx <= rx1 and rz0 <= rz <= rz1:
-                    img = self._heat_image(rx, rz)
+                    img = self._heat_image(rx, rz, items)
                     if img is not None:
                         a = self.to_screen(rx * 512, rz * 512)
                         p.drawImage(QRectF(a.x(), a.y(), 512 * self.scale, 512 * self.scale), img)
-        for rx, rz in sel_regions:
+        sel_by_reg: Dict[Chunk, list] = {}
+        for c in self.selection.get(self.dim, ()):
+            sel_by_reg.setdefault((c[0] >> 5, c[1] >> 5), []).append(c)
+        for (rx, rz), cs in sel_by_reg.items():
             if rx0 <= rx <= rx1 and rz0 <= rz <= rz1:
-                img = self._selection_image(rx, rz)
+                img = self._selection_image(rx, rz, cs)
                 if img is not None:
                     a = self.to_screen(rx * 512, rz * 512)
                     p.drawImage(QRectF(a.x(), a.y(), 512 * self.scale, 512 * self.scale), img)
@@ -536,9 +543,14 @@ class MapCanvas(QWidget):
             if self._rubber is not None:
                 c0 = self._chunk_at(self._rubber.topLeft())
                 c1 = self._chunk_at(self._rubber.bottomRight())
-                chunks = [(x, z) for x in range(c0[0], c1[0] + 1) for z in range(c0[1], c1[1] + 1)]
-                pres = self.present.get(self.dim, set())
-                self.set_chunks([c for c in chunks if c in pres] if pres else chunks, not remove)
+                pres = self.present.get(self.dim)
+                if pres:     # nothing to select on a dimension whose tiles have not arrived yet
+                    area = (c1[0] - c0[0] + 1) * (c1[1] - c0[1] + 1)
+                    if area > len(pres):
+                        hit = [c for c in pres if c0[0] <= c[0] <= c1[0] and c0[1] <= c[1] <= c1[1]]
+                    else:
+                        hit = [(x, z) for x in range(c0[0], c1[0] + 1) for z in range(c0[1], c1[1] + 1) if (x, z) in pres]
+                    self.set_chunks(hit, not remove)
             else:
                 cx, cz = self._chunk_at(e.position())
                 if whole_region:
@@ -598,8 +610,9 @@ class MapTab(QWidget):
     meta_loaded = Signal(object)
     summary_changed = Signal()        # what will be converted changed (see summary())
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, remember=None):
         super().__init__(parent)
+        self._remember = remember
         self._gui = GuiThread(self)
         self._path = ""
         self._thread: Optional[QThread] = None
@@ -641,6 +654,8 @@ class MapTab(QWidget):
         self._trim_scan = None
         self._trim_active = False
         self._trim_thread = None
+        self._job = None                 # the background worker running (trim scan, copy or edit), if any
+        self._gen = 0                    # counts the worlds opened: a worker's late answer is for an old one
         self._syncing = False
         self._pending = None
         self._keep_view = False
@@ -745,7 +760,7 @@ class MapTab(QWidget):
         self.trim_gear.setPopupMode(QToolButton.InstantPopup)
         self.trim_gear.setAutoRaise(True)
         menu = QMenu(self.trim_gear)
-        self.trim_settings = TrimSettings()
+        self.trim_settings = TrimSettings(remember=self._remember)
         wa = QWidgetAction(menu)
         wa.setDefaultWidget(self.trim_settings)
         menu.addAction(wa)
@@ -850,6 +865,7 @@ class MapTab(QWidget):
         v.addWidget(HintLabel(tr("Changes the open world right away, without converting. The changed files are "
                                  "copied first; close the game.")))
         edit = QGridLayout()
+        self._edit_buttons = []
         for i, (label, slot, tip) in enumerate((
                 (tr("Delete the selected chunks…"), self._edit_remove,
                  tr("Removes the selected chunks from the world: the game generates them again")),
@@ -858,6 +874,7 @@ class MapTab(QWidget):
             b = QPushButton(theme.icon("edit-delete", "delete"), label)
             b.setToolTip(tip + " " + tr("(the changed files are copied first)."))
             b.clicked.connect(slot)
+            self._edit_buttons.append(b)
             edit.addWidget(b, i, 0)
         v.addLayout(edit)
         self.world_biome_box = QComboBox()
@@ -869,6 +886,7 @@ class MapTab(QWidget):
         b.setToolTip(tr("The selected chunks of the source world take this biome right away (the changed files are "
                         "copied first)."))
         b.clicked.connect(self._edit_paint)
+        self._edit_buttons.append(b)
         v.addWidget(b, 0, Qt.AlignLeft)
         self.world_game_label = HintLabel("")
         v.addWidget(self.world_game_label)
@@ -980,6 +998,8 @@ class MapTab(QWidget):
         if path == self._path:
             return
         self._shutdown()
+        self._drop_job()
+        self._gen += 1
         self._path = path
         self._meta = None
         self._keep_view = False
@@ -991,6 +1011,12 @@ class MapTab(QWidget):
         self.dim_box.blockSignals(False)
         self.scope_all.setChecked(True)
         self.use_spawn.setChecked(False)
+        # what was chosen for the previous world (chunk coordinates, regeneration, move) is not valid for this one
+        self.painted = {}
+        self._update_biome_status()
+        self.regen_nether.setChecked(False)
+        self.regen_end.setChecked(False)
+        self.move_sel.setChecked(False)
         self._trim_scan = None
         self._trim_active = False
         self.trim_btn.setEnabled(bool(path))
@@ -1170,35 +1196,60 @@ class MapTab(QWidget):
 
     # ---------------------------------------------------------- world trim
     def _run_worker(self, worker, on_done, on_failed):
+        """Runs ``worker`` in its own thread. Its answer is dropped when another world was opened meanwhile."""
         th = QThread(self)
         worker.moveToThread(th)
         th.started.connect(worker.run)
-        worker.done.connect(self._gui.wrap(on_done))         # the callbacks show message boxes: interface thread
-        worker.failed.connect(self._gui.wrap(on_failed))
+        gen = self._gen
+
+        def answer(fn):
+            def call(*args):
+                if self._job is worker:
+                    self._job = None
+                    self._set_busy(False)
+                if gen == self._gen:                         # else: the answer is for the previous world
+                    fn(*args)
+            return call
+
+        worker.done.connect(self._gui.wrap(answer(on_done)))         # the callbacks show message boxes: interface thread
+        worker.failed.connect(self._gui.wrap(answer(on_failed)))
         worker.done.connect(th.quit)
         worker.failed.connect(th.quit)
-        worker.progress.connect(self._gui.wrap(lambda f, m: self.status.setText(f"{m}  ({f * 100:.0f}%)")))
+        worker.progress.connect(self._gui.wrap(lambda f, m: self.status.setText(f"{m}  ({f * 100:.0f}%)")
+                                               if gen == self._gen else None))
         self._trim_thread = (th, worker)
+        self._job = worker
+        self._set_busy(True)
         th.start()
+
+    def _set_busy(self, on: bool) -> None:
+        """While a scan, copy or edit runs: no second one (two edits on the same files), no trim."""
+        for b in self._edit_buttons:
+            b.setEnabled(not on)
+        self.trim_btn.setEnabled(bool(self._path) and not on)
+
+    def _drop_job(self) -> None:
+        """The world changes: a running scan is cancelled and the answer of any worker will be ignored."""
+        job, self._job = self._job, None
+        if isinstance(job, ScanWorker):
+            job.prog.cancel()
+        self._set_busy(False)
 
     def run_trim(self):
         """✂: reads InhabitedTime (once per world) and selects the chunks that stay."""
-        if not self._path:
+        if not self._path or self._job is not None:
             return
         if self._trim_scan is not None:
             self._apply_trim(ask=True)
             return
-        self.trim_btn.setEnabled(False)
         self.status.setText(tr("Reading the time spent in the chunks (InhabitedTime)…"))
         self._run_worker(ScanWorker(self._path), self._on_trim_scanned, self._on_trim_failed)
 
     def _on_trim_failed(self, msg: str):
-        self.trim_btn.setEnabled(bool(self._path))
         self.status.setText(tr("Trim not available: {error}", error=msg))
         QMessageBox.information(self, tr("World trim"), tr("Trim not available for this world.") + f"\n\n{msg}")
 
     def _on_trim_scanned(self, sc):
-        self.trim_btn.setEnabled(True)
         self._trim_scan = sc
         self._apply_trim(ask=True)
 
@@ -1268,32 +1319,36 @@ class MapTab(QWidget):
     def _save_trimmed(self, keep):
         import os
 
-        parent = QFileDialog.getExistingDirectory(self, tr("Where to save the trimmed world"), os.path.dirname(self._path))
+        from .. import detect as det
+
+        try:                  # the world may have been opened as a file (its level.dat): its folder is copied
+            d = det.detect(self._path)
+        except Exception:  # noqa: BLE001
+            d = None
+        root = os.path.normpath(d.path if d is not None and os.path.isdir(d.path) else self._path)
+        parent = QFileDialog.getExistingDirectory(self, tr("Where to save the trimmed world"), os.path.dirname(root))
         if not parent:
             return
-        base = os.path.basename(os.path.normpath(self._path)) + "_trim"
+        base = os.path.basename(root) + "_trim"
         out = os.path.join(parent, base)
         n = 2
         while os.path.exists(out):
             out = os.path.join(parent, f"{base}_{n}")
             n += 1
-        self.trim_btn.setEnabled(False)
 
         def done(removed, before, after):
             from ..trim import human_size
 
-            self.trim_btn.setEnabled(True)
             self.status.setText(tr("Trimmed world saved: {path}", path=out))
             QMessageBox.information(self, tr("World trim"), tr(
                 "Trimmed world saved in:\n{path}\n\n{n} chunks removed · {before} → {after}\n\nThe original world was "
                 "not modified.", path=out, n=removed, before=human_size(before), after=human_size(after)))
 
         def failed(msg):
-            self.trim_btn.setEnabled(True)
             self.status.setText(tr("Saving the trimmed world failed: {error}", error=msg))
             QMessageBox.critical(self, tr("World trim"), tr("Saving failed:") + f"\n\n{msg}")
 
-        self._run_worker(CopyWorker(self._path, out, keep), done, failed)
+        self._run_worker(CopyWorker(root, out, keep), done, failed)
 
     # ---------------------------------------------------------- spawn
     def _set_spawn_boxes(self, sp):

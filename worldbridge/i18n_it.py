@@ -1117,6 +1117,8 @@ _SECTIONS = {
             'Nuovo nome:',
         'Unsaved changes':
             'Modifiche non salvate',
+        'The world has unsaved changes. Save them before going on?':
+            'Il mondo ha modifiche non salvate. Salvarle prima di continuare?',
         'Saving failed':
             'Salvataggio non riuscito',
         'Saved (backup copy: *.wb-backup)':
@@ -1385,6 +1387,8 @@ _SECTIONS = {
             'Avvio…',
         'Cancelling…':
             'Annullamento in corso…',
+        '… (see the log)':
+            '… (vedi il registro)',
         'Completed':
             'Completato',
         'Conversion completed.':

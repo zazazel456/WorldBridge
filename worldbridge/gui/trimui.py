@@ -19,13 +19,23 @@ def _settings() -> QSettings:
     return QSettings("WorldBridge", "WorldBridge")
 
 
+def _remember_by_default() -> bool:
+    """Values are kept between sessions in the real application only (not in tests)."""
+    from PySide6.QtWidgets import QApplication
+
+    from .. import APP_NAME
+
+    return QApplication.organizationName() == APP_NAME
+
+
 class TrimSettings(QWidget):
     """The settings popup: InhabitedTime threshold and the protections."""
 
     changed = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, remember=None):
         super().__init__(parent)
+        self._remember = _remember_by_default() if remember is None else remember
         self.setMinimumWidth(430)
         v = QVBoxLayout(self)
         v.setContentsMargins(12, 10, 12, 10)
@@ -114,6 +124,10 @@ class TrimSettings(QWidget):
         return self.heat.isChecked()
 
     def _load(self):
+        if not self._remember:
+            self._loading = True
+            self.set_options(DEFAULTS)
+            return
         s = _settings()
         opt = TrimOptions(
             min_ticks=int(s.value("trim/min_ticks", DEFAULTS.min_ticks)), ring=int(s.value("trim/ring", DEFAULTS.ring)),
@@ -128,13 +142,14 @@ class TrimSettings(QWidget):
         if self._loading:
             return
         o = self.options()
-        s = _settings()
-        s.setValue("trim/min_ticks", o.min_ticks)
-        s.setValue("trim/ring", o.ring)
-        s.setValue("trim/spawn_radius", o.spawn_radius)
-        s.setValue("trim/keep_forced", o.keep_forced)
-        s.setValue("trim/keep_unknown", o.keep_unknown)
-        s.setValue("trim/heat", self.heat.isChecked())
+        if self._remember:
+            s = _settings()
+            s.setValue("trim/min_ticks", o.min_ticks)
+            s.setValue("trim/ring", o.ring)
+            s.setValue("trim/spawn_radius", o.spawn_radius)
+            s.setValue("trim/keep_forced", o.keep_forced)
+            s.setValue("trim/keep_unknown", o.keep_unknown)
+            s.setValue("trim/heat", self.heat.isChecked())
         self.changed.emit()
 
 
