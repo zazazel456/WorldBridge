@@ -359,7 +359,7 @@ def _edit_lce_region(data: bytes, endian: str, width: int, rx: int, rz: int, dro
 
 def _edit_lce(path: str, remove, paint, progress: Progress) -> EditResult:
     from .lce.container import SaveContainer
-    from .lce.world import _REGION_RE, _SPLIT_DIM
+    from .lce.world import _REGION_RE, _SPLIT_DIM, ENTITY_FILES, entity_file_entries, write_entity_file
 
     for bid in {b for v in paint.values() for b in v.values()}:
         if bid not in bio.LCE:
@@ -386,6 +386,16 @@ def _edit_lce(path: str, remove, paint, progress: Progress) -> EditResult:
         new = _edit_lce_region(data, endian, 16, rx, rz, remove.get(dim, set()), paint.get(dim, {}), method, res)
         if new is not None:
             c.split_regions[key] = new
+    if res.removed:  # split saves: the entities of the removed chunks are in entities.dat
+        for dim, fname in ENTITY_FILES.items():
+            gone = remove.get(dim, set())
+            if fname not in c.files or not gone:
+                continue
+            try:
+                entries = entity_file_entries(c.files[fname])
+            except Exception:  # noqa: BLE001
+                continue
+            c.files[fname] = write_entity_file({(cx, cz): raw for cx, cz, _t, raw in entries if (cx, cz) not in gone})
     if res.removed or res.painted:
         folder, name = os.path.split(os.path.abspath(c.source_path))
         backup = _Backup(folder)

@@ -197,3 +197,58 @@ def test_hub_chests_and_entities_are_named():
                                                      "Damage": nbt.ShortTag(4)})})
     (e,) = _legacy_entities([drop], named=True)
     assert e["Item"]["id"].py_data == "minecraft:banner" and int(e["Item"]["Damage"].py_data) == 4
+
+
+def test_pocket_edition_numeric_items_are_read():
+    """PE 0.9 - 0.16 (LevelDB) saves {id: short, Damage, Count}: no Name, no Block."""
+    def pe(iid, dmg=0, count=1, **kw):
+        t = nbt.CompoundTag({"id": nbt.ShortTag(iid), "Damage": nbt.ShortTag(dmg), "Count": nbt.ByteTag(count),
+                             "Slot": nbt.ByteTag(3)})
+        for k, v in kw.items():
+            t[k] = v
+        return items.from_bedrock(t)
+
+    assert pe(297)["name"] == "bread" and pe(297)["slot"] == 3 and pe(265, count=3)["count"] == 3
+    assert pe(325)["name"] == "bucket" and pe(296)["name"] == "wheat"
+    assert pe(5, 2)["name"] == "birch_planks" and pe(35, 14)["name"] == "red_wool" and pe(17, 1)["name"] == "spruce_log"
+    assert pe(263, 1)["name"] == "charcoal" and pe(351, 1)["name"] == "red_dye"
+    assert pe(95)["name"] == "barrier" and pe(248)["name"] == "stone"             # PE-only blocks
+    assert pe(457)["name"] == "beetroot" and pe(462)["name"] == "pufferfish"
+    assert pe(383, 11)["name"] == "cow_spawn_egg" and pe(383, 13)["name"] == "sheep_spawn_egg"
+    sword = pe(267, 12)
+    assert sword["name"] == "iron_sword" and sword["damage"] == 12
+    # Bedrock's enchantment ids (sharpness 9), not Java's (16)
+    ench = nbt.CompoundTag({"ench": nbt.ListTag([nbt.CompoundTag({"id": nbt.ShortTag(9), "lvl": nbt.ShortTag(3)})], 10)})
+    assert pe(267, 0, tag=ench)["ench"] == [("sharpness", 3)]
+    # empty slots: id 0, Count 0, and the hotbar's links (id 255, Count -1)
+    assert pe(0) is None and pe(297, count=0) is None and pe(255, -1, -1) is None
+    # it reaches the targets
+    assert items.to_java_modern(pe(297), 3465)["id"].py_data == "minecraft:bread"
+    assert items.to_legacy(pe(297))["id"].py_data == 297
+
+
+def _old_block_item(name, dmg, states, version):
+    """A block item as Bedrock before 1.13 saves it: Block compound of that version, Damage as variant."""
+    v = version[0] << 24 | version[1] << 16 | version[2] << 8 | 1
+    return nbt.CompoundTag({"Name": nbt.StringTag("minecraft:" + name), "Count": nbt.ByteTag(1), "Damage": nbt.ShortTag(dmg),
+                            "Block": nbt.CompoundTag({"name": nbt.StringTag("minecraft:" + name), "version": nbt.IntTag(v),
+                                                      "states": nbt.CompoundTag(states)})})
+
+
+def test_bedrock_block_items_of_before_1_13_get_java_names():
+    S, B = nbt.StringTag, nbt.ByteTag
+    for name, dmg, states, flat in (
+            ("planks", 2, {"wood_type": S("birch")}, "birch_planks"),
+            ("log", 1, {"old_log_type": S("spruce"), "pillar_axis": S("y")}, "spruce_log"),
+            ("stonebrick", 1, {"stone_brick_type": S("mossy")}, "mossy_stone_bricks"),
+            ("fence_gate", 0, {"open_bit": B(0), "in_wall_bit": B(0)}, "oak_fence_gate"),
+            ("trapdoor", 0, {"open_bit": B(0), "upside_down_bit": B(0)}, "oak_trapdoor"),
+            ("lit_pumpkin", 0, {}, "jack_o_lantern"), ("monster_egg", 0, {}, "infested_stone"),
+            ("stone_slab2", 0, {"stone_slab_type_2": S("red_sandstone")}, "red_sandstone_slab"),
+            ("wool", 14, {"color": S("red")}, "red_wool")):
+        for ver in ((1, 10, 0), (1, 12, 0)):
+            it = items.from_bedrock(_old_block_item(name, dmg, states, ver))
+            assert it["name"] == flat, (name, ver, it["name"])
+    # 1.13+ block compounds still translate through the states
+    it = items.from_bedrock(_old_block_item("planks", 0, {"wood_type": S("oak")}, (1, 13, 0)))
+    assert it["name"] == "oak_planks"

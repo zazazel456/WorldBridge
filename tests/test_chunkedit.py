@@ -108,3 +108,20 @@ def test_bedrock_world_edited_in_place(tmp_path):
         assert (0, 0) not in set(level.all_chunk_coords("minecraft:overworld"))
     finally:
         level.close()
+
+
+def test_lce_split_save_loses_the_entities_of_a_removed_chunk(tmp_path):
+    from worldbridge.lce.container import SaveContainer
+    from worldbridge.lce.world import read_entity_file
+
+    src = SyntheticWorld(radius=2)
+    wr = LCEWriter(str(tmp_path / "ps4"), LCEWriteOptions(platform="ps4", world_size=54), Progress())
+    for cx, cz in src.chunk_coords(0):
+        wr.add_chunk(0, src.read_chunk(0, cx, cz))
+    path = wr.finish(src.info)
+    coords = LCEWorld(path, "ps4").chunk_coords(0)
+    gone = coords[0]
+    assert gone in read_entity_file(SaveContainer.load(path).files["entities.dat"])
+    edit_world(path, remove={0: {gone}})
+    left = read_entity_file(SaveContainer.load(path).files["entities.dat"])
+    assert gone not in left and len(left) == len(coords) - 1

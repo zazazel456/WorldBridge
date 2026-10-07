@@ -269,7 +269,8 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--offset", default=(0, 0), type=_ints(2), metavar="X,Z", help=tr("source chunk that becomes the centre of the LCE world (x,z)"))
     c.add_argument("--name", default=None, help=tr("name of the target world"))
     c.add_argument("--player-id", default=None,
-                   help=tr("LCE PC/Xbox: the XUID (file name in players/) for the main player"))
+                   help=tr("LCE PC/Xbox/Wii U/Switch: the id of the main player (its file name in players/: the XUID on PC and "
+                           "Xbox, 32 hex digits on Wii U)"))
     c.add_argument("--y-offset", type=int, default=0)
     c.add_argument("--no-blend", action="store_true",
                    help=tr("Java / Bedrock 1.18+: no game blending (the chunks of a pre-1.18 world are written in the "

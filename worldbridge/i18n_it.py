@@ -65,8 +65,8 @@ _SECTIONS = {
             'chunk sorgente che diventa il centro del mondo LCE (x,z)',
         'name of the target world':
             'nome del mondo di destinazione',
-        'LCE PC/Xbox: the XUID (file name in players/) for the main player':
-            'LCE PC/Xbox: XUID (nome file in players/) da dare al giocatore principale',
+        'LCE PC/Xbox/Wii U/Switch: the id of the main player (its file name in players/: the XUID on PC and Xbox, 32 hex digits on Wii U)':
+            'LCE PC/Xbox/Wii U/Switch: id del giocatore principale (il nome del suo file in players/: lo XUID su PC e Xbox, 32 cifre esadecimali su Wii U)',
         'Java / Bedrock 1.18+: no game blending (the chunks of a pre-1.18 world are written in the new format: the game does not blend them with new terrain nor generate the part below y 0)':
             'Java / Bedrock 1.18+: niente blending del gioco (i chunk di un mondo pre-1.18 vengono scritti nel formato nuovo: il gioco non li fonde col terreno nuovo e non genera la parte sotto y 0)',
         'no WorldBridge ring (Java Alpha 1.2 – 1.17, neoLegacy, Nether and End) and no filling of finite maps (PE 0.x, LCE 54 / 64 chunks)':
@@ -303,6 +303,10 @@ _SECTIONS = {
             'Raccordo: {n} chunk di terreno del gioco (seed {seed}) intorno al mondo convertito, alzato o abbassato dolcemente fino al suo bordo, larghi da 3 a {width} chunk secondo il dislivello; grotte, alberi, minerali e laghi li aggiunge il gioco.',
         '{target}: only the main player ({player}) is transferred; the other selected players are ignored.':
             '{target}: viene trasferito solo il giocatore principale ({player}); gli altri giocatori selezionati sono ignorati.',
+        '{n} players were not written: a Java world keeps one player in level.dat and a file for each player linked to a Java account (--player KEY=NICKNAME, “Players” tab).':
+            "{n} giocatori non sono stati scritti: un mondo Java tiene un giocatore in level.dat e un file per ogni giocatore collegato a un account Java (--player CHIAVE=NICKNAME, scheda «Giocatori»).",
+        'Left out of Pocket Edition 0.8: {names}':
+            'Lasciato fuori da Pocket Edition 0.8: {names}',
         'Selection: {n} unselected chunks removed.':
             'Selezione: {n} chunk non selezionati rimossi.',
         'Unknown LCE platform: {platform} (choose from {choices})':
@@ -393,8 +397,12 @@ _SECTIONS = {
             'TU46 – blocchi 1.9 (Elytra Update)',
         'TU54+ – 1.12 blocks (World of Color)':
             'TU54+ – blocchi 1.12 (World of Color)',
-        '“{name}” is not an XUID: the game will not load this player (it needs the number of its file in players/).':
-            '«{name}» non è un XUID: il gioco non caricherà questo giocatore (serve il numero del suo file in players/).',
+        '{file} cannot be read: the entities of this dimension are lost ({error}).':
+            '{file} non è leggibile: le entità di questa dimensione vanno perse ({error}).',
+        '“{name}” is not a Wii U player id: the game loads the player from players/<32 hexadecimal digits>.dat, so it will start at the spawn with an empty inventory. Give the id (the name of your file in players/ of a world already played, or use “From my world…” in the GUI).':
+            "«{name}» non è un id giocatore Wii U: il gioco carica il giocatore da players/<32 cifre esadecimali>.dat, quindi partirà dallo spawn con l'inventario vuoto. Indica l'id (il nome del tuo file in players/ di un mondo già giocato, o usa «Dal mio mondo…» nella GUI).",
+        'No player id given: the host player is written as players/{file}.dat, a file {platform} does not load, so the player will start at the spawn with an empty inventory. Give your id with --player-id (the name of your file in players/ of a world already played on that console, or use “From my world…” in the GUI).':
+            "Nessun id giocatore indicato: il giocatore host è scritto come players/{file}.dat, un file che {platform} non carica, quindi il giocatore partirà dallo spawn con l'inventario vuoto. Indica il tuo id con --player-id (il nome del tuo file in players/ di un mondo già giocato su quella console, o usa «Dal mio mondo…» nella GUI).",
         '“{name}” is not an XUID: the game loads the player from players/<number>.dat, so it will start at the spawn with an empty inventory. Give the number (the name of your file in players/ of a world already played, or use “From my world…” in the GUI).':
             "«{name}» non è un XUID: il gioco carica il giocatore da players/<numero>.dat, quindi partirà dallo spawn con l'inventario vuoto. Indica il numero (il nome del tuo file in players/ di un mondo già giocato, o usa «Dal mio mondo…» nella GUI).",
         '{n} blocks that do not exist in {version} were replaced with equivalents.':
@@ -495,6 +503,8 @@ _SECTIONS = {
             '{n} cornici',
         '{n} maps':
             '{n} mappe',
+        '{n} item frames could not be placed in Bedrock {version} (on a floor or ceiling before 1.13, or where the block is not air): they are not in the converted world.':
+            '{n} cornici non si sono potute collocare in Bedrock {version} (a pavimento o soffitto prima della 1.13, o dove il blocco non è aria): non sono nel mondo convertito.',
         'Bedrock: {tiles} block entities and {entities} entities written{extra}.':
             'Bedrock: {tiles} blocchi-entità e {entities} entità scritti{extra}.',
         'Entities and containers {i}/{n}':
