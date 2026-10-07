@@ -700,13 +700,13 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
         move = Relocation(sel)
         if move.active:
             progress.log(move.describe())
-        outside = 0
+        outside: Dict[int, int] = {}
         area = None if d.kind in _FINITE_SOURCES else _finite_area(target, move.spawn(src.info) if move.active else src.info.spawn)
         if area is not None:
             # a finite map (LCE, PE 0.x): the chunks that cannot reach it are not even read
-            n = sum(len(v) for v in coords.values())
+            n_dim = {dim: len(v) for dim, v in coords.items()}
             coords = {dim: _within(cs, area.get(dim), move.delta(dim)) for dim, cs in coords.items()}
-            outside = n - sum(len(v) for v in coords.values())
+            outside = {dim: n - len(coords[dim]) for dim, n in n_dim.items() if n > len(coords[dim])}
         # where the chunks land in the converted world (the same as ``coords`` unless they are moved)
         placed = {dim: move.coords(dim, cs) for dim, cs in coords.items()}
         writer = _make_writer(target, hub_dir, progress, src, move.spawn(src.info) if move.active else None)
@@ -715,7 +715,8 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
             xs, zs = zip(*placed[THE_END])
             writer.opt.keep_end = (min(xs), max(xs) + 1, min(zs), max(zs) + 1)
         if outside and hasattr(writer, "skipped_outside"):
-            writer.skipped_outside += outside              # counted with the ones the writer leaves out
+            for dim, n in outside.items():                 # counted with the ones the writer leaves out
+                writer.skipped_outside[dim] += n
         total = sum(len(v) for v in coords.values()) or 1
         start = 0.35 if d.kind in AMULET_KINDS else 0.05
         end = 0.6 if amulet_target else 0.97
@@ -827,7 +828,7 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
                     rings3d[res.dim].observe(res.dim, res.obs)
             if res.written:
                 if res.encoded:
-                    writer.store(res.rec)
+                    writer.store(res.rec, res.dim)
                     written += 1
                     if track_ow and res.dim == OVERWORLD:
                         written_ow.add(res.pos)

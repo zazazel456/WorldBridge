@@ -22,11 +22,14 @@ from typing import Callable, Dict, Iterator, List, Optional, Tuple
 import numpy as np
 
 from . import nbt
+from .i18n import N_
 
 # Dimension identifiers (Java numeric ids)
 OVERWORLD = 0
 NETHER = -1
 THE_END = 1
+# the dimensions' names for messages (translate with tr() where shown)
+DIM_LABEL = {OVERWORLD: N_("Overworld"), NETHER: N_("Nether"), THE_END: N_("End")}
 
 
 def dimension_of(player) -> int:

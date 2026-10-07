@@ -170,3 +170,22 @@ def test_the_ender_chests_of_a_tu69_save_are_kept():
     tile = nbt.CompoundTag({"id": nbt.StringTag("minecraft:ender_Chest"), "x": nbt.IntTag(4), "y": nbt.IntTag(64),
                             "z": nbt.IntTag(3)})
     assert [nbt.get(t, "id") for t in sanitize_tiles([tile], blocks, 0, 0)] == ["EnderChest"]
+
+
+def test_chunks_outside_the_map_are_reported_per_dimension(tmp_path):
+    """The warning names the dimension and its own size: the Nether is smaller than the Overworld."""
+    from worldbridge.model import NETHER, OVERWORLD
+
+    src = SyntheticWorld(radius=1, dims=(0, -1))
+    prog = Progress()
+    w = LCEWriter(str(tmp_path / "far"), LCEWriteOptions(platform="ps4", profile="tu54", world_size=54), prog)
+    for d in src.dimensions():
+        for cx, cz in src.chunk_coords(d):
+            w.add_chunk(d, src.read_chunk(d, cx, cz))
+    w.add_chunk(OVERWORLD, make_chunk(200, 0))                 # beyond 54 x 54
+    w.add_chunk(NETHER, make_chunk(12, 0))                     # inside 54, beyond the Nether's 18 x 18
+    w.finish(src.info)
+    msgs = [m for m in prog.warnings if "outside the LCE world" in m]
+    assert any("Overworld" in m and "54×54" in m for m in msgs)
+    assert any("Nether" in m and "18×18" in m for m in msgs)
+    assert len(msgs) == 2

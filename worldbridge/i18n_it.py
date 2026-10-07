@@ -369,8 +369,6 @@ _SECTIONS = {
             "«{name}» non è un XUID: il gioco carica il giocatore da players/<numero>.dat, quindi partirà dallo spawn con l'inventario vuoto. Indica il numero (il nome del tuo file in players/ di un mondo già giocato, o usa «Dal mio mondo…» nella GUI).",
         '{n} blocks that do not exist in {version} were replaced with equivalents.':
             '{n} blocchi non esistenti in {version} sono stati sostituiti con equivalenti.',
-        "{n} chunks outside the LCE world's limits ({size}×{size} chunks) were left out.":
-            '{n} chunk fuori dai limiti del mondo LCE ({size}×{size} chunk) sono stati esclusi.',
         '{n} items':
             '{n} oggetti',
         '{n} enchantments':
@@ -381,6 +379,14 @@ _SECTIONS = {
             ' e ',
         '{version} does not have {what} of the source world: removed (the game does not know them); new arrows, boats and potions become their classic versions.':
             '{version} non ha {what} del mondo di origine: tolti (il gioco non li conosce); frecce, barche e pozioni nuove diventano le loro versioni classiche.',
+        "{n} chunks outside the LCE world's limits ({dim}, {size}×{size} chunks) were left out.":
+            '{n} chunk fuori dai limiti del mondo LCE ({dim}, {size}×{size} chunk) sono stati esclusi.',
+        'Overworld':
+            'Overworld',
+        'Nether':
+            'Nether',
+        'End':
+            'End',
     },
     'worldbridge/lce/compat.py': {
     },
