@@ -98,16 +98,20 @@ class JavaRegion:
             body = self.data[p + 5 : p + 4 + length]
         try:
             if ctype == 1:
-                return gzip.decompress(body)
-            if ctype == 2:
-                return zlib.decompress(body)
-            if ctype == 3:
-                return body
-            if ctype == 4:
-                return decompress_lz4(body)
+                raw = gzip.decompress(body)
+            elif ctype == 2:
+                raw = zlib.decompress(body)
+            elif ctype == 3:
+                raw = body
+            elif ctype == 4:
+                raw = decompress_lz4(body)
+            else:
+                return None
+            if raw and raw[:2] == b"\x1f\x8b":  # compressed twice (MCEdit 2 wrote zlib around gzip)
+                raw = gzip.decompress(raw)
+            return raw
         except (OSError, zlib.error, ValueError):
             return None
-        return None
 
 
 _LZ4_HEADER = struct.Struct("<8sBiii")  # magic, token, compressed length, original length, checksum

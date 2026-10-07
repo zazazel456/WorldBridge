@@ -1,10 +1,13 @@
 """Broken input, untouched sources, Pocket Edition player (found by tools/matrix.py)."""
+import gzip
 import hashlib
 import os
+import zlib
 
 from worldbridge import nbt
 from worldbridge.convert import TargetSpec, convert
 from worldbridge.java.numeric import JavaNumericWriter, JavaWriteOptions
+from worldbridge.java.region import JavaRegion, RegionWriter
 from worldbridge.model import Progress
 
 from .helpers import SyntheticWorld
@@ -38,6 +41,22 @@ def test_corrupted_chunk_is_skipped_with_a_warning(tmp_path):
     res = convert(world, str(tmp_path / "out"), TargetSpec(family="java", java_mode="numeric", java_version_limit="1.12"))
     assert res.chunks == 15
     assert any("unreadable" in w for w in res.warnings)
+
+
+def test_chunks_compressed_twice_are_read(tmp_path):
+    """MCEdit 2 wrote zlib payloads that hold a gzip stream."""
+    world = _anvil(tmp_path / "w")
+    p = os.path.join(world, "region", "r.0.0.mca")
+    reg = JavaRegion(p)
+    raws = {c: reg.read(*c) for c in reg.chunks()}
+    wr = RegionWriter()
+    for c, raw in raws.items():
+        wr.put_compressed(c[0], c[1], zlib.compress(gzip.compress(raw)))
+    wr.write(p)
+    reg = JavaRegion(p)
+    assert {c: reg.read(*c) for c in reg.chunks()} == raws
+    res = convert(world, str(tmp_path / "out"), TargetSpec(family="java", java_mode="numeric", java_version_limit="1.12"))
+    assert res.chunks == 16 and not any("unreadable" in w for w in res.warnings)
 
 
 def test_modern_sources_are_never_touched(tmp_path):
