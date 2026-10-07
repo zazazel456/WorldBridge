@@ -600,7 +600,7 @@ class _DepthMoved:
         self.lost: Dict[Tuple[int, int], List[int]] = defaultdict(lambda: [0, 0])
         self.digp: Dict[bytes, bytes] = {}                  # chunk's actor list -> the one that stays
         self.actors: Dict[bytes, Optional[bytes]] = {}      # actor record -> its new bytes (None: dropped)
-        for key, value in sdb.iterate(b"digp", b"digp\xff"):
+        for key, value in sdb.iterate(b"digp", b"digq"):
             k = bytes(key)
             if len(k) == 12 and k.startswith(b"digp"):      # the Overworld: no dimension in the key
                 cx, cz = struct.unpack_from("<ii", k, 4)
@@ -818,10 +818,10 @@ def _player_record(v: bytes, moved, move, convert: bool, version) -> bytes:
 def drop_orphan_actors(db) -> int:
     """The ``actorprefix`` records no ``digp`` list names (left behind when a chunk's list is replaced)."""
     used = set()
-    for _k, v in db.iterate(b"digp", b"digp\xff"):
+    for _k, v in db.iterate(b"digp", b"digq"):
         v = bytes(v)
         used.update(b"actorprefix" + v[i:i + 8] for i in range(0, len(v) // 8 * 8, 8))
-    orphans = [bytes(k) for k, _v in db.iterate(b"actorprefix", b"actorprefix\xff") if bytes(k) not in used]
+    orphans = [bytes(k) for k, _v in db.iterate(b"actorprefix", b"actorprefiy") if bytes(k) not in used]
     for k in orphans:
         try:
             db.delete(k)

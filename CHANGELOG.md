@@ -75,6 +75,29 @@ A full review of the code with 110 real worlds downloaded from the web (Java Cla
 - Soul campfires, creaking hearts and copper golem statues were missing; trapped chests, soul
   campfires and bee nests read from Bedrock became chests, campfires and beehives.
 - Ender chests of LCE TU69+ saves (`minecraft:ender_Chest`) lost their block entity.
+- **Loot tables** (`LootTable` / `LootTableSeed`) of chests, barrels, dispensers, hoppers and shulker
+  boxes are carried between Java and Bedrock; copper chests keep the id of their block in Java 1.21.9+.
+
+**Bedrock → older Bedrock, versions and spawn**
+- **Entities were stored twice** (Bedrock 1.18.30+ → 1.12 – 1.18.29: a `0x32` list from Amulet next to
+  the source's `digp` / `actorprefix`; offroaders 108 → 216) and `actorprefix` records no chunk
+  referenced stayed in 1.18.30+ outputs. Now there is one copy, in the format the target reads.
+- **Block entities, mobs, items and the player of a newer Bedrock** were copied unchanged into older
+  worlds (blank signs, unknown flower pots, 1.21 items in a 1.12 world): they are rewritten for the
+  target version, and what it cannot hold is dropped and counted ("Content that does not exist in …").
+- **`--move-to` did not move the player** of a Bedrock → Bedrock conversion; a player at x = −0.7 was
+  treated as outside the selection; an explicit `--spawn` was replaced by the ground at the
+  destination and (with `--depth keep`) did not rise with the world.
+- **Chunks Bedrock had not finished** (villages, dungeons: 132 of 436 chunks, 133 block entities of
+  amulet_1_16_200) were dropped even toward Bedrock; they are kept (the game finishes them). Other
+  targets get a warning that says what they held.
+- **level.dat of Bedrock targets**: the file header and `StorageVersion` agree and follow the target
+  (8 before 1.19.20, 9, 10 from 1.19.50), `NetworkVersion` is the target's protocol, `InventoryVersion`
+  is written.
+- **A Dedicated Server world with no spawn set** (INT_MIN) no longer writes it to Java; a negative
+  spawn y of a 1.18+ world is kept.
+- **Java targets older than the source** (1.20.4, 1.18.0…) kept the newer items, mobs and block
+  entities: they are removed and reported.
 
 **Interface**
 - A trim scan of a world could finish after another world was opened and "Apply to the world"

@@ -44,6 +44,12 @@ def bedrock_120(tmp_path_factory):
             {"StorageKey": nbt.escape_string(akey)})})
         db.put(b"actorprefix" + akey, nbt.dump(arm, "", little_endian=True, escape=True))
         db.put(b"digp" + prefix, (_get(db, b"digp" + prefix) or b"") + akey)
+        pig = nbt.CompoundTag({"identifier": nbt.StringTag("minecraft:pig"),
+                               "Pos": nbt.ListTag([nbt.FloatTag(-3.5), nbt.FloatTag(5.0), nbt.FloatTag(3.5)], 5),
+                               "UniqueID": nbt.LongTag(-4294967294), "definitions": nbt.ListTag([], 8)})
+        pkey = struct.pack(">ii", 8, 8)
+        db.put(b"actorprefix" + pkey, nbt.dump(pig, "", little_endian=True, escape=True))
+        db.put(b"digp" + struct.pack("<ii", -1, 0), pkey)       # cx = -1: its key goes on with 0xff
         db.put(b"actorprefix" + b"orphan!!!", nbt.dump(arm, "", little_endian=True, escape=True))
         java_player = nbt.CompoundTag({
             "DataVersion": nbt.IntTag(3700), "Pos": nbt.pos_list(5.5, 5.0, 5.5),
@@ -64,8 +70,8 @@ def _records(path):
         old = read_nbt_list(_get(db, prefix + bytes([ENTITY_TAG])) or b"")
         keys = _get(db, b"digp" + prefix) or b""
         new = [a for i in range(0, len(keys), 8) for a in read_nbt_list(_get(db, b"actorprefix" + keys[i:i + 8]) or b"")]
-        used = {b"actorprefix" + keys[i:i + 8] for i in range(0, len(keys), 8)}
-        orphans = [bytes(k) for k, _v in db.iterate(b"actorprefix", b"actorprefix\xff") if bytes(k) not in used]
+        used = {b"actorprefix" + bytes(v)[i:i + 8] for _k, v in db.iterate(b"digp", b"digq") for i in range(0, len(v), 8)}
+        orphans = [bytes(k) for k, _v in db.iterate(b"actorprefix", b"actorprefiy") if bytes(k) not in used]
         player = nbt.load(_get(db, b"~local_player"), little_endian=True, compressed=False).tag
         return tiles, old, new, orphans, player
     finally:
@@ -74,6 +80,15 @@ def _records(path):
 
 def _ids(actors):
     return sorted(str(nbt.get(a, "identifier")) for a in actors)
+
+
+def _digp_minus_one(path):
+    db = _db(path)
+    try:
+        keys = _get(db, b"digp" + struct.pack("<ii", -1, 0)) or b""
+        return [a for i in range(0, len(keys), 8) for a in read_nbt_list(_get(db, b"actorprefix" + keys[i:i + 8]) or b"")]
+    finally:
+        db.close()
 
 
 def test_the_source_has_its_actors_in_digp_and_an_orphan(bedrock_120):
@@ -183,3 +198,17 @@ def test_other_targets_leave_them_out_and_say_what_they_held(tmp_path, unfinishe
     assert (0, 0) not in set(reg.chunks()) and len(list(reg.chunks())) == len(_finalized(unfinished)) - 1
     warn = [m for m in res.warnings if "had not finished" in m]
     assert warn and "block entities" in warn[0]
+
+
+def test_actors_of_a_chunk_with_a_negative_x_are_not_taken_for_orphans(tmp_path, bedrock_120):
+    assert len(_digp_minus_one(bedrock_120)) == 1
+    out = str(tmp_path / "same")
+    convert(bedrock_120, out, TargetSpec(family="bedrock", version=(1, 21, 0), ring=False))
+    assert _ids(_digp_minus_one(out)) == ["minecraft:pig"] and not _records(out)[3]
+    old = str(tmp_path / "old")
+    convert(bedrock_120, old, TargetSpec(family="bedrock", version=(1, 16, 220), ring=False))
+    db = _db(old)
+    try:
+        assert len(read_nbt_list(_get(db, struct.pack("<ii", -1, 0) + bytes([ENTITY_TAG])) or b"")) == 1
+    finally:
+        db.close()
