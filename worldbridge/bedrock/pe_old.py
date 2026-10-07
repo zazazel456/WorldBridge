@@ -253,7 +253,7 @@ class PEOldWriter:
         for t in c.tile_entities:
             raw_id = str(nbt.get(t, "id", ""))
             tid = ids.tile_to_old(raw_id) or raw_id.split(":", 1)[-1]        # "chest" (1.11+) or "Chest"
-            if tid not in ("Chest", "Furnace", "Sign"):
+            if tid not in ("Chest", "Furnace", "Sign", "NetherReactor"):
                 self.dropped_tiles[tid or "?"] += 1
                 continue
             t = nbt.copy(t)

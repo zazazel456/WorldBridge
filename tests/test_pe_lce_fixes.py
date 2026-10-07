@@ -49,12 +49,12 @@ def test_pe_keeps_the_entities_of_every_id_form_and_reports_the_others(tmp_path)
     c.entities = [_mob("Chicken"), _mob("minecraft:pig"), _mob("minecraft:chicken"), _mob("minecraft:wolf"),
                   _mob("Wolf"), _mob("minecraft:squid")]
     c.tile_entities = [_sign("minecraft:sign", "a"), _sign("Chest"),
-                       _sign("minecraft:chest"), _sign("MobSpawner"), _sign("minecraft:beacon")]
+                       _sign("minecraft:chest"), _sign("NetherReactor"), _sign("MobSpawner"), _sign("minecraft:beacon")]
     prog = Progress()
     _write_pe(tmp_path / "pe", [c], prog)
     w = pe_old.PEOldWorld(str(tmp_path / "pe"))
     assert sorted(nbt.get(e, "id") for e in w._ents) == ["Chicken", "Chicken", "Pig"]
-    assert sorted(nbt.get(t, "id") for t in w._tiles) == ["Chest", "Chest", "Sign"]
+    assert sorted(nbt.get(t, "id") for t in w._tiles) == ["Chest", "Chest", "NetherReactor", "Sign"]
     msg = [m for m in prog.warnings if "does not exist in Pocket Edition 0.8" in m]
     assert msg and "3 entities and 2 block entities" in msg[0], prog.warnings
 
