@@ -90,7 +90,8 @@ JAVA_TO_BEDROCK_NAME = {"nether_brick": "netherbrick", "oak_sign": "oak_sign", "
                         "tipped_arrow": "arrow", "enchanted_golden_apple": "enchanted_golden_apple",
                         "snowball": "snowball", "turtle_scute": "turtle_scute", "scute": "turtle_scute",
                         "oak_door": "wooden_door", "item_frame": "frame", "glow_item_frame": "glow_frame",
-                        "map": "empty_map", "zombified_piglin_spawn_egg": "zombie_pigman_spawn_egg"}
+                        "map": "empty_map", "zombified_piglin_spawn_egg": "zombie_pigman_spawn_egg",
+                        "stone_stairs": "normal_stone_stairs"}   # Bedrock's own stone_stairs are the cobblestone ones
 BEDROCK_TO_JAVA_NAME = {"netherbrick": "nether_brick", "appleenchanted": "enchanted_golden_apple",
                         "appleEnchanted": "enchanted_golden_apple", "clownfish": "tropical_fish",
                         "cooked_fish": "cooked_cod", "fish": "cod", "reeds": "sugar_cane", "speckled_melon":
@@ -100,7 +101,8 @@ BEDROCK_TO_JAVA_NAME = {"netherbrick": "nether_brick", "appleenchanted": "enchan
                         "popped_chorus_fruit", "map": "filled_map", "emptymap": "map", "empty_map": "map",
                         "muttoncooked": "cooked_mutton", "muttonraw": "mutton", "short_grass": "grass",
                         "frame": "item_frame", "glow_frame": "glow_item_frame",
-                        "zombie_pigman_spawn_egg": "zombified_piglin_spawn_egg"}
+                        "zombie_pigman_spawn_egg": "zombified_piglin_spawn_egg",
+                        "normal_stone_stairs": "stone_stairs"}
 # 1.11 entity ids (spawn eggs of Java 1.11 - 1.12) -> 1.13+ names
 _ENTITY_113 = {"vindication_illager": "vindicator", "evocation_illager": "evoker", "illusion_illager": "illusioner",
                "zombie_pigman": "zombified_piglin", "villager_golem": "iron_golem", "snowman": "snow_golem"}
@@ -218,16 +220,22 @@ def _tm():
     return translation_manager()
 
 
+def _placed_data(bid: int, dmg: int) -> int:
+    """The data value of the block an item of numeric block ``bid`` and Damage ``dmg`` places: the
+    Damage is not always a placed state (a torch is 0 in an inventory, 5 on the ground)."""
+    if bid == 145:
+        return (dmg & 3) << 2
+    if bid in (50, 75, 76):
+        return 5
+    if bid in (54, 61, 65, 130, 146, 23, 158):
+        return 2
+    return dmg & 15
+
+
 @functools.lru_cache(maxsize=None)
 def legacy_block_item_name(bid: int, dmg: int) -> Optional[str]:
     """(numeric block id, item damage) -> flattened Java name."""
-    data = dmg & 15
-    if bid == 145:
-        data = (dmg & 3) << 2
-    elif bid in (50, 75, 76):
-        data = 5
-    elif bid in (54, 61, 65, 130, 146, 23, 158):
-        data = 2
+    data = _placed_data(bid, dmg)
     try:
         v12 = _tm().get_version("java", (1, 12, 2))
         v13 = _tm().get_version("java", (1, 13, 2))
@@ -739,16 +747,21 @@ def to_java_modern(it: Item, data_version: int) -> nbt.CompoundTag:
 # ------------------------------------------------------------------ Bedrock
 @functools.lru_cache(maxsize=None)
 def _bedrock_block_for_flat(name: str, version: Tuple[int, ...]) -> Optional[Tuple[str, dict]]:
+    if name == "stone_stairs":  # the numeric table has no plain stone stairs (67 is cobblestone): Bedrock's are normal_
+        b = _bedrock_block_for_flat("cobblestone_stairs", version)
+        return None if b is None else ("minecraft:normal_stone_stairs", b[1])
     leg = flat_to_legacy(name)
     if leg is None or leg[0] >= 256:
         return None
     bid, d = leg
-    data = d if bid != 145 else (d & 3) << 2
+    data = _placed_data(bid, d)
     try:
         v12 = _tm().get_version("java", (1, 12, 2))
         vb = _tm().get_version("bedrock", version)
         u = v12.block.to_universal(v12.ints_to_block(bid, data))[0]
         b = vb.block.from_universal(u)[0]
+        if tuple(version) >= (1, 13, 0) and "block_data" in b.properties:
+            return None  # no state of this block: written without a Block, the game places its default
         return b.namespaced_name, dict(b.properties)
     except Exception:  # noqa: BLE001
         return None
@@ -866,6 +879,15 @@ def bedrock_block_version(blk: nbt.CompoundTag) -> Tuple[int, ...]:
     return ver if ver[0] >= 1 else _latest("bedrock")
 
 
+@functools.lru_cache(maxsize=1)
+def _java_block_names() -> frozenset:
+    """The block names of the newest Java version: what a block item of a Java target may be called."""
+    try:
+        return frozenset(_tm().get_version("java", _latest("java")).block.base_names("minecraft"))
+    except Exception:  # noqa: BLE001
+        return frozenset(_flat_to_legacy())
+
+
 @functools.lru_cache(maxsize=None)
 def _bedrock_block_to_flat(name: str, states_key: tuple, version: Optional[Tuple[int, ...]] = None) -> Optional[str]:
     try:
@@ -882,10 +904,55 @@ def _bedrock_block_to_flat(name: str, states_key: tuple, version: Optional[Tuple
         return None
 
 
+# Pocket Edition 0.9 - 0.16 item ids that are not Java's: (Java id, Damage) of the Java 1.8 - 1.12 item
+_PE_ITEM_IDS = {457: (434, 0), 458: (435, 0), 459: (436, 0), 460: (349, 1), 461: (349, 2), 462: (349, 3),
+                463: (350, 1), 466: (322, 1)}
+
+
+def _from_pe_numeric(t: nbt.CompoundTag) -> Optional[Item]:
+    """An item of a Pocket Edition 0.9 - 0.16 world: ``{id: short, Damage, Count, tag}`` with the numeric
+    ids of the time (Java's, bar a few blocks and items) and no Name."""
+    iid = nbt.get(t, "id")
+    if isinstance(iid, str) or not isinstance(iid, int) or iid <= 0 or int(nbt.get(t, "Count", 1) or 0) <= 0:
+        return None            # id 0, or Count 0 / -1: an empty slot (the hotbar's links are id 255, Count -1)
+    dmg = int(nbt.get(t, "Damage", 0) or 0)
+    if iid < 256:
+        from .bedrock.pe_old import PE_TO_JAVA
+
+        iid, dmg = PE_TO_JAVA.get(iid, (iid, dmg))
+    iid, dmg = _PE_ITEM_IDS.get(iid, (iid, dmg))
+    if iid == 383:  # a spawn egg: the Damage is Bedrock's entity number
+        mob = BEDROCK_ENTITY_NAMES.get(dmg & 0xFF)
+        if mob is None:
+            return None
+        it = Item(name=f"{mob}_spawn_egg", count=int(nbt.get(t, "Count", 1) or 1), damage=0, slot=nbt.get(t, "Slot"))
+    else:
+        t2 = nbt.CompoundTag({"id": nbt.ShortTag(iid), "Damage": nbt.ShortTag(dmg),
+                              "Count": nbt.ByteTag(int(nbt.get(t, "Count", 1) or 1))})
+        if nbt.get(t, "Slot") is not None:
+            t2["Slot"] = nbt.ByteTag(int(nbt.get(t, "Slot")))
+        it = from_legacy(t2)
+        if it is None or it["name"] == "air":
+            return None
+    tag = nbt.get_tag(t, "tag")
+    if tag is not None:
+        ench = _ench_list(nbt.get_tag(tag, "ench"), dict(enumerate(BEDROCK_ENCH)))   # Bedrock's enchantment ids
+        it["stored" if it["name"] == "enchanted_book" else "ench"] = ench
+        disp = nbt.get_tag(tag, "display")
+        if disp is not None:
+            if "Name" in disp:
+                it["custom_name"] = str(nbt.get(disp, "Name"))
+            if "Lore" in disp:
+                it["lore"] = [str(x.py_data) for x in disp["Lore"]]
+        if "customColor" in tag:
+            it["color"] = int(nbt.get(tag, "customColor")) & 0xFFFFFF
+    return it
+
+
 def from_bedrock(t: nbt.CompoundTag) -> Optional[Item]:
     name = str(nbt.get(t, "Name", "") or "")
     if not name:
-        return None
+        return _from_pe_numeric(t) if nbt.get(t, "id") is not None else None
     n = name.split(":", 1)[-1]
     dmg = int(nbt.get(t, "Damage", 0) or 0)
     it = Item(count=int(nbt.get(t, "Count", 1) or 1), damage=0, slot=nbt.get(t, "Slot"))
@@ -910,8 +977,12 @@ def from_bedrock(t: nbt.CompoundTag) -> Optional[Item]:
         flat = None
         if blk is not None and "name" in blk:
             states = nbt.get_tag(blk, "states") or nbt.CompoundTag()
-            flat = _bedrock_block_to_flat(str(nbt.get(blk, "name")), tuple(sorted(states.items(), key=lambda kv: kv[0])),
-                                          bedrock_block_version(blk))
+            bver = bedrock_block_version(blk)
+            if bver >= (1, 13, 0):  # before it the translation tables return Bedrock's own numeric-era name
+                flat = _bedrock_block_to_flat(str(nbt.get(blk, "name")),
+                                              tuple(sorted(states.items(), key=lambda kv: kv[0])), bver)
+                if flat is not None and flat not in _java_block_names():
+                    flat = None  # not a Java id ("planks"): the numeric id and Damage name it
         if flat is None:  # names of before 1.16.100 (bucket / boat / dye + Damage, horsearmoriron...)
             flat = from_old_bedrock(n, dmg)
         # pre-1.19 Bedrock names are the numeric-era ones ("log", "wool" + Damage), also with Damage 0

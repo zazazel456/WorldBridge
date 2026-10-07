@@ -11,6 +11,7 @@ Amulet translates blocks; this module writes the rest natively:
 
 from __future__ import annotations
 
+import functools
 import os
 import struct
 from collections import defaultdict
@@ -164,6 +165,22 @@ def abilities_tag(values: dict) -> nbt.CompoundTag:
     return t
 
 
+BEDROCK_SPECTATOR = 6                      # GameType / PlayerGameMode of Spectator
+BEDROCK_SPECTATOR_FROM = (1, 21, 40)       # before it Bedrock has no Spectator
+
+
+def bedrock_game_mode(java_mode: Optional[int], version) -> Optional[int]:
+    """A Java game mode (0 - 3) as Bedrock ``version`` stores it: Spectator is 6 from Bedrock 1.21.40,
+    before it the nearest is Creative.  The world's GameType and the player's PlayerGameMode use the
+    same mapping, so a player in the world's mode still follows it."""
+    if java_mode is None:
+        return None
+    m = int(java_mode)
+    if m == 3:
+        return BEDROCK_SPECTATOR if tuple(version)[:3] >= BEDROCK_SPECTATOR_FROM else 1
+    return m if m in (0, 1, 2) else 0
+
+
 def legacy_player_to_bedrock(p: nbt.CompoundTag, version, uid: int, world_game_type: Optional[int] = None) -> nbt.CompoundTag:
     """world_game_type: the world's game mode; a player in that same mode follows the world
     setting (Bedrock "default" personal mode), so changing the world's mode changes the player's."""
@@ -220,10 +237,9 @@ def legacy_player_to_bedrock(p: nbt.CompoundTag, version, uid: int, world_game_t
     out["EnderChestInventory"] = nbt.ListTag([ender[i] if ender[i] is not None else empty(i) for i in range(27)], 10)
     gt = nbt.get(p, "playerGameType")
     gt = int(gt) if gt is not None and int(gt) in (0, 1, 2, 3) else None
-    # Spectator is 6 from Bedrock 1.21.40; before, the nearest is Creative
-    spectator = 6 if tuple(version) >= (1, 21, 40) else 1
-    mode = {3: spectator}.get(gt, gt)
-    if gt is None or (world_game_type is not None and mode == {3: spectator}.get(world_game_type, world_game_type)):
+    mode = bedrock_game_mode(gt, version)
+    # compared with the world's mode as write_bedrock_level_dat writes it
+    if gt is None or (world_game_type is not None and mode == bedrock_game_mode(world_game_type, version)):
         out["PlayerGameMode"] = nbt.IntTag(5)  # "default": follows the world
     else:
         out["PlayerGameMode"] = nbt.IntTag(mode)
@@ -290,13 +306,23 @@ def frame_canon(db, prefix: bytes, t: nbt.CompoundTag) -> Optional[dict]:
     raw = _get(db, prefix + bytes([terrain.SUBCHUNK]) + struct.pack("b", y >> 4)) if -128 <= y >> 4 < 128 else None
     sc = terrain.SubChunk.decode(raw) if raw else None
     f3 = 3
+    n = (x & 15) << 8 | (z & 15) << 4 | (y & 15)
+    data = None
     if sc is not None and sc.storages:
         st = sc.storages[0]
-        entry = st.palette[int(st.idx[(x & 15) << 8 | (z & 15) << 4 | (y & 15)])]
+        entry = st.palette[int(st.idx[n])]
         try:
-            f3 = int(entry["states"]["facing_direction"].py_int)
+            if "states" in entry:
+                f3 = int(entry["states"]["facing_direction"].py_int)
+            elif "val" in entry:                    # 1.2.13 - 1.12: {name, val}
+                data = int(entry["val"].py_int)
         except Exception:  # noqa: BLE001
             pass
+    elif raw:                                       # before 1.2.13: block ids and data nibbles
+        b = terrain.legacy_block_at(bytes(raw), n)
+        data = b[1] if b is not None else None
+    if data is not None:                            # before 1.13: east 0, west 1, south 2, north 3 (+8 with a map)
+        f3 = (5, 4, 3, 2)[data & 3]
     off = {0: (0, -1, 0), 1: (0, 1, 0), 2: (0, 0, -1), 3: (0, 0, 1), 4: (-1, 0, 0), 5: (1, 0, 0)}.get(f3, (0, 0, 1))
     c = {"name": "glow_item_frame" if str(nbt.get(t, "id")) == "GlowItemFrame" else "item_frame",
          "pos": (x + 0.5 - off[0] * 0.46875, y + 0.5 - off[1] * 0.46875, z + 0.5 - off[2] * 0.46875),
@@ -373,6 +399,45 @@ class BedrockExtras:
 # ------------------------------------------------------------------ target side
 
 
+# PyMCTranslate's 1.17.30 frame (the first version with every state), translated to each target version:
+# block states from 1.13 (``item_frame_photo_bit`` only from 1.17.30), ``{block_data}`` before
+_FRAME_REF = (1, 17, 30)
+FRAME_ID = {"minecraft:frame": 199}          # the numeric id, for the sub chunks of before 1.2.13
+
+
+@functools.lru_cache(maxsize=None)
+def _frame_block(version: tuple, facing: int, is_map: bool, glow: bool):
+    from ..items import _tm
+
+    if version < (1, 13, 0) and facing < 2:
+        return None                            # on a floor / ceiling: Bedrock 1.13+ only
+    try:
+        import amulet_nbt as anbt
+        from amulet.api.block import Block
+
+        ref = _tm().get_version("bedrock", _FRAME_REF)
+        dst = _tm().get_version("bedrock", version)
+        u = ref.block.to_universal(Block("minecraft", "glow_frame" if glow else "frame", {
+            "facing_direction": anbt.IntTag(facing), "item_frame_map_bit": anbt.ByteTag(int(is_map)),
+            "item_frame_photo_bit": anbt.ByteTag(0)}))[0]
+        b = dst.block.from_universal(u)[0]
+        if not b.base_name.endswith("frame"):
+            return None
+        props = dict(b.properties)
+        if version < (1, 13, 0) and set(props) != {"block_data"}:
+            return None
+        return b.namespaced_name, props, FRAME_ID.get(b.namespaced_name)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def frame_block(version, facing: int, is_map: bool, glow: bool = False):
+    """The item frame block of ``version`` as terrain.set_blocks takes it: (name, states, numeric id).
+    ``item_frame_photo_bit`` exists from 1.17.30; before 1.13 the states are ``{block_data}`` (east 0,
+    west 1, south 2, north 3, +8 with a map).  None: the frame cannot exist in that version."""
+    return _frame_block(tuple(version)[:3], int(facing), bool(is_map), bool(glow))
+
+
 class BedrockInjector:
     def __init__(self, out_dir: str, version, progress: Progress):
         self.db = _db(out_dir)
@@ -384,6 +449,7 @@ class BedrockInjector:
         self.n_tiles = 0
         self.n_ents = 0
         self.n_frames = 0
+        self.n_frames_lost = 0
         self.n_maps = 0
 
     def put_chunk(self, dim: int, cx: int, cz: int, tile_canon: List[dict], ent_canon: List[dict]):
@@ -444,9 +510,11 @@ class BedrockInjector:
             if item is not None and "Slot" in item:
                 del item["Slot"]
             is_map = item is not None and str(nbt.get(item, "Name", "")).endswith("filled_map")
-            blocks[(x, y, z)] = ("minecraft:glow_frame" if glow else "minecraft:frame",
-                                 {"facing_direction": nbt.IntTag(facing), "item_frame_map_bit": nbt.ByteTag(int(is_map)),
-                                  "item_frame_photo_bit": nbt.ByteTag(0)})
+            block = frame_block(self.version, facing, is_map, glow)
+            if block is None:
+                self.n_frames_lost += 1
+                continue
+            blocks[(x, y, z)] = block
             t = nbt.CompoundTag({"id": nbt.StringTag("GlowItemFrame" if glow else "ItemFrame"), "x": nbt.IntTag(x),
                                  "y": nbt.IntTag(y), "z": nbt.IntTag(z), "isMovable": nbt.ByteTag(1)})
             if item is not None:
@@ -454,7 +522,9 @@ class BedrockInjector:
                 t["ItemRotation"] = nbt.FloatTag(float(int(c.get("item_rot", 0)) % 8 * 45))
                 t["ItemDropChance"] = nbt.FloatTag(1.0)
             tes[(x, y, z)] = t
-        placed = terrain.set_blocks(self.db, lambda cx, cz: chunk_prefix(cx, cz, dim), blocks)
+        # the stone under a frame is the stand-in older versions of WorldBridge wrote for Java's missing block
+        placed = terrain.set_blocks(self.db, lambda cx, cz: chunk_prefix(cx, cz, dim), blocks, replace_stone=True)
+        self.n_frames_lost += len(blocks) - len(placed)
         by_chunk = defaultdict(list)
         for pos in placed:
             by_chunk[(pos[0] >> 4, pos[2] >> 4)].append(tes[pos])
@@ -493,6 +563,10 @@ class BedrockInjector:
 
 
 def _log_injector(inj: "BedrockInjector", progress: Progress) -> None:
+    if inj.n_frames_lost:
+        progress.warn(tr("{n} item frames could not be placed in Bedrock {version} (on a floor or ceiling before 1.13, "
+                         "or where the block is not air): they are not in the converted world.", n=inj.n_frames_lost,
+                         version=".".join(str(v) for v in inj.version[:3])))
     extra = "".join(", " + w for n, w in ((inj.n_frames, tr("{n} frames", n=inj.n_frames)),
                                           (inj.n_maps, tr("{n} maps", n=inj.n_maps))) if n)
     progress.log(tr("Bedrock: {tiles} block entities and {entities} entities written{extra}.", tiles=inj.n_tiles,

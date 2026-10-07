@@ -39,6 +39,33 @@ def test_peaceful_stays_peaceful(tmp_path):
     assert int(java["Difficulty"].py_data) == 0 and java["GameRules"]["keepInventory"].py_data == "true"
 
 
+def test_spectator_world_and_player_stay_spectators_between_editions(tmp_path):
+    def world(version, mode):
+        info = WorldInfo()
+        info.level = nbt.CompoundTag({"LevelName": nbt.StringTag("s"), "GameType": nbt.IntTag(mode)})
+        d = tmp_path / ("w%d_%d_%d" % (version[1], version[2], mode))
+        d.mkdir()
+        ab.write_bedrock_level_dat(str(d), info, version)
+        return int(ab.read_bedrock_level_dat(str(d))["GameType"].py_data)
+
+    assert world((1, 21, 50), 3) == 6 and world((1, 26, 50), 3) == 6          # Bedrock has Spectator from 1.21.40
+    assert world((1, 21, 20), 3) == 1 and world((1, 16, 220), 3) == 1         # before: the nearest, Creative
+    assert [world((1, 21, 50), m) for m in (0, 1, 2)] == [0, 1, 2]
+    # Bedrock 6 is Spectator, 3 is the "default" mode: Survival
+    for bedrock, java in ((6, 3), (3, 0), (2, 2), (1, 1), (0, 0)):
+        root = nbt.CompoundTag({"LevelName": nbt.StringTag("b"), "GameType": nbt.IntTag(bedrock)})
+        assert int(ab.bedrock_info_to_java(root)["GameType"].py_data) == java
+    # a spectator player in a spectator world follows it; in another world he keeps his mode
+    player = nbt.CompoundTag({"playerGameType": nbt.IntTag(3)})
+    for version, expected in (((1, 21, 50), 5), ((1, 21, 20), 5)):
+        assert int(legacy_player_to_bedrock(player, version, 1, 3)["PlayerGameMode"].py_data) == expected
+    assert int(legacy_player_to_bedrock(player, (1, 21, 50), 1, 0)["PlayerGameMode"].py_data) == 6
+    assert int(legacy_player_to_bedrock(player, (1, 21, 20), 1, 0)["PlayerGameMode"].py_data) == 1
+    assert int(legacy_player_to_bedrock(player, (1, 21, 20), 1, 1)["PlayerGameMode"].py_data) == 5   # both Creative there
+    back = bedrock_player_to_legacy(legacy_player_to_bedrock(player, (1, 21, 50), 1, 0))
+    assert int(back["playerGameType"].py_data) == 3
+
+
 def test_java_26_level_read_with_the_classic_keys(tmp_path):
     data = tmp_path / "data" / "minecraft"
     data.mkdir(parents=True)

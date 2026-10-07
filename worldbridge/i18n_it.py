@@ -499,6 +499,8 @@ _SECTIONS = {
             '{n} cornici',
         '{n} maps':
             '{n} mappe',
+        '{n} item frames could not be placed in Bedrock {version} (on a floor or ceiling before 1.13, or where the block is not air): they are not in the converted world.':
+            '{n} cornici non si sono potute collocare in Bedrock {version} (a pavimento o soffitto prima della 1.13, o dove il blocco non è aria): non sono nel mondo convertito.',
         'Bedrock: {tiles} block entities and {entities} entities written{extra}.':
             'Bedrock: {tiles} blocchi-entità e {entities} entità scritti{extra}.',
         'Entities and containers {i}/{n}':
