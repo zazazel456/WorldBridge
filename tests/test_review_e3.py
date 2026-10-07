@@ -85,3 +85,14 @@ def test_bedrock_spawn_never_set_and_negative_spawn_y():
     assert int(lv["SpawnY"].py_data) == -60                     # a real Y of a 1.18+ world
     ground = nbt.CompoundTag({"SpawnX": nbt.IntTag(0), "SpawnY": nbt.IntTag(32767), "SpawnZ": nbt.IntTag(0)})
     assert int(ab.bedrock_info_to_java(ground)["SpawnY"].py_data) == 64      # "on the ground"
+
+
+def test_an_explicit_spawn_rises_with_the_world_kept_by_depth(tmp_path):
+    from worldbridge.java.numeric import JavaNumericWorld
+
+    from .test_depth import _modern_world, _to_numeric
+
+    src = _modern_world(str(tmp_path / "flat"), -61, chests=[-60])
+    out = str(tmp_path / "out")
+    _to_numeric(src, out, depth="keep", selection=Selection(spawn=(3, -59, 3)))
+    assert int(nbt.get(JavaNumericWorld(out).info.level, "SpawnY")) == 5          # -59 + 64, not -59 clamped

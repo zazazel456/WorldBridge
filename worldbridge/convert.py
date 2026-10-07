@@ -734,6 +734,10 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
             progress.log(tr("Finite map: only the chunks that reach it (with a margin for its edge) are translated."))
         src = open_source(d, progress, tmp, _is_amulet_target(target), src_sel, depth)
         apply_to_info(src.info, sel, target.family, progress)
+        if sel.spawn is not None and depth is not None and depth.used:
+            # --spawn is a point of the source world: it rises / falls with the ground like the world's own spawn
+            x, y, z = (int(v) for v in sel.spawn)
+            src.info.level["SpawnY"] = ab.nbt.IntTag(int(round(depth.point(x + 0.5, y, z + 0.5))))
         _warn_single_player(src.info, target, sel, progress)
         if target.family == "java" and target.java_mode == "auto":
             # Mojang's own upgrade (DataFixerUpper) is the most faithful route for numeric worlds;
