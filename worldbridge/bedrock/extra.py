@@ -391,6 +391,9 @@ class BedrockInjector:
             key = prefix + bytes([BE_TAG])
             existing = read_nbt_list(_get(self.db, key) or b"")
             by_pos = {(int(nbt.get(t, "x", 0)), int(nbt.get(t, "y", 0)), int(nbt.get(t, "z", 0))): t for t in existing}
+            for c in tile_canon:  # a block entity this version does not have: Amulet's copy of Java's goes too
+                if not tiles.exists_in_bedrock(c["kind"], self.version):
+                    by_pos.pop(tuple(c["pos"]), None)
             for t in tiles.write_list(tile_canon, "bedrock", version=self.version):
                 by_pos[(int(t["x"].py_data), int(t["y"].py_data), int(t["z"].py_data))] = t
                 self.n_tiles += 1
