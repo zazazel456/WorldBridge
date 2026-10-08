@@ -14,8 +14,15 @@ instead, and only where it is needed:
   house, player build) comes down as one rigid piece, the ground under it included, and every
   tree follows its own trunk, so neither gets sheared on a slope.
 
+* floating islands and sky builds (no natural ground in their columns, or a tower far above the
+  ground) are rigid pieces as well: their columns are lowered together by what the highest block of
+  the piece needs to fit, and where possible the removed band is plain air (the void or the cave
+  under them), so nothing is lost;
+* in every column a run of air is removed in preference to rock (caves, void under an island).
+
 Chests, mobs, the player and the spawn point move with their column.  Two passes: the first
-reads every column's ground height, the second rewrites the chunks.
+reads every column's ground height and top, the second rewrites the chunks.  What the compression
+could not bring under the ceiling is cut and counted (never silently).
 """
 
 from __future__ import annotations
@@ -67,28 +74,97 @@ def ground_heights(c: NumericChunk) -> np.ndarray:
     return np.where(has, c.height - 1 - np.argmax(g[::-1], axis=0), -1).astype(np.int16)
 
 
+def content_tops(c: NumericChunk, h: np.ndarray) -> np.ndarray:
+    """[z, x] y of the highest block that has to fit under the ceiling, -1 where the column is empty.
+    Natural trees (logs, leaves, vines) do not count in columns with ground: they follow their
+    trunk, and the ground of a whole forest is not lowered for the crown of a tall tree."""
+    b = np.asarray(c.blocks, np.int64)
+    solid = b != 0
+    keep = solid & ~(TREE[b] & (h[None] >= 0))
+    has = keep.any(axis=0)
+    return np.where(has, c.height - 1 - np.argmax(keep[::-1], axis=0), -1).astype(np.int16)
+
+
+def cut_above(c: NumericChunk, ceiling: int) -> Tuple[int, int, int]:
+    """Cut everything at y >= ceiling off a chunk: (blocks, block entities, entities) removed.  The
+    block entities and entities go here, with their blocks, so they are not reported as something
+    else later; the count is also kept in ``c.cut_above``.  (An entity at y 128.0 stands on the
+    highest block the target can store: it stays.)"""
+    nb = nt = ne = 0
+    if c.height > ceiling:
+        above = np.asarray(c.blocks[ceiling:]) != 0
+        nb = int(above.sum())
+        if nb:
+            c.blocks[ceiling:] = 0
+            c.data[ceiling:] = 0
+            if c.waterlogged is not None:
+                c.waterlogged[ceiling:] = False
+        elif c.waterlogged is not None and c.waterlogged[ceiling:].any():
+            c.waterlogged[ceiling:] = False
+    c.modern_blocks = {k: v for k, v in c.modern_blocks.items() if k[1] < ceiling}
+
+    def y_of(t):
+        try:
+            return int(nbt.get(t, "y"))
+        except (TypeError, ValueError):
+            return None
+
+    kept = []
+    for t in c.tile_entities:
+        y = y_of(t)
+        if y is not None and y >= ceiling:
+            nt += 1
+        else:
+            kept.append(t)
+    c.tile_entities = kept
+    c.tile_ticks = [t for t in c.tile_ticks if (y_of(t) is None or y_of(t) < ceiling)]
+    kept = []
+    for e in c.entities:
+        pos = nbt.get_tag(e, "Pos")
+        if pos is not None and len(pos) == 3 and float(pos[1].py_data) >= ceiling + 1:       # y 128.0: standing on block 127
+            ne += 1
+        else:
+            kept.append(e)
+    c.entities = kept
+    c.cut_above = (nb, nt, ne)
+    return nb, nt, ne
+
+
 class HeightFit:
     def __init__(self, ceiling: int):
         """ceiling: first y the target cannot store (128), in the coordinates of the source."""
         self.ceiling = ceiling
         self.top_ground = ceiling - 1 - HEADROOM
         self.heights: Dict[Tuple[int, int], np.ndarray] = {}
+        self.tops: Dict[Tuple[int, int], np.ndarray] = {}       # y of the highest block to fit, per column
         self.max_ground = -1
+        self.max_top = -1
         self._shifts: Dict[Tuple[int, int], np.ndarray] = {}
         self._starts: Dict[Tuple[int, int], np.ndarray] = {}
         self._base: Dict[Tuple[int, int], np.ndarray] = {}
         self.built: Dict[Tuple[int, int], np.ndarray] = {}      # columns with a building near the top
+        self.floating: Dict[Tuple[int, int], np.ndarray] = {}   # columns with blocks and no natural ground
         self.trunks: Dict[Tuple[int, int], np.ndarray] = {}     # columns with a tree trunk on the ground
         self._rigid: Optional[Dict[Tuple[int, int], np.ndarray]] = None
         self.buildings = 0
         self.moved_columns = 0
-        self.lost_tiles = 0
+        self.lost_tiles = 0                                      # block entities inside the removed rock
+        # what was still above the ceiling after the compression (cut, never silently)
+        self.lost_blocks = 0
+        self.lost_tiles_above = 0
+        self.lost_entities = 0
 
     # -------------------------------------------------------------- pass 1
     def observe(self, c: NumericChunk) -> None:
         h = ground_heights(c)
         self.heights[(c.cx, c.cz)] = h
         self.max_ground = max(self.max_ground, int(h.max()))
+        top = content_tops(c, h)
+        self.tops[(c.cx, c.cz)] = top
+        self.max_top = max(self.max_top, int(top.max()))
+        floating = (h < 0) & (top >= 0)
+        if floating.any():
+            self.floating[(c.cx, c.cz)] = floating
         b = np.asarray(c.blocks, np.int64)
         y = np.arange(c.height)[:, None, None]
         near_top = y > (h[None].astype(np.int32) - KEEP)
@@ -97,7 +173,7 @@ class HeightFit:
             self.built[(c.cx, c.cz)] = built
         # trunks: logs stacked on the ground; the y of their top log (-1: no trunk)
         logs = LOGS[b]
-        top = np.full((16, 16), -1, np.int32)
+        trunk = np.full((16, 16), -1, np.int32)
         on_ground = logs[np.clip(h.astype(np.int64) + 1, 0, c.height - 1), np.arange(16)[:, None], np.arange(16)[None, :]]
         for z, x in zip(*np.nonzero(on_ground & (h >= 0))):
             y0 = int(h[z, x]) + 1
@@ -105,18 +181,23 @@ class HeightFit:
             while y1 + 1 < c.height and logs[y1 + 1, z, x]:
                 y1 += 1
             if y1 - y0 + 1 >= TRUNK_MIN:
-                top[z, x] = y1
-        if (top >= 0).any():
-            self.trunks[(c.cx, c.cz)] = top
+                trunk[z, x] = y1
+        if (trunk >= 0).any():
+            self.trunks[(c.cx, c.cz)] = trunk
+
+    @property
+    def ground_needed(self) -> bool:
+        return self.max_ground > self.top_ground
 
     @property
     def needed(self) -> bool:
-        return self.max_ground > self.top_ground
+        """Ground higher than the target, or something built above its ceiling."""
+        return self.ground_needed or self.max_top >= self.ceiling
 
     @property
     def ratio(self) -> float:
         """How much of the ground above the knee is kept (1 = nothing compressed)."""
-        if not self.needed:
+        if not self.ground_needed:
             return 1.0
         return (self.top_ground - self.knee) / float(self.max_ground - self.knee)
 
@@ -145,17 +226,27 @@ class HeightFit:
         self._shifts[(cx, cz)] = s
         return s
 
+    def _need(self, cx: int, cz: int) -> np.ndarray:
+        """[z, x] blocks the column has to come down so that its highest block fits."""
+        t = self.tops.get((cx, cz))
+        if t is None:
+            return np.zeros((16, 16), np.int32)
+        return np.maximum(t.astype(np.int32) - (self.ceiling - 1), 0)
+
     def _rigid_shifts(self) -> Dict[Tuple[int, int], np.ndarray]:
         """One shift for every column of a building (its ground included): the building comes
         down as a whole.  Columns with a building near the top, BUILD_RADIUS apart at most, are
-        one building (houses of a village are separate, their paths are ground)."""
+        one building (houses of a village are separate, their paths are ground).  Floating islands
+        and sky builds (columns with blocks and no natural ground) are buildings too, their island
+        included; the piece comes down by enough for its highest block to fit."""
         if self._rigid is not None:
             return self._rigid
         self._rigid = {}
         cols = set()
-        for (cx, cz), m in self.built.items():
-            zs, xs = np.nonzero(m)
-            cols.update(zip((cx * 16 + xs).tolist(), (cz * 16 + zs).tolist()))
+        for src in (self.built, self.floating):
+            for (cx, cz), m in src.items():
+                zs, xs = np.nonzero(m)
+                cols.update(zip((cx * 16 + xs).tolist(), (cz * 16 + zs).tolist()))
         seen = set()
         r = BUILD_RADIUS
         near = [(dx, dz) for dx in range(-r, r + 1) for dz in range(-r, r + 1) if dx or dz]
@@ -172,15 +263,20 @@ class HeightFit:
                     if q in cols and q not in seen:
                         seen.add(q)
                         todo.append(q)
-            base = [int(self._base_shifts(x >> 4, z >> 4)[z & 15, x & 15]) for x, z in comp]
-            if not any(base):
-                continue
             hs = [int(self.heights[(x >> 4, z >> 4)][z & 15, x & 15]) for x, z in comp]
-            # the median shift, but enough for the highest ground under it to fit
-            sh = max(int(np.median(base)), max(hs) - self.top_ground, 0)
-            for x, z in comp:
+            tops = [int(self.tops[(x >> 4, z >> 4)][z & 15, x & 15]) for x, z in comp]
+            need = max(max(tops) - (self.ceiling - 1), 0)
+            base = [int(self._base_shifts(x >> 4, z >> 4)[z & 15, x & 15]) for (x, z), h in zip(comp, hs) if h >= 0]
+            if not any(base) and not need:
+                continue
+            # the median shift, but enough for the highest ground under it - and the highest block - to fit
+            sh = max(int(np.median(base)) if base else 0, max(hs) - self.top_ground, need, 0)
+            if not sh:
+                continue
+            for (x, z), h, t in zip(comp, hs, tops):
                 a = self._rigid.setdefault((x >> 4, z >> 4), np.full((16, 16), -1, np.int32))
-                a[z & 15, x & 15] = sh
+                # a column with no ground whose blocks are all under the band stays where it is
+                a[z & 15, x & 15] = sh if (h >= 0 or t + 1 - sh >= 1) else 0
             self.buildings += 1
         return self._rigid
 
@@ -218,6 +314,7 @@ class HeightFit:
         s = np.clip(mean, own - SLACK, own + SLACK)
         s = np.where(h > self.knee, np.minimum(s, h - self.knee), 0)  # never below the knee
         s = np.rint(np.maximum(s, 0)).astype(np.int32)
+        s = np.maximum(s, self._need(cx, cz))                     # the highest block has to fit
         s[h < 0] = 0
         self._base[(cx, cz)] = s
         return s
@@ -231,8 +328,12 @@ class HeightFit:
         starts = self._starts.get((xi >> 4, zi >> 4))
         if starts is not None:
             a = int(starts[zi & 15, xi & 15])
-        else:
-            a = int(self.heights[(xi >> 4, zi >> 4)][zi & 15, xi & 15]) - KEEP + 1 - s
+        else:                                                         # chunk not rewritten (yet): a guess
+            h = int(self.heights[(xi >> 4, zi >> 4)][zi & 15, xi & 15])
+            if h < 0:                                                 # floating: the band is under the blocks
+                top = int(self.tops[(xi >> 4, zi >> 4)][zi & 15, xi & 15])
+                return y - s if y >= top + 1 - s else y
+            a = h - KEEP + 1 - s
         if y >= a + s:
             return y - s
         if y >= a:
@@ -240,22 +341,55 @@ class HeightFit:
         return y
 
     def _band_starts(self, c: NumericChunk, s: np.ndarray) -> np.ndarray:
-        """First removed y of every column: just under the surface, or deeper where that band
-        would go through a built block (a base inside the mountain comes down whole)."""
+        """First removed y of every column.  In preference a run of air under the surface (a cave,
+        the void under an island): nothing is lost.  Else just under the surface, or deeper where
+        that band would go through a built block (a base inside the mountain comes down whole).
+        A column with no ground (floating island) loses the cheapest band under its highest block."""
+        H = c.height
         h = self.heights[(c.cx, c.cz)].astype(np.int32)
+        top = self.tops[(c.cx, c.cz)].astype(np.int32)
         start = h - KEEP + 1 - s
-        prot = PROTECTED[np.asarray(c.blocks, np.int64)]
+        blocks = np.asarray(c.blocks, np.int64)
+        prot = PROTECTED[blocks]
+        solid = blocks != 0
         for t in c.tile_entities:
             try:
                 prot[int(nbt.get(t, "y")), int(nbt.get(t, "z")) & 15, int(nbt.get(t, "x")) & 15] = True
             except (TypeError, ValueError, IndexError):
                 pass
-        cs = np.concatenate([np.zeros((1, 16, 16), np.int32), np.cumsum(prot, axis=0, dtype=np.int32)])
+        zero = np.zeros((1, 16, 16), np.int32)
+        cs = np.concatenate([zero, np.cumsum(prot, axis=0, dtype=np.int32)])       # built blocks under y
+        cn = np.concatenate([zero, np.cumsum(solid, axis=0, dtype=np.int32)])      # non-air blocks under y
+        rigid = self._rigid_shifts().get((c.cx, c.cz))
+        need = self._need(c.cx, c.cz)
+        knee = max(self.knee, 1)
         for z, x in zip(*np.nonzero(s)):
             sh, a0 = int(s[z, x]), int(start[z, x])
-            if a0 < 1:                                                # surface at the very bottom: nothing to move
+            pc = np.append(prot[:, z, x], False)                      # pc[H]: nothing above the column
+            col, ncol = cs[:, z, x], cn[:, z, x]
+            if h[z, x] < 0:
+                # no ground: the band that costs the least blocks under the highest one, the highest
+                # of them (the void under the island); a room between two built blocks is kept
+                hi = int(top[z, x]) + 1 - sh
+                if hi < 1:
+                    start[z, x] = 1
+                    continue
+                a = np.arange(1, hi + 1)
+                cost = (ncol[a + sh] - ncol[a]) + 20 * (col[a + sh] - col[a]) + 1000 * (pc[a - 1] & pc[a + sh])
+                start[z, x] = a[np.nonzero(cost == cost.min())[0][-1]]
                 continue
-            col = cs[:, z, x]
+            if a0 < 1:                                                # surface at the very bottom: nothing to move
+                start[z, x] = 1
+                continue
+            # air, not a room between two built blocks, from the knee (buildings and tall blocks: anywhere)
+            lo = 1 if (rigid is not None and rigid[z, x] >= 0) or need[z, x] else knee
+            if lo <= a0:
+                a = np.arange(lo, a0 + 1)
+                free = ((ncol[a + sh] - ncol[a]) == 0) & ~(pc[a - 1] & pc[a + sh])
+                idx = np.nonzero(free)[0]
+                if len(idx):
+                    start[z, x] = a[idx[-1]]
+                    continue
             if col[a0 + sh] == col[a0]:
                 continue
             a = np.arange(1, a0 + 1)
@@ -318,8 +452,19 @@ class HeightFit:
     # -------------------------------------------------------------- pass 2
     def apply(self, c: NumericChunk) -> NumericChunk:
         s = self.shifts(c.cx, c.cz)
-        if not s.any():
-            return c
+        if s.any():
+            self._remap(c, s)
+        self._cut_above(c)
+        return c
+
+    def _cut_above(self, c: NumericChunk) -> None:
+        """What the compression could not lower under the ceiling is cut here, counted."""
+        nb, nt, ne = cut_above(c, self.ceiling)
+        self.lost_blocks += nb
+        self.lost_tiles_above += nt
+        self.lost_entities += ne
+
+    def _remap(self, c: NumericChunk, s: np.ndarray) -> None:
         start = self._band_starts(c, s)                           # [z, x] first removed y
         self._starts[(c.cx, c.cz)] = start
         H = c.height
@@ -377,7 +522,6 @@ class HeightFit:
             setattr(c, name, kept)
         for e in c.entities:
             _move_entity(e, self)
-        return c
 
 
 def _move_entity(e: nbt.CompoundTag, fit: HeightFit) -> None:
