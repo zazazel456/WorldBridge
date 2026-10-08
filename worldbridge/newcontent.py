@@ -140,6 +140,31 @@ def bedrock_entity_rename(name: str, version: Version) -> Optional[Tuple[str, Tu
     return None
 
 
+# Bedrock release that added each attribute (the string table of the dedicated servers 1.6 - 1.26): a game that
+# lacks one logs "Cannot find attribute minecraft:lava_movement" for every actor / player that carries it.
+BEDROCK_ATTRIBUTE_SINCE = _since({(1, 16, 0): ["lava_movement"]})
+
+
+def bedrock_attribute_exists(name: str, version: Version) -> bool:
+    v = BEDROCK_ATTRIBUTE_SINCE.get(name.split(":", 1)[-1])
+    return v is None or tuple(version) >= v
+
+
+def filter_attributes(e, version: Version) -> int:
+    """Removes from the ``Attributes`` list of the Bedrock actor / player ``e`` the attributes ``version`` lacks.
+    Returns how many were removed."""
+    from . import nbt
+
+    attrs = nbt.get_tag(e, "Attributes")
+    if attrs is None:
+        return 0
+    keep = [a for a in attrs if bedrock_attribute_exists(str(nbt.get(a, "Name", "") or ""), version)]
+    if len(keep) == len(attrs):
+        return 0
+    e["Attributes"] = nbt.ListTag(keep, 10)
+    return len(attrs) - len(keep)
+
+
 def downgrade_actor(e, version: Version) -> Optional[str]:
     """Rewrites the identifier (and the definitions) of the Bedrock actor ``e`` for ``version`` in place.  Returns
     "renamed", "removed" (``version`` lacks the mob: the caller drops it) or None (unchanged)."""
@@ -148,6 +173,7 @@ def downgrade_actor(e, version: Version) -> Optional[str]:
     ident = str(nbt.get(e, "identifier", "") or "")
     if not ident:
         return None
+    filter_attributes(e, version)
     r = bedrock_entity_rename(ident, version)
     if r is not None:
         old = ident.split(":", 1)[-1]

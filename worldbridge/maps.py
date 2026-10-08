@@ -93,8 +93,10 @@ def bedrock_record(n: int, data: nbt.CompoundTag) -> Tuple[bytes, nbt.CompoundTa
     if isinstance(dim, str):
         dim = {"minecraft:the_nether": -1, "minecraft:the_end": 1}.get(dim, 0)
     dim = {-1: 1, 1: 2}.get(int(dim or 0), 0)
+    # no "parentMapId": a map without a parent has none; Bedrock 1.17 - 26 logs "Map item N has invalid
+    # parentMapId" at every load of a chunk holding the map when it is -1
     rec = nbt.CompoundTag({
-        "mapId": nbt.LongTag(uuid), "parentMapId": nbt.LongTag(-1), "dimension": nbt.ByteTag(dim),
+        "mapId": nbt.LongTag(uuid), "dimension": nbt.ByteTag(dim),
         "fullyExplored": nbt.ByteTag(0), "mapLocked": nbt.ByteTag(1 if nbt.get(data, "locked", 0) else 0),
         "scale": nbt.ByteTag(int(nbt.get(data, "scale", 0) or 0)), "unlimitedTracking": nbt.ByteTag(0),
         "height": nbt.ShortTag(128), "width": nbt.ShortTag(128),
