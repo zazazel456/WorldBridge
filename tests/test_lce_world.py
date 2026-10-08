@@ -155,7 +155,7 @@ def test_a_mob_the_profile_does_not_have_is_reported(tmp_path):
     assert any("salmon" in m and "drowned" in m for m in prog.warnings), prog.warnings
     world = LCEWorld(str(tmp_path / "out"))
     for cx, cz in world.chunk_coords(0):
-        assert [nbt.get(e, "id") for e in world.read_chunk(0, cx, cz).entities] == ["Pig"]
+        assert [nbt.get(e, "id") for e in world.read_chunk(0, cx, cz).entities] == ["minecraft:pig"]
 
 
 def test_the_ender_chests_of_a_tu69_save_are_kept():
