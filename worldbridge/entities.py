@@ -6,7 +6,7 @@ import random
 import re
 import struct
 import uuid
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from . import ids, items, nbt, newcontent
 
@@ -600,6 +600,8 @@ def write_bedrock_variants(e: nbt.CompoundTag, c: dict, bname: str, version) -> 
         variant = CAT_BEDROCK[v] if v is not None and 0 <= v < len(CAT_BEDROCK) else None
     elif bname == "rabbit":
         variant = _int_extra(extra, "RabbitType")
+        if variant is not None and 0 <= variant < len(RABBIT_COATS):
+            defs.append(nbt.StringTag("+coat_" + RABBIT_COATS[variant]))
     elif bname == "fox":
         t = _str_extra(extra, "Type")
         variant = FOX_TYPES.index(t) if t in FOX_TYPES else None
@@ -734,6 +736,33 @@ def read_bedrock_variants(c: dict, e: nbt.CompoundTag, n: str, version=None) -> 
                 "profession": nbt.StringTag("minecraft:" + (str(prof).split(":", 1)[-1] if prof else "none")),
                 "level": nbt.IntTag(max(1, min(5, int(nbt.get(e, "TradeTier", 0) or 0) + 1))),
                 "type": nbt.StringTag("minecraft:" + biome)})
+
+
+# The component groups with which the vanilla behaviour packs (BDS 1.6 - 1.26) make a mob an adult / a baby: (adult,
+# baby), the names as the packs spell them in ``component_groups`` (a name that is not there is not a group: the game
+# drops it).  Most animals use ``minecraft:<mob>_adult`` / ``_baby``; the others are listed.  A mob that is not here
+# has no such group (bat, spider...).
+BEDROCK_AGE_GROUPS: Dict[str, Tuple[Optional[str], Optional[str]]] = {
+    **{m: (f"minecraft:{m}_adult", f"minecraft:{m}_baby") for m in (
+        "pig", "cow", "sheep", "chicken", "wolf", "horse", "donkey", "mule", "llama", "ocelot", "cat", "panda", "fox",
+        "skeleton_horse", "squid", "camel", "hoglin", "strider", "zombie", "dolphin", "nautilus")},
+    "mooshroom": ("minecraft:cow_adult", "minecraft:cow_baby"),            # a mooshroom is a cow with the red/brown group
+    "rabbit": ("adult", "baby"),                                            # not namespaced
+    "bee": ("bee_adult", "bee_baby"), "goat": ("goat_adult", "goat_baby"), "axolotl": ("axolotl_adult", "axolotl_baby"),
+    "piglin": ("piglin_adult", "piglin_baby"), "zoglin": ("zoglin_adult", "zoglin_baby"),
+    "sniffer": ("sniffer_adult", "sniffer_baby"),
+    "turtle": ("minecraft:adult", "minecraft:baby"), "polar_bear": ("minecraft:adult", "minecraft:baby"),
+    "glow_squid": ("minecraft:squid_adult", "minecraft:squid_baby"),
+    "husk": ("minecraft:zombie_husk_adult", "minecraft:zombie_husk_baby"),
+    "drowned": ("minecraft:adult_drowned", "minecraft:baby_drowned"),
+    "zombie_pigman": ("minecraft:pig_zombie_adult", "minecraft:pig_zombie_baby"),
+    "zombie_horse": ("minecraft:horse_adult", "minecraft:horse_baby"),
+    "trader_llama": ("minecraft:llama_adult", "minecraft:llama_baby"),
+}
+# the mobs that get their adult group written (the others are adult by default and keep whatever the game gives)
+BEDROCK_ADULT_MOBS = ("pig", "cow", "sheep", "chicken", "mooshroom", "rabbit", "wolf", "horse", "donkey", "mule", "llama",
+                      "ocelot", "cat", "panda", "fox", "bee", "goat", "turtle", "polar_bear")
+RABBIT_COATS = ("brown", "white", "black", "splotched", "desert", "salt")        # RabbitType 0 - 5 (99: the killer bunny)
 
 
 # Pocket Edition 0.9 - 0.16 (LevelDB) saved an entity by its number, ``id`` (a few later versions OR the
@@ -1010,12 +1039,10 @@ def to_bedrock(c: dict, uid: int, owner_uid: Optional[int] = None, version=(1, 2
         e["IsBaby"] = nbt.ByteTag(1)
     if bname == "villager_v2":
         pass                                       # adult / baby are the plain groups of write_bedrock_variants
-    elif baby:
-        e["definitions"].append(nbt.StringTag(f"+minecraft:{bname}_baby"))
     else:
-        if bname in ("pig", "cow", "sheep", "chicken", "mooshroom", "rabbit", "wolf", "horse", "donkey", "mule", "llama",
-                     "ocelot", "cat", "panda", "fox", "bee", "goat", "turtle", "polar_bear"):
-            e["definitions"].append(nbt.StringTag(f"+minecraft:{bname}_adult"))
+        age_group = BEDROCK_AGE_GROUPS.get(bname)
+        if age_group is not None and (baby or bname in BEDROCK_ADULT_MOBS):
+            e["definitions"].append(nbt.StringTag("+" + age_group[1 if baby else 0]))
     if "Color" in extra and bname == "sheep":
         e["Color"] = nbt.ByteTag(int(extra["Color"].py_data))
     if "Sheared" in extra:

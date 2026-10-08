@@ -268,6 +268,7 @@ def legacy_player_to_bedrock(p: nbt.CompoundTag, version, uid: int, world_game_t
     if lvl is not None:
         attrs.append(attr("minecraft:player.level", max(0, min(int(lvl), 24791)), 24791.0, 0.0))
         attrs.append(attr("minecraft:player.experience", max(0.0, min(float(nbt.get(p, "XpP", 0.0) or 0), 1.0)), 1.0, 0.0))
+    attrs = [a for a in attrs if newcontent.bedrock_attribute_exists(str(nbt.get(a, "Name", "")), version)]
     if attrs:
         out["Attributes"] = nbt.ListTag(attrs, 10)
     return out
@@ -938,6 +939,7 @@ class _Downgrade:
 
 def _retarget_player(root: nbt.CompoundTag, version) -> None:
     retarget_items(root, version)
+    newcontent.filter_attributes(root, version)
     gm = nbt.get(root, "PlayerGameMode")
     if gm is not None and int(gm) == 6 and tuple(version) < (1, 21, 40):    # Spectator came with 1.21.40
         root["PlayerGameMode"] = nbt.IntTag(1)

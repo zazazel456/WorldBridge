@@ -5,6 +5,15 @@
 A full review of the code with 110 real worlds downloaded from the web (Java Classic → 26.3, Bedrock
 1.1 → 1.26.40, PE 0.x, LCE on PS3 / PS4 / Vita / Wii U / Xbox 360). Fixed so far:
 
+**Found by opening converted worlds in real Bedrock Dedicated Servers (1.14 - 26.52)**
+- Bedrock → older Bedrock: attributes the target lacks are no longer written (`minecraft:lava_movement` came with
+  1.16; BDS 1.14 logged "Cannot find attribute" for every actor and player), also for the actors kept raw.
+- A numeric-Java record player with a record (data 1) is `jukebox` for every Bedrock (it stayed
+  `jukebox[block_data=1]`, a state Bedrock 1.14 - 1.18 reject while loading the chunk) and has `has_record` in Java 1.13+.
+- Map records no longer carry `parentMapId: -1` (Bedrock 1.17+ logged "Map item N has invalid parentMapId" at every load).
+- The age component groups of mooshroom (`minecraft:cow_adult`), rabbit (`adult`, `baby`, `coat_*`), bee, goat, turtle,
+  polar bear, piglin and others are the ones of the vanilla behaviour packs (the converter invented `minecraft:<mob>_adult`).
+
 **Java, by version**
 - **Java 26.2+ has no bed block entity** (a 26.3 server's registry lists 49 block entity types and no
   `minecraft:bed`; the colour is in the block): beds are no longer written for such a target (chunks written in

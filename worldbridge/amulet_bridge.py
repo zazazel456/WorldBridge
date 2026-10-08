@@ -341,6 +341,15 @@ def _install_legacy_fallback(version_obj=None) -> None:
             # entity): the block is air, PyMCTranslate's stand-in is stone, which pops the frame off
             old = tuple(self._parent_version.version_number) < (1, 13)
             return (Block("minecraft", "air", {"block_data": an.IntTag(0)} if old else {}), None, False)
+        if block.base_name == "jukebox" and block.namespace == "minecraft" and "block_data" in block.properties \
+                and self._parent_version.platform != "universal" and tuple(self._parent_version.version_number) >= (1, 13):
+            # a record player of the numeric games with a record in it (data 1): PyMCTranslate only knows data 0, so
+            # the block stayed ``jukebox[block_data=1]``, a state that Bedrock 1.14 - 1.18 does not have
+            try:
+                has = int(block.properties["block_data"].py_data) & 1
+            except Exception:  # noqa: BLE001
+                has = 0
+            block = Block("universal_minecraft", "jukebox", {"has_record": an.StringTag("true" if has else "false")})
         if block.base_name == "portal" and block.namespace == "minecraft" and "block_data" in block.properties \
                 and self._parent_version.platform != "universal":
             # a nether portal of the numeric games with data 0 or 3 (only 1 = x and 2 = z have a translation; the
