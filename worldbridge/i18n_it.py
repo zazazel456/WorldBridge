@@ -51,8 +51,20 @@ _SECTIONS = {
             'auto = ultima versione col percorso migliore; dfu = mondo aggiornato dal gioco; amulet = pre-convertito alla --version',
         'target version inside the chosen format: --java-mode numeric 1.2 … 1.12; mcregion b1.3, b1.4, b1.5, b1.6, b1.7, b1.8, 1.0, 1.1; alpha: alpha (Alpha 1.2.x), b1.2 (Beta 1.0 – 1.2_02, default)':
             'versione di destinazione dentro al formato scelto: --java-mode numeric 1.2 … 1.12; mcregion b1.3, b1.4, b1.5, b1.6, b1.7, b1.8, 1.0, 1.1; alpha: alpha (Alpha 1.2.x), b1.2 (Beta 1.0 – 1.2_02, predefinito)',
-        'target version (e.g. 1.20.1 or 1.21.0)':
-            'versione di destinazione (es. 1.20.1 o 1.21.0)',
+        'target version (e.g. 1.20.1 or 1.21.0); with the default Java mode it picks the route that writes exactly that version (Amulet from 1.13, the numeric Anvil format up to 1.12)':
+            'versione di destinazione (es. 1.20.1 o 1.21.0); con la modalità Java predefinita sceglie la strada che scrive esattamente quella versione (Amulet dalla 1.13, il formato Anvil numerico fino alla 1.12)',
+        'Java route: --version {version} was given, so the world is converted explicitly to that version (Amulet).':
+            'Strada Java: è stata indicata --version {version}, quindi il mondo viene convertito esplicitamente a quella versione (Amulet).',
+        'Java route: --version {version} was given, so the world is written in the numeric Anvil format of that version.':
+            'Strada Java: è stata indicata --version {version}, quindi il mondo è scritto nel formato Anvil numerico di quella versione.',
+        '--version {version} has no Anvil format: for versions before 1.2 use --java-mode mcregion or alpha with --java-limit':
+            '--version {version} non ha un formato Anvil: per le versioni prima della 1.2 usa --java-mode mcregion o alpha con --java-limit',
+        '--version {version} and --java-limit {limit} name different versions':
+            '--version {version} e --java-limit {limit} indicano versioni diverse',
+        '--version {version} has no numeric Anvil format (1.2 to 1.12)':
+            '--version {version} non ha un formato Anvil numerico (da 1.2 a 1.12)',
+        '--version does not apply to the {format} format: choose the version with --java-limit ({choices})':
+            '--version non vale per il formato {format}: scegli la versione con --java-limit ({choices})',
         'LCE platform: win64, xbox360, ps3, wiiu, vita, ps4, xboxone, switch':
             'piattaforma LCE: win64, xbox360, ps3, wiiu, vita, ps4, xboxone, switch',
         'LCE console version: tu54 (default), tu46, tu31. Windows64 is always neoLegacy TU31':

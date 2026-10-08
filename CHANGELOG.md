@@ -6,6 +6,10 @@ A full review of the code with 110 real worlds downloaded from the web (Java Cla
 1.1 → 1.26.40, PE 0.x, LCE on PS3 / PS4 / Vita / Wii U / Xbox 360). Fixed so far:
 
 **Java, by version**
+- **`--to java --version X` with the default Java mode ignored the version** (a 1.20.4 request wrote the latest,
+  26.3): an explicit version now picks the route that writes exactly it (Amulet from 1.13, the numeric Anvil
+  format up to 1.12) and the log says so. Hanging signs, barrels, smokers and blast furnaces no longer leave
+  orphan block entities in targets older than the block (the game logged "Skipping BlockEntity").
 - **Java 1.13+ → the same or a newer Java lost book text, lore, leather dye** and other item data,
   on the default route too: the world is now copied and upgraded by the game itself (1.18+ targets,
   or without the ring).

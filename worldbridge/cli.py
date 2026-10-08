@@ -257,7 +257,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help=tr("target version inside the chosen format: --java-mode numeric 1.2 … 1.12; "
                            "mcregion b1.3, b1.4, b1.5, b1.6, b1.7, b1.8, 1.0, 1.1; alpha: alpha (Alpha 1.2.x), b1.2 "
                            "(Beta 1.0 – 1.2_02, default)"))
-    c.add_argument("--version", default=None, help=tr("target version (e.g. 1.20.1 or 1.21.0)"))
+    c.add_argument("--version", default=None, help=tr("target version (e.g. 1.20.1 or 1.21.0); with the default Java mode it picks the route "
+                   "that writes exactly that version (Amulet from 1.13, the numeric Anvil format up to 1.12)"))
     c.add_argument("--platform", default="win64", choices=list(PLATFORMS), metavar="PLATFORM",
                    help=tr("LCE platform: win64, xbox360, ps3, wiiu, vita, ps4, xboxone, switch"))
     c.add_argument("--profile", default="", help=tr("LCE console version: tu54 (default), tu46, tu31. "

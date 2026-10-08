@@ -621,14 +621,23 @@ BEEHIVE_RENAME_DV = 3818         # 1.20.5: Bees / EntityData / MinOccupationTick
 GOLEM_POSES = ("standing", "sitting", "running", "star")
 
 
+# kinds that do have a legacy block entity (Sign, Chest, Furnace) but whose block is newer than the hub's 1.12: a
+# target older than the block gets none either (Amulet makes the block air, and the block entity would be an orphan
+# the game skips with a warning)
+MIN_VERSION_LEGACY: Dict[str, Tuple[int, Tuple[int, ...]]] = {
+    "barrel": (1952, (1, 11, 0)), "smoker": (1952, (1, 11, 0)), "blast_furnace": (1952, (1, 11, 0)),
+    "hanging_sign": (3463, (1, 20, 0)),    # the 1.20 release
+}
+
+
 def exists_in_java(kind: str, data_version: int) -> bool:
     """Whether Java data of ``data_version`` has the block entity ``kind``."""
-    m = MIN_VERSION.get(kind)
+    m = MIN_VERSION.get(kind) or MIN_VERSION_LEGACY.get(kind)
     return m is None or data_version >= m[0]
 
 
 def exists_in_bedrock(kind: str, version) -> bool:
-    m = MIN_VERSION.get(kind)
+    m = MIN_VERSION.get(kind) or MIN_VERSION_LEGACY.get(kind)
     return m is None or tuple(version) >= m[1]
 
 
