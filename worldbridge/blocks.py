@@ -155,6 +155,7 @@ def downgrade(blocks: np.ndarray, data: np.ndarray, allowed: Optional[FrozenSet[
 TILE_FOR_BLOCK = {54: "Chest", 146: "Chest", 23: "Trap", 61: "Furnace", 62: "Furnace", 63: "Sign", 68: "Sign", 52: "MobSpawner",
                   84: "RecordPlayer", 25: "Music", 116: "EnchantTable", 117: "Cauldron", 144: "Skull",
                   130: "EnderChest", 138: "Beacon", 154: "Hopper", 158: "Dropper", 140: "FlowerPot",
+                  36: "Piston", 255: "Structure", 210: "Control", 211: "Control",
                   149: "Comparator", 150: "Comparator", 151: "DLDetector", 178: "DLDetector", 176: "Banner",
                   177: "Banner", 137: "Control", 119: "Airportal", 209: "EndGateway", 26: "Bed",
                   **{i: "ShulkerBox" for i in range(219, 235)}}

@@ -60,6 +60,15 @@ KINDS: Dict[str, Tuple[Optional[str], Optional[str], Optional[str]]] = {
     "creaking_heart": (None, "creaking_heart", "CreakingHeart"),
     "copper_golem_statue": (None, "copper_golem_statue", "CopperGolemStatue"),
     "jigsaw": (None, "jigsaw", "JigsawBlock"),
+    "structure_block": ("Structure", "structure_block", "StructureBlock"),
+    # Bedrock keeps a PistonArm on every piston (retracted / extended / in motion); Java has a block entity only for
+    # the block that is moving, legacy Java too (its "Piston")
+    "piston_arm": (None, None, "PistonArm"),
+    "moving_piston": ("Piston", "piston", None),
+    "lodestone": (None, None, "Lodestone"),               # Bedrock only: the handle that compasses point at
+    "cauldron": (None, None, "Cauldron"),                 # Bedrock (potions, dyed water) and LCE PS4; Java has it in the block
+    "test_block": (None, "test_block", None),             # Java 1.21.5+, no other game has them
+    "test_instance_block": (None, "test_instance_block", None),
 }
 CONTAINERS = {"chest", "trapped_chest", "dispenser", "dropper", "hopper", "furnace", "blast_furnace", "smoker",
               "brewing_stand", "shulker_box", "barrel"}
@@ -147,6 +156,8 @@ def _items_to(its, dst, **kw) -> nbt.ListTag:
 def from_legacy(t: nbt.CompoundTag) -> Optional[dict]:
     tid = nbt.get(t, "id", "")
     kind = LEGACY_TO_KIND.get(tid)
+    if kind is None and tid == "minecraft:cauldron":      # LCE PS4 / Xbox One: the cauldron has a block entity (the 1.12 hub has none)
+        kind = "cauldron"
     if kind is None:
         n = str(tid).split(":", 1)[-1]
         kind = JAVA_TO_KIND.get(n)  # 1.11 - 1.12 names
@@ -200,7 +211,13 @@ def from_legacy(t: nbt.CompoundTag) -> Optional[dict]:
     elif kind == "noteblock":
         c["note"] = int(nbt.get(t, "note", 0))
     elif kind == "command_block":
-        c["command"] = str(nbt.get(t, "Command", ""))
+        _command_from(c, t, "legacy")
+    elif kind == "structure_block":
+        _structure_from_java(c, t)
+    elif kind == "moving_piston":
+        _moving_piston_from_legacy(c, t)
+    elif kind == "cauldron":
+        _cauldron_from_lce(c, t)
     elif kind == "furnace":
         c["burn"] = int(nbt.get(t, "BurnTime", 0))
         c["cook"] = int(nbt.get(t, "CookTime", 0))
@@ -260,7 +277,7 @@ def from_java_modern(t: nbt.CompoundTag) -> Optional[dict]:
             if it:
                 c["record"] = it
     elif kind == "command_block":
-        c["command"] = str(nbt.get(t, "Command", ""))
+        _command_from(c, t, "java")
     elif kind == "beacon":
         c["levels"] = int(nbt.get(t, "Levels", 0))
     if kind in _JAVA_READ:
@@ -336,7 +353,7 @@ def from_bedrock(t: nbt.CompoundTag) -> Optional[dict]:
     elif kind == "noteblock":
         c["note"] = int(nbt.get(t, "note", 0))
     elif kind == "command_block":
-        c["command"] = str(nbt.get(t, "Command", ""))
+        _command_from(c, t, "bedrock")
     if kind in _BEDROCK_READ:
         _BEDROCK_READ[kind](c, t)
     return c
@@ -395,7 +412,11 @@ def to_legacy(c: dict, lce: bool = False) -> Optional[nbt.CompoundTag]:
     elif kind == "noteblock":
         t["note"] = nbt.ByteTag(c.get("note", 0))
     elif kind == "command_block":
-        t["Command"] = nbt.StringTag(c.get("command", ""))
+        _command_to_java(c, t, 0)
+    elif kind == "structure_block":
+        _structure_to_java(c, t, 0)
+    elif kind == "moving_piston":
+        _moving_piston_to_legacy(c, t)
     elif kind == "furnace":
         t["BurnTime"] = nbt.ShortTag(c.get("burn", 0))
         t["CookTime"] = nbt.ShortTag(c.get("cook", 0))
@@ -472,8 +493,7 @@ def to_bedrock(c: dict, version) -> Optional[nbt.CompoundTag]:
     elif kind == "noteblock":
         t["note"] = nbt.ByteTag(c.get("note", 0))
     elif kind == "command_block":
-        t["Command"] = nbt.StringTag(c.get("command", ""))
-        t["Version"] = nbt.IntTag(19)
+        _command_to_bedrock(c, t)
     elif kind == "furnace":
         t["BurnTime"] = nbt.ShortTag(c.get("burn", 0))
         t["CookTime"] = nbt.ShortTag(c.get("cook", 0))
@@ -538,7 +558,7 @@ def to_java_modern(c: dict, data_version: int) -> Optional[nbt.CompoundTag]:
     elif kind == "jukebox" and c.get("record"):
         t["RecordItem"] = items.to_java_modern(c["record"], data_version)
     elif kind == "command_block":
-        t["Command"] = nbt.StringTag(c.get("command", ""))
+        _command_to_java(c, t, data_version)
     elif kind == "beacon":
         t["Levels"] = nbt.IntTag(c.get("levels", 0))
     if kind in _JAVA_WRITE:
@@ -592,6 +612,8 @@ MIN_VERSION: Dict[str, Tuple[int, Tuple[int, ...]]] = {
     "creaking_heart": (4080, (1, 21, 50)),
     "shelf": (4553, (1, 21, 110)), "copper_golem_statue": (4553, (1, 21, 110)),
     "jigsaw": (1952, (1, 13, 0)),
+    "lodestone": (2566, (1, 16, 0)),
+    "test_block": (4325, (999, 0, 0)), "test_instance_block": (4325, (999, 0, 0)),   # 1.21.5, Java only
 }
 DECORATED_POT_SHERDS_DV = 3438   # 1.20: "shards" -> "sherds" (Bedrock 1.20.0)
 TRIAL_CONFIG_REF_DV = 4556       # a trial spawner's configuration as the name of a data pack one (a string): seen in 1.21.10 worlds
@@ -1236,32 +1258,308 @@ def _vault_to_bedrock(c, t, version):
     t["data"] = data
 
 
+# ---- command block: all its state (Java and legacy share the names; Bedrock has its own, plus a few of the editor's)
+_CMD_FLAGS = (("auto", "auto"), ("powered", "powered"), ("condition_met", "conditionMet"), ("track_output", "TrackOutput"))
+_CMD_BEDROCK_ONLY = (("tick_delay", "TickDelay", nbt.IntTag), ("lp_command_mode", "LPCommandMode", nbt.IntTag),
+                     ("lp_conditional_mode", "LPCondionalMode", nbt.IntTag), ("lp_redstone_mode", "LPRedstoneMode", nbt.IntTag))
+
+
+def _command_from(c, t, src):
+    c["command"] = str(nbt.get(t, "Command", ""))
+    for k, key in _CMD_FLAGS:
+        if key in t:
+            c[k] = bool(nbt.get(t, key))
+    if "SuccessCount" in t:
+        c["success_count"] = int(nbt.get(t, "SuccessCount") or 0)
+    if "LastExecution" in t:
+        c["last_execution"] = int(nbt.get(t, "LastExecution") or 0)
+    if "LastOutput" in t:
+        lo = nbt.get_tag(t, "LastOutput")
+        if src == "bedrock" and isinstance(lo, nbt.StringTag):
+            c["last_output"] = str(lo.py_data)
+        else:
+            try:
+                c["last_output"] = items._component_text(lo)
+            except (TypeError, ValueError):                 # a component with arrays in it (a command's output text): cosmetic
+                c["last_output"] = ""
+    if src == "java" and "UpdateLastExecution" in t:
+        c["update_last_execution"] = bool(nbt.get(t, "UpdateLastExecution"))
+    if src == "bedrock":
+        if "ExecuteOnFirstTick" in t:
+            c["execute_on_first_tick"] = bool(nbt.get(t, "ExecuteOnFirstTick"))
+        for k, key, _tag in _CMD_BEDROCK_ONLY:
+            if key in t:
+                c[k] = int(nbt.get(t, key) or 0)
+
+
+def _command_to_java(c, t, dv: int):
+    """``dv`` 0: the legacy block entity."""
+    t["Command"] = nbt.StringTag(c.get("command", ""))
+    for k, key in _CMD_FLAGS:
+        if k in c:
+            t[key] = nbt.ByteTag(1 if c[k] else 0)
+    if "success_count" in c:
+        t["SuccessCount"] = nbt.IntTag(c["success_count"])
+    if "last_execution" in c:
+        t["LastExecution"] = nbt.LongTag(c["last_execution"])
+    if dv:
+        t["UpdateLastExecution"] = nbt.ByteTag(1 if c.get("update_last_execution", True) else 0)
+    if c.get("last_output"):
+        t["LastOutput"] = nbt.StringTag(c["last_output"] if dv >= items.TEXT_NBT_DV else items.json_text(c["last_output"]))
+
+
+def _command_to_bedrock(c, t):
+    t["Command"] = nbt.StringTag(c.get("command", ""))
+    t["Version"] = nbt.IntTag(34)
+    t["TickDelay"] = nbt.IntTag(c.get("tick_delay", 0))
+    t["ExecuteOnFirstTick"] = nbt.ByteTag(1 if c.get("execute_on_first_tick") else 0)
+    for k, key in _CMD_FLAGS:
+        if k in c or k == "track_output":
+            t[key] = nbt.ByteTag(1 if c.get(k, True) else 0)
+    t["SuccessCount"] = nbt.IntTag(c.get("success_count", 0))
+    if "last_execution" in c:
+        t["LastExecution"] = nbt.LongTag(c["last_execution"])
+    if c.get("last_output"):
+        t["LastOutput"] = nbt.StringTag(c["last_output"])
+    for k, key, tag in _CMD_BEDROCK_ONLY[1:]:
+        if k in c:
+            t[key] = tag(c[k])
+
+
+# ---- structure block (Java and the 1.10 - 1.12 "Structure" share their fields; je2be's StructureBlock for Bedrock's)
+_STRUCT_MODES = ("DATA", "SAVE", "LOAD", "CORNER")                       # Bedrock's ``data``: 0 .. 3
+_STRUCT_ROT = ("NONE", "CLOCKWISE_90", "CLOCKWISE_180", "COUNTERCLOCKWISE_90")
+_STRUCT_MIRROR = ("NONE", "LEFT_RIGHT", "FRONT_BACK")
+_AXES = ("X", "Y", "Z")
+_STRUCT_FLAGS_JAVA = (("ignore_entities", "ignoreEntities"), ("powered", "powered"), ("show_air", "showair"),
+                      ("show_bounding_box", "showboundingbox"))
+_STRUCT_FLAGS_BEDROCK = (("ignore_entities", "ignoreEntities"), ("powered", "isPowered"), ("show_bounding_box", "showBoundingBox"),
+                         ("include_players", "includePlayers"), ("remove_blocks", "removeBlocks"),
+                         ("animation_mode", "animationMode"))
+
+
+def _structure_from_java(c, t):
+    for k in ("name", "author", "metadata"):
+        if isinstance(nbt.get(t, k), str):
+            c[k] = str(nbt.get(t, k))
+    c["offset"] = tuple(int(nbt.get(t, "pos" + a, 0) or 0) for a in _AXES)
+    c["size"] = tuple(int(nbt.get(t, "size" + a, 0) or 0) for a in _AXES)
+    mode, rot, mirror = (str(nbt.get(t, k, d)) for k, d in (("mode", "DATA"), ("rotation", "NONE"), ("mirror", "NONE")))
+    c["mode"] = mode if mode in _STRUCT_MODES else "DATA"
+    c["rotation"] = _STRUCT_ROT.index(rot) if rot in _STRUCT_ROT else 0
+    c["mirror"] = _STRUCT_MIRROR.index(mirror) if mirror in _STRUCT_MIRROR else 0
+    for k, key in _STRUCT_FLAGS_JAVA:
+        c[k] = bool(nbt.get(t, key, 0))
+    c["integrity"] = float(nbt.get(t, "integrity", 1.0))
+    c["seed"] = int(nbt.get(t, "seed", 0) or 0)
+
+
+def _structure_to_java(c, t, dv):
+    for k in ("name", "author", "metadata"):
+        t[k] = nbt.StringTag(c.get(k, ""))
+    for a, v in zip(_AXES, c.get("offset", (0, 1, 0))):
+        t["pos" + a] = nbt.IntTag(v)
+    for a, v in zip(_AXES, c.get("size", (0, 0, 0))):
+        t["size" + a] = nbt.IntTag(v)
+    t["mode"] = nbt.StringTag(c.get("mode", "DATA"))
+    t["rotation"] = nbt.StringTag(_STRUCT_ROT[int(c.get("rotation", 0)) & 3])
+    t["mirror"] = nbt.StringTag(_STRUCT_MIRROR[min(int(c.get("mirror", 0)), 2)])
+    for k, key in _STRUCT_FLAGS_JAVA:
+        t[key] = nbt.ByteTag(1 if c.get(k) else 0)
+    t["integrity"] = nbt.FloatTag(c.get("integrity", 1.0))
+    t["seed"] = nbt.LongTag(c.get("seed", 0))
+
+
+def _structure_from_bedrock(c, t):
+    for k, key in (("name", "structureName"), ("metadata", "dataField")):
+        if isinstance(nbt.get(t, key), str):
+            c[k] = str(nbt.get(t, key))
+    c["offset"] = tuple(int(nbt.get(t, a.lower() + "StructureOffset", 0) or 0) for a in _AXES)
+    c["size"] = tuple(int(nbt.get(t, a.lower() + "StructureSize", 0) or 0) for a in _AXES)
+    mode = int(nbt.get(t, "data", 1) or 0)
+    c["mode"] = _STRUCT_MODES[mode] if 0 <= mode < len(_STRUCT_MODES) else "LOAD"   # anything unknown loads, as je2be does
+    c["rotation"] = int(nbt.get(t, "rotation", 0) or 0) & 3
+    c["mirror"] = min(max(int(nbt.get(t, "mirror", 0) or 0), 0), 2)
+    for k, key in _STRUCT_FLAGS_BEDROCK:
+        c[k] = bool(nbt.get(t, key, 0))
+    c["integrity"] = float(nbt.get(t, "integrity", 1.0))
+    c["seed"] = int(nbt.get(t, "seed", 0) or 0)
+    c["animation_seconds"] = float(nbt.get(t, "animationSeconds", 0.0))
+    c["redstone_save_mode"] = int(nbt.get(t, "redstoneSaveMode", 0) or 0)
+
+
+def _structure_to_bedrock(c, t, version):
+    t["structureName"] = nbt.StringTag(c.get("name", ""))
+    t["dataField"] = nbt.StringTag(c.get("metadata", ""))
+    for a, v in zip(_AXES, c.get("offset", (0, 1, 0))):
+        t[a.lower() + "StructureOffset"] = nbt.IntTag(v)
+    for a, v in zip(_AXES, c.get("size", (0, 0, 0))):
+        t[a.lower() + "StructureSize"] = nbt.IntTag(v)
+    mode = c.get("mode", "DATA")
+    t["data"] = nbt.IntTag(_STRUCT_MODES.index(mode) if mode in _STRUCT_MODES else 2)
+    t["rotation"] = nbt.ByteTag(int(c.get("rotation", 0)) & 3)
+    t["mirror"] = nbt.ByteTag(min(int(c.get("mirror", 0)), 2))
+    for k, key in _STRUCT_FLAGS_BEDROCK:
+        t[key] = nbt.ByteTag(1 if c.get(k) else 0)
+    t["integrity"] = nbt.FloatTag(c.get("integrity", 1.0))
+    t["seed"] = nbt.LongTag(c.get("seed", 0))
+    t["animationSeconds"] = nbt.FloatTag(c.get("animation_seconds", 0.0))
+    t["redstoneSaveMode"] = nbt.IntTag(c.get("redstone_save_mode", 0))
+
+
+# ---- pistons.  Bedrock's PistonArm: State / NewState 0 retracted, 1 extending, 2 extended, 3 retracting.  Java has no
+# block entity for a piston (the block state says whether it is extended): the arm is built from the state, as je2be does
+# (java.modern.state_tiles).  A Bedrock arm that is in motion has nothing to become in Java and is counted as lost.
+def _piston_arm_from_bedrock(c, t):
+    c["sticky"] = bool(nbt.get(t, "Sticky", 0))
+    c["state"] = int(nbt.get(t, "State", 0) or 0)
+    c["new_state"] = int(nbt.get(t, "NewState", c["state"]) or 0)
+    c["progress"] = float(nbt.get(t, "Progress", 0.0))
+    c["last_progress"] = float(nbt.get(t, "LastProgress", 0.0))
+    c["attached"] = _ints(nbt.get_tag(t, "AttachedBlocks"))
+    c["breaks"] = _ints(nbt.get_tag(t, "BreakBlocks"))
+
+
+def _piston_arm_to_bedrock(c, t, version):
+    state = int(c["state"]) if "state" in c else (2 if c.get("extended") else 0)
+    still = 1.0 if state else 0.0
+    t["State"] = nbt.ByteTag(state)
+    t["NewState"] = nbt.ByteTag(int(c.get("new_state", state)))
+    t["Progress"] = nbt.FloatTag(c.get("progress", still))
+    t["LastProgress"] = nbt.FloatTag(c.get("last_progress", still))
+    t["Sticky"] = nbt.ByteTag(1 if c.get("sticky") else 0)
+    t["AttachedBlocks"] = nbt.ListTag([nbt.IntTag(v) for v in c.get("attached", [])], 3)
+    t["BreakBlocks"] = nbt.ListTag([nbt.IntTag(v) for v in c.get("breaks", [])], 3)
+    t["isMovable"] = nbt.ByteTag(0 if state else 1)
+
+
+# the moving piston (the block that is travelling): Java 1.13+ blockState / facing / progress / extending / source, legacy
+# blockId / blockData / facing / progress / extending / source.  Bedrock has the MovingBlock, which needs the position of
+# its piston: not translated (counted as lost)
+def _moving_piston_from_java(c, t):
+    st = nbt.get_tag(t, "blockState")
+    if st is not None:
+        c["state"] = nbt.copy(st)
+    c["facing"] = int(nbt.get(t, "facing", 0) or 0)
+    c["progress"] = float(nbt.get(t, "progress", 0.0))
+    c["extending"] = bool(nbt.get(t, "extending", 0))
+    c["source"] = bool(nbt.get(t, "source", 0))
+
+
+def _moving_piston_from_legacy(c, t):
+    c["legacy_block"] = (int(nbt.get(t, "blockId", 0) or 0), int(nbt.get(t, "blockData", 0) or 0))
+    c["facing"] = int(nbt.get(t, "facing", 0) or 0)
+    c["progress"] = float(nbt.get(t, "progress", 0.0))
+    c["extending"] = bool(nbt.get(t, "extending", 0))
+    c["source"] = bool(nbt.get(t, "source", 0))
+
+
+def _moving_piston_to_java(c, t, dv):
+    st = c.get("state")
+    if st is None and c.get("legacy_block"):
+        name = items.legacy_to_flat(*c["legacy_block"])
+        st = nbt.CompoundTag({"Name": nbt.StringTag("minecraft:" + name)}) if name else None
+    t["blockState"] = nbt.copy(st) if st is not None else nbt.CompoundTag({"Name": nbt.StringTag("minecraft:air")})
+    t["facing"] = nbt.IntTag(c.get("facing", 0))
+    t["progress"] = nbt.FloatTag(c.get("progress", 0.0))
+    t["extending"] = nbt.ByteTag(1 if c.get("extending") else 0)
+    t["source"] = nbt.ByteTag(1 if c.get("source") else 0)
+
+
+def _moving_piston_to_legacy(c, t):
+    bid, data = c.get("legacy_block") or (0, 0)
+    if not c.get("legacy_block") and c.get("state") is not None:
+        leg = items.flat_to_legacy(nbt.state_name(c["state"], "minecraft:air"))
+        bid, data = leg if leg and leg[0] < 256 else (0, 0)
+    t["blockId"] = nbt.IntTag(bid)
+    t["blockData"] = nbt.IntTag(data)
+    t["facing"] = nbt.IntTag(c.get("facing", 0))
+    t["progress"] = nbt.FloatTag(c.get("progress", 0.0))
+    t["extending"] = nbt.ByteTag(1 if c.get("extending") else 0)
+    t["source"] = nbt.ByteTag(1 if c.get("source") else 0)
+
+
+# ---- lodestone: Bedrock's tracking handle (the key of the compass records in the database, see bedrock.extra)
+def _lodestone_from_bedrock(c, t):
+    if "trackingHandle" in t:
+        c["handle"] = int(nbt.get(t, "trackingHandle"))
+
+
+def _lodestone_to_bedrock(c, t, version):
+    if c.get("handle") is not None:
+        t["trackingHandle"] = nbt.IntTag(c["handle"])
+
+
+# ---- cauldron: Bedrock holds potions and dyed water in the block entity (PotionId / PotionType / CustomColor); Java 1.17+ has
+# the content in the block (water / lava / powder snow with a level) and nothing else exists there.  LCE PS4 / Xbox One:
+# "minecraft:cauldron" with a string PotionId and a PotionType
+def _cauldron_from_bedrock(c, t):
+    c["potion_id"] = int(nbt.get(t, "PotionId", -1))
+    c["potion_type"] = int(nbt.get(t, "PotionType", -1))
+    if "CustomColor" in t:
+        c["color"] = int(nbt.get(t, "CustomColor"))
+
+
+def _cauldron_from_lce(c, t):
+    pid = nbt.get(t, "PotionId", "")
+    c["potion_id"] = pid if isinstance(pid, str) else int(pid)
+    c["potion_type"] = int(nbt.get(t, "PotionType", -1))
+
+
+def _cauldron_to_bedrock(c, t, version):
+    pid, ptype = c.get("potion_id", -1), c.get("potion_type", -1)
+    if isinstance(pid, str):                               # LCE names the potion with a string, Bedrock numbers the effect
+        pid, ptype = -1, -1
+    t["PotionId"] = nbt.ShortTag(pid)
+    t["PotionType"] = nbt.ShortTag(ptype)
+    t["Items"] = nbt.ListTag([], 10)
+    if c.get("color") is not None:
+        t["CustomColor"] = nbt.IntTag(c["color"])
+
+
+# ---- Java 1.21.5 test blocks: no other game has them; a Java target gets them back as they were
+def _raw_from_java(c, t):
+    c["raw"] = nbt.CompoundTag({k: nbt.copy(v) for k, v in t.items() if k not in ("id", "x", "y", "z")})
+
+
+def _raw_to_java(c, t, dv):
+    for k, v in (c.get("raw") or {}).items():
+        t[k] = nbt.copy(v)
+
+
 _JAVA_READ = {"decorated_pot": _decorated_pot_from_java, "brushable_block": _brushable_from_java,
               "campfire": _campfire_from_java, "soul_campfire": _campfire_from_java,
               "beehive": _beehive_from_java, "bee_nest": _beehive_from_java, "lectern": _lectern_from_java,
               "chiseled_bookshelf": _chiseled_bookshelf_from_java, "shelf": _shelf_from_java,
               "crafter": _crafter_from_java, "trial_spawner": _trial_spawner_from_java, "vault": _vault_from_java,
-              "jigsaw": _jigsaw_from_java}
+              "jigsaw": _jigsaw_from_java, "structure_block": _structure_from_java,
+              "moving_piston": _moving_piston_from_java, "test_block": _raw_from_java,
+              "test_instance_block": _raw_from_java}
 _BEDROCK_READ = {"decorated_pot": _decorated_pot_from_bedrock, "brushable_block": _brushable_from_bedrock,
                  "campfire": _campfire_from_bedrock, "soul_campfire": _campfire_from_bedrock,
                  "beehive": _beehive_from_bedrock, "bee_nest": _beehive_from_bedrock, "lectern": _lectern_from_bedrock,
                  "chiseled_bookshelf": _chiseled_bookshelf_from_bedrock, "shelf": _shelf_from_bedrock,
                  "crafter": _crafter_from_bedrock, "copper_golem_statue": _statue_from_bedrock,
                  "trial_spawner": _trial_spawner_from_bedrock, "vault": _vault_from_bedrock,
-                 "jigsaw": _jigsaw_from_bedrock}
+                 "jigsaw": _jigsaw_from_bedrock, "structure_block": _structure_from_bedrock,
+                 "piston_arm": _piston_arm_from_bedrock, "lodestone": _lodestone_from_bedrock,
+                 "cauldron": _cauldron_from_bedrock}
 _JAVA_WRITE = {"decorated_pot": _decorated_pot_to_java, "brushable_block": _brushable_to_java,
                "campfire": _campfire_to_java, "soul_campfire": _campfire_to_java,
                "beehive": _beehive_to_java, "bee_nest": _beehive_to_java, "lectern": _lectern_to_java,
                "chiseled_bookshelf": _chiseled_bookshelf_to_java, "shelf": _shelf_to_java,
                "crafter": _crafter_to_java, "trial_spawner": _trial_spawner_to_java, "vault": _vault_to_java,
-               "jigsaw": _jigsaw_to_java}
+               "jigsaw": _jigsaw_to_java, "structure_block": _structure_to_java,
+               "moving_piston": _moving_piston_to_java, "test_block": _raw_to_java, "test_instance_block": _raw_to_java}
 _BEDROCK_WRITE = {"decorated_pot": _decorated_pot_to_bedrock, "brushable_block": _brushable_to_bedrock,
                   "campfire": _campfire_to_bedrock, "soul_campfire": _campfire_to_bedrock,
                   "beehive": _beehive_to_bedrock, "bee_nest": _beehive_to_bedrock, "lectern": _lectern_to_bedrock,
                   "chiseled_bookshelf": _chiseled_bookshelf_to_bedrock, "shelf": _shelf_to_bedrock,
                   "crafter": _crafter_to_bedrock, "bell": _bell_to_bedrock, "conduit": _conduit_to_bedrock,
                   "copper_golem_statue": _statue_to_bedrock, "trial_spawner": _trial_spawner_to_bedrock,
-                  "vault": _vault_to_bedrock, "jigsaw": _jigsaw_to_bedrock}
+                  "vault": _vault_to_bedrock, "jigsaw": _jigsaw_to_bedrock,
+                  "structure_block": _structure_to_bedrock, "piston_arm": _piston_arm_to_bedrock,
+                  "lodestone": _lodestone_to_bedrock, "cauldron": _cauldron_to_bedrock}
 
 
 # ============================================================= helpers
@@ -1285,24 +1583,78 @@ def pair_chests(tiles: List[dict]) -> None:
 
 
 def convert_list(tiles, src: str, dst: str, **kw) -> List[nbt.CompoundTag]:
+    return write_list(read_canon(tiles, src), dst, **kw)
+
+
+UNKNOWN = "unknown"          # kind of a block entity whose id no table knows: only its id and place are kept
+
+
+def read_canon(tags, src: str) -> List[dict]:
+    """The canonical dicts of the block entities ``tags`` of ``src`` ("legacy" / "java" / "bedrock").  Nothing is
+    dropped silently: an id that no table knows becomes ``{"kind": UNKNOWN, "pos", "id"}``, which ``write_list``
+    counts as lost (the caller may remove it before when the target keeps its own copy).  Canonical dicts in
+    ``tags`` (the ones built from block states) pass as they are."""
     reader = {"legacy": from_legacy, "java": from_java_modern, "bedrock": from_bedrock}[src]
-    canon = [c for c in (reader(t) for t in tiles) if c is not None]
-    return write_list(canon, dst, **kw)
+    out = []
+    for t in tags:
+        if isinstance(t, dict):
+            out.append(t)
+            continue
+        c = reader(t)
+        if c is None:
+            c = {"kind": UNKNOWN, "pos": _pos(t), "id": str(nbt.get(t, "id", "") or "?")}
+        out.append(c)
+    return out
 
 
-def write_list(canon: List[dict], dst: str, **kw) -> List[nbt.CompoundTag]:
+# Block entities that a game does not have and whose absence loses nothing: what the game keeps in the block (Java: the
+# cauldron's level, the note, the flower), or builds itself (the piston arm of Bedrock's pistons, the lodestone's handle),
+# or that is an empty marker (a bell, a conduit, the sculk blocks).  Anything else a target lacks is counted (loss_name).
+_NOTHING_LOST = {
+    "java": frozenset({"piston_arm", "lodestone", "noteblock", "flower_pot"}),
+    "legacy": frozenset({"piston_arm", "lodestone", "bell", "conduit", "sculk_sensor", "calibrated_sculk_sensor",
+                         "sculk_catalyst", "sculk_shrieker", "creaking_heart"}),
+    "bedrock": frozenset(),
+}
+
+
+def loss_name(c: dict, dst: str) -> Optional[str]:
+    """The id to report when the canonical block entity ``c`` could not be written for ``dst`` ("legacy" / "java" /
+    "bedrock"), or None when nothing that matters is lost."""
+    kind = c.get("kind")
+    if kind == UNKNOWN:
+        return c.get("id") or "?"
+    if kind in _NOTHING_LOST.get(dst, ()):
+        # an arm that was in motion (extending / retracting) leaves nothing behind in Java: the blocks stay where they are
+        return "PistonArm" if kind == "piston_arm" and int(c.get("state", 0)) in (1, 3) else None
+    if kind == "cauldron" and dst != "bedrock":                # potions and dyed water do not exist there
+        pid = c.get("potion_id", -1)
+        has = (isinstance(pid, int) and pid >= 0) or (isinstance(pid, str) and bool(pid)) or c.get("color") is not None
+        return "Cauldron" if has else None
+    return kind
+
+
+def write_list(canon: List[dict], dst: str, tally=None, **kw) -> List[nbt.CompoundTag]:
+    """``canon`` as block entities of ``dst``.  ``tally`` (newcontent.Tally): what could not be written and is
+    a loss is counted in it, per id."""
     if dst == "bedrock":
         pair_chests(canon)
     out = []
     for c in canon:
-        if dst == "legacy":
-            t = to_legacy(c, kw.get("lce", False))
-        elif dst == "java":
-            t = to_java_modern(c, kw.get("data_version", 3465))
-        else:
-            t = to_bedrock(c, kw.get("version", (1, 21, 0)))
+        t = None
+        if c["kind"] != UNKNOWN:
+            if dst == "legacy":
+                t = to_legacy(c, kw.get("lce", False))
+            elif dst == "java":
+                t = to_java_modern(c, kw.get("data_version", 3465))
+            else:
+                t = to_bedrock(c, kw.get("version", (1, 21, 0)))
         if t is not None:
             out.append(t)
+        elif tally is not None:
+            name = loss_name(c, dst)
+            if name:
+                tally.lose_tile(name)
     return out
 
 

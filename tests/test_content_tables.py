@@ -6,6 +6,7 @@ import os
 import numpy as np
 
 from worldbridge import biomes, items, maps, nbt, tiles
+from worldbridge import newcontent as nc
 from worldbridge import blocks as blk
 from worldbridge.convert import TargetSpec
 from worldbridge.items import Item
@@ -483,8 +484,8 @@ def test_first_versions_are_not_before_the_blocks_exist():
               "conduit": "conduit", "sculk_sensor": "sculk_sensor", "calibrated_sculk_sensor": "calibrated_sculk_sensor",
               "sculk_catalyst": "sculk_catalyst", "sculk_shrieker": "sculk_shrieker", "trial_spawner": "trial_spawner",
               "vault": "vault", "creaking_heart": "creaking_heart", "copper_golem_statue": "copper_golem_statue",
-              "jigsaw": "jigsaw"}
-    assert set(blocks) == set(tiles.MIN_VERSION)
+              "jigsaw": "jigsaw", "lodestone": "lodestone"}
+    assert set(blocks) == set(tiles.MIN_VERSION) - {"test_block", "test_instance_block"}   # Java 1.21.5 only, no Bedrock block
     for platform, pos in (("java", 0), ("bedrock", 1)):
         versions = sorted(tuple(v) for v in tm.version_numbers(platform))
         for kind, block in blocks.items():
@@ -559,3 +560,169 @@ def test_state_tiles_complete_the_block_entities_of_brushable_blocks_and_statues
     assert merged[(36, 70, -11)]["pose"] == "running" and merged[(37, 70, -11)]["block"] == "suspicious_sand"
     assert tiles.to_bedrock(gravel, BEDROCK_NEW)["type"].py_data == "minecraft:suspicious_gravel"
     assert tiles.to_bedrock(merged[(36, 70, -11)], (1, 21, 110))["Pose"].py_data == 2
+
+
+# ------------------------------------------------------------------ structure / piston / lodestone / cauldron / command block
+def test_structure_blocks_go_round_between_java_bedrock_and_the_legacy_hub():
+    j = _jtile("structure_block", name=nbt.StringTag("a:b"), author=nbt.StringTag("me"), metadata=nbt.StringTag("m"),
+               posX=nbt.IntTag(1), posY=nbt.IntTag(-2), posZ=nbt.IntTag(3), sizeX=nbt.IntTag(4), sizeY=nbt.IntTag(5),
+               sizeZ=nbt.IntTag(6), mode=nbt.StringTag("SAVE"), rotation=nbt.StringTag("CLOCKWISE_90"),
+               mirror=nbt.StringTag("LEFT_RIGHT"), ignoreEntities=nbt.ByteTag(0), powered=nbt.ByteTag(1),
+               showair=nbt.ByteTag(1), showboundingbox=nbt.ByteTag(0), integrity=nbt.FloatTag(0.5), seed=nbt.LongTag(77))
+    c = tiles.from_java_modern(j)
+    assert c["kind"] == "structure_block" and c["mode"] == "SAVE" and c["rotation"] == 1 and c["mirror"] == 1
+    b = tiles.to_bedrock(c, BEDROCK_NEW)
+    assert b["id"].py_data == "StructureBlock" and b["structureName"].py_data == "a:b" and b["data"].py_data == 1
+    assert (b["xStructureOffset"].py_data, b["yStructureOffset"].py_data, b["zStructureOffset"].py_data) == (1, -2, 3)
+    assert (b["xStructureSize"].py_data, b["yStructureSize"].py_data, b["zStructureSize"].py_data) == (4, 5, 6)
+    assert b["rotation"].py_data == 1 and b["mirror"].py_data == 1 and b["integrity"].py_data == 0.5 and b["seed"].py_data == 77
+    back = tiles.to_java_modern(tiles.from_bedrock(b), JAVA_NEW)
+    for key in ("name", "author", "mode", "rotation", "mirror", "posX", "posY", "posZ", "sizeX", "sizeY", "sizeZ", "powered",
+                "ignoreEntities", "integrity", "seed"):
+        assert key in back, key
+    assert back["name"].py_data == "a:b" and back["mode"].py_data == "SAVE" and back["rotation"].py_data == "CLOCKWISE_90"
+    assert (back["sizeX"].py_data, back["posY"].py_data, back["seed"].py_data) == (4, -2, 77)
+    leg = tiles.to_legacy(c)
+    assert leg["id"].py_data == "Structure" and tiles.from_legacy(leg)["mode"] == "SAVE" and leg["sizeZ"].py_data == 6
+
+
+def test_every_java_piston_gets_a_piston_arm_in_bedrock_and_none_comes_back():
+    root = _blocks_chunk([("minecraft:piston", {"extended": nbt.StringTag("false"), "facing": nbt.StringTag("up")}, (1, 70, 1)),
+                          ("minecraft:sticky_piston", {"extended": nbt.StringTag("true"), "facing": nbt.StringTag("up")}, (2, 70, 1)),
+                          ("minecraft:lodestone", None, (3, 70, 1)), ("minecraft:water_cauldron", None, (4, 70, 1))])
+    states = {t["kind"] + str(t.get("sticky", "")): t for t in modern.state_tiles(root, 0, 0)}
+    assert set(states) == {"piston_armFalse", "piston_armTrue", "lodestone", "cauldron"}
+    plain, sticky = states["piston_armFalse"], states["piston_armTrue"]
+    assert not plain["extended"] and sticky["extended"]
+    bp, bs = tiles.to_bedrock(plain, BEDROCK_NEW), tiles.to_bedrock(sticky, BEDROCK_NEW)
+    assert bp["id"].py_data == "PistonArm" and bp["State"].py_data == 0 and bp["Sticky"].py_data == 0
+    assert bs["State"].py_data == 2 and bs["Sticky"].py_data == 1 and bs["Progress"].py_data == 1.0
+    assert tiles.to_bedrock(states["lodestone"], BEDROCK_NEW)["id"].py_data == "Lodestone"
+    assert tiles.to_bedrock(states["cauldron"], BEDROCK_NEW)["id"].py_data == "Cauldron"
+    # back to Java: a piston at rest (and the lodestone, the empty cauldron) is just its block: dropped, not reported
+    tally = nc.Tally()
+    for b in (bp, bs):
+        canon = tiles.read_canon([b], "bedrock")
+        assert canon[0]["kind"] == "piston_arm" and tiles.write_list(canon, "java", tally, data_version=JAVA_NEW) == []
+    assert tiles.write_list(tiles.read_canon([tiles.to_bedrock(states["lodestone"], BEDROCK_NEW)], "bedrock"), "java", tally,
+                            data_version=JAVA_NEW) == []
+    assert not tally and not tally.tile_ids
+    # an arm in motion cannot be represented: counted
+    moving = tiles.from_bedrock(bp)
+    moving["state"] = 1
+    assert tiles.write_list([moving], "java", tally, data_version=JAVA_NEW) == [] and tally.tile_ids == {"PistonArm": 1}
+    # the moving piston block of Java and of the legacy games
+    mj = tiles.from_java_modern(_jtile("piston", blockState=nbt.CompoundTag({"Name": nbt.StringTag("minecraft:stone")}),
+                                       facing=nbt.IntTag(1), progress=nbt.FloatTag(0.5), extending=nbt.ByteTag(1),
+                                       source=nbt.ByteTag(0)))
+    assert mj["kind"] == "moving_piston"
+    leg = tiles.to_legacy(mj)
+    assert leg["id"].py_data == "Piston" and leg["blockId"].py_data == 1 and leg["progress"].py_data == 0.5
+    assert tiles.to_java_modern(tiles.from_legacy(leg), JAVA_NEW)["blockState"]["Name"].py_data == "minecraft:stone"
+
+
+def test_lodestone_and_cauldron_of_bedrock_and_the_lce_cauldron():
+    lode = tiles.from_bedrock(nbt.CompoundTag({"id": nbt.StringTag("Lodestone"), "x": nbt.IntTag(1), "y": nbt.IntTag(2),
+                                               "z": nbt.IntTag(3), "trackingHandle": nbt.IntTag(9)}))
+    assert lode["kind"] == "lodestone" and tiles.to_bedrock(lode, BEDROCK_NEW)["trackingHandle"].py_data == 9
+    assert tiles.to_java_modern(lode, JAVA_NEW) is None and tiles.to_legacy(lode) is None
+    caul = tiles.from_bedrock(nbt.CompoundTag({"id": nbt.StringTag("Cauldron"), "x": nbt.IntTag(1), "y": nbt.IntTag(2),
+                                               "z": nbt.IntTag(3), "PotionId": nbt.ShortTag(8), "PotionType": nbt.ShortTag(0),
+                                               "CustomColor": nbt.IntTag(-65536), "Items": nbt.ListTag([], 10)}))
+    assert caul["kind"] == "cauldron" and caul["potion_id"] == 8 and caul["color"] == -65536
+    b = tiles.to_bedrock(caul, BEDROCK_NEW)
+    assert (b["PotionId"].py_data, b["PotionType"].py_data, b["CustomColor"].py_data) == (8, 0, -65536)
+    # Java and the hub have no such block entity: the potion / dyed water are counted, plain water is not
+    tally = nc.Tally()
+    assert tiles.write_list([caul, {"kind": "cauldron", "pos": (0, 0, 0)}], "java", tally, data_version=JAVA_NEW) == []
+    assert tally.tile_ids == {"Cauldron": 1} and tally.tiles == 1
+    # LCE (PS4 / Xbox One): "minecraft:cauldron"; the legacy "Cauldron" stays the brewing stand
+    lce = nbt.CompoundTag({"id": nbt.StringTag("minecraft:cauldron"), "x": nbt.IntTag(-222), "y": nbt.IntTag(66),
+                           "z": nbt.IntTag(260), "Items": nbt.ListTag([], 10), "PotionId": nbt.StringTag(""),
+                           "PotionType": nbt.ShortTag(-32640)})
+    c = tiles.from_legacy(lce)
+    assert c["kind"] == "cauldron" and c["pos"] == (-222, 66, 260) and c["potion_type"] == -32640
+    assert tiles.loss_name(c, "legacy") is None
+    c["potion_id"] = "minecraft:healing"
+    assert tiles.loss_name(c, "legacy") == "Cauldron"
+    brewing = tiles.from_legacy(nbt.CompoundTag({"id": nbt.StringTag("Cauldron"), "x": nbt.IntTag(0), "y": nbt.IntTag(0),
+                                                 "z": nbt.IntTag(0), "Items": nbt.ListTag([], 10)}))
+    assert brewing["kind"] == "brewing_stand"
+
+
+def test_command_blocks_keep_all_their_state_between_java_and_bedrock():
+    j = _jtile("command_block", Command=nbt.StringTag("say hi"), CustomName=nbt.StringTag("Bob"), auto=nbt.ByteTag(1),
+               powered=nbt.ByteTag(1), conditionMet=nbt.ByteTag(1), TrackOutput=nbt.ByteTag(0), LastOutput=nbt.StringTag("out"),
+               SuccessCount=nbt.IntTag(3), UpdateLastExecution=nbt.ByteTag(0), LastExecution=nbt.LongTag(123456))
+    c = tiles.from_java_modern(j)
+    assert c["auto"] and c["powered"] and c["condition_met"] and not c["track_output"] and c["success_count"] == 3
+    b = tiles.to_bedrock(c, BEDROCK_NEW)
+    assert b["Command"].py_data == "say hi" and b["CustomName"].py_data == "Bob" and b["auto"].py_data == 1
+    assert b["conditionMet"].py_data == 1 and b["TrackOutput"].py_data == 0 and b["SuccessCount"].py_data == 3
+    assert b["LastExecution"].py_data == 123456 and b["LastOutput"].py_data == "out"
+    for key in ("Version", "TickDelay", "ExecuteOnFirstTick"):
+        assert key in b, key
+    b["TickDelay"] = nbt.IntTag(7)
+    b["ExecuteOnFirstTick"] = nbt.ByteTag(1)
+    b["LPCommandMode"], b["LPCondionalMode"], b["LPRedstoneMode"] = nbt.IntTag(2), nbt.IntTag(1), nbt.IntTag(1)
+    cb = tiles.from_bedrock(b)
+    assert cb["tick_delay"] == 7 and cb["execute_on_first_tick"] and cb["lp_command_mode"] == 2
+    assert tiles.to_bedrock(cb, BEDROCK_NEW)["LPCommandMode"].py_data == 2
+    back = tiles.to_java_modern(cb, JAVA_NEW)
+    assert (back["Command"].py_data, back["auto"].py_data, back["conditionMet"].py_data, back["TrackOutput"].py_data) == ("say hi", 1, 1, 0)
+    assert back["SuccessCount"].py_data == 3 and back["LastExecution"].py_data == 123456 and "UpdateLastExecution" in back
+    leg = tiles.to_legacy(cb)
+    assert leg["id"].py_data == "Control" and leg["auto"].py_data == 1 and tiles.from_legacy(leg)["success_count"] == 3
+
+
+def test_test_blocks_exist_only_in_java_and_are_counted_elsewhere():
+    j = _jtile("test_block", mode=nbt.StringTag("fail"), message=nbt.StringTag("boom"))
+    c = tiles.from_java_modern(j)
+    assert c["kind"] == "test_block"
+    back = tiles.to_java_modern(c, 4400)
+    assert back["mode"].py_data == "fail" and back["message"].py_data == "boom" and back["id"].py_data == "minecraft:test_block"
+    tally = nc.Tally()
+    ti = tiles.from_java_modern(_jtile("test_instance_block", test=nbt.StringTag("a:b")))
+    assert tiles.write_list([c, ti], "bedrock", tally, version=BEDROCK_NEW) == []
+    assert tiles.write_list([c], "legacy", tally) == []
+    assert tiles.write_list([c], "java", tally, data_version=4324) == []                  # 1.21.4 has none either
+    assert tally.tile_ids == {"test_block": 3, "test_instance_block": 1} and tally.tiles == 4
+
+
+def test_unknown_block_entities_are_counted_per_id_and_warned_once():
+    mod = nbt.CompoundTag({"id": nbt.StringTag("somemod:machine"), "x": nbt.IntTag(1), "y": nbt.IntTag(2), "z": nbt.IntTag(3)})
+    bed = nbt.CompoundTag({"id": nbt.StringTag("FancyThing"), "x": nbt.IntTag(1), "y": nbt.IntTag(2), "z": nbt.IntTag(3)})
+    chest = _jtile("chest")
+    canon = tiles.read_canon([mod, mod, chest, {"kind": "sign", "pos": (0, 0, 0)}], "java")
+    assert [c["kind"] for c in canon] == [tiles.UNKNOWN, tiles.UNKNOWN, "chest", "sign"]
+    tally = nc.Tally()
+    out = tiles.write_list(canon, "bedrock", tally, version=BEDROCK_NEW)
+    assert [t["id"].py_data for t in out] == ["Chest", "Sign"] and tally.tile_ids == {"somemod:machine": 2}
+    tiles.write_list(tiles.read_canon([bed], "bedrock"), "java", tally, data_version=JAVA_NEW)
+    tiles.write_list(tiles.read_canon([bed, mod], "bedrock"), "legacy", tally)
+    logs = Progress(None, lambda m: None)
+    tally.warn(logs, "Java 1.21.5")
+    assert len(logs.warnings) == 2
+    assert logs.warnings[0].startswith("Content that does not exist in Java 1.21.5: removed 0 items, 0 entities and 5 block entities")
+    assert logs.warnings[1] == "Block entities left out of Java 1.21.5: somemod:machine ×3, FancyThing ×2."
+
+
+def test_lce_target_counts_the_block_entities_it_has_no_id_for():
+    from collections import Counter
+
+    from worldbridge.lce.world import sanitize_tiles
+
+    blocks = np.zeros((256, 16, 16), np.uint16)
+    blocks[70, 0, 0] = 54
+    tl = [nbt.CompoundTag({"id": nbt.StringTag("Chest"), "x": nbt.IntTag(0), "y": nbt.IntTag(70), "z": nbt.IntTag(0)}),
+          nbt.CompoundTag({"id": nbt.StringTag("somemod:box"), "x": nbt.IntTag(1), "y": nbt.IntTag(70), "z": nbt.IntTag(0)}),
+          nbt.CompoundTag({"id": nbt.StringTag("minecraft:cauldron"), "x": nbt.IntTag(2), "y": nbt.IntTag(70), "z": nbt.IntTag(0),
+                           "PotionId": nbt.StringTag("")})]
+    lost = Counter()
+    assert len(sanitize_tiles(tl, blocks, 0, 0, lce=True, lost=lost)) == 1 and lost == {"somemod:box": 1}
+
+
+def test_a_command_block_whose_last_output_has_arrays_is_still_read():
+    last = nbt.CompoundTag({"text": nbt.StringTag("x"), "color": nbt.IntArrayTag(np.array([1, 2, 3, 4], np.int32))})
+    c = tiles.from_java_modern(_jtile("command_block", Command=nbt.StringTag("say hi"), LastOutput=last))
+    assert c["kind"] == "command_block" and c["command"] == "say hi"

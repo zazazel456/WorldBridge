@@ -22,6 +22,7 @@ from . import compat as _compat
 from . import region as lreg
 from .container import PLATFORMS, SaveContainer
 from ..i18n import N_, tr
+from ..newcontent import tile_names as newcontent_tile_names
 
 _REGION_RE = re.compile(r"^(DIM-1|DIM1/)?r\.(-?\d+)\.(-?\d+)\.mcr$")
 # PS3 / Vita / PS4 player files: P_<12 hex>_<8 digits>_<online id>.dat (FileHeader::getValidPlayerDatFiles)
@@ -501,8 +502,12 @@ class LCEWriter:
             if c.entities:
                 split_ents = (tx, tz, nbt.dump(nbt.CompoundTag({"Entities": nbt.compound_list(c.entities)}), ""))
             c.entities = None
+        lost_tiles: Counter = Counter()
         c.tile_entities = [self.compat.holder(t) for t in
-                           sanitize_tiles(chunk.tile_entities, c.blocks, dx, dz, self.profile.tiles, lce=True)]
+                           sanitize_tiles(chunk.tile_entities, c.blocks, dx, dz, self.profile.tiles, lce=True,
+                                          lost=lost_tiles)]
+        for k, n in lost_tiles.items():
+            self.compat.dropped[f"tile {k}"] = self.compat.dropped.get(f"tile {k}", 0) + n
         if self.profile.modern_ids:
             c.tile_entities = [_compat.modern_tile(t) for t in c.tile_entities]
         c.tile_ticks = []
@@ -644,8 +649,10 @@ class LCEWriter:
             items = sum(n for w, n in self.dropped.items() if w.startswith("item"))
             ench = sum(n for w, n in self.dropped.items() if w.startswith("enchantment"))
             ents = sorted({w.split(" ", 1)[1].split(":")[-1] for w in self.dropped if w.startswith("entity")})
+            tl = Counter({w.split(" ", 1)[1].split(":")[-1]: n for w, n in self.dropped.items() if w.startswith("tile ")})
             parts = ([tr("{n} items", n=items)] if items else []) + ([tr("{n} enchantments", n=ench)] if ench else []) + \
-                ([tr("the entities {names}", names=", ".join(ents))] if ents else [])
+                ([tr("the entities {names}", names=", ".join(ents))] if ents else []) + \
+                ([tr("the block entities {names}", names=newcontent_tile_names(tl))] if tl else [])
             self.progress.warn(tr("{version} does not have {what} of the source world: removed (the game does not know "
                                   "them); new arrows, boats and potions become their classic versions.",
                                   version=self.profile.label.split(" –")[0], what=tr(" and ").join(parts)))
@@ -758,15 +765,23 @@ def _modern_item(it: nbt.CompoundTag) -> Optional[nbt.CompoundTag]:
 
 
 def sanitize_tiles(tiles: List[nbt.CompoundTag], blocks: np.ndarray, dx: int, dz: int,
-                   allowed_ids: Optional[frozenset] = None, lce: bool = False) -> List[nbt.CompoundTag]:
+                   allowed_ids: Optional[frozenset] = None, lce: bool = False,
+                   lost: Optional[Counter] = None) -> List[nbt.CompoundTag]:
+    """``lost``: counts, per id, the block entities left out because no id of the target matches or it has no such one
+    (the ones whose block was replaced do not count)."""
     from .. import items as _items
 
     out = []
     for t in tiles:
         tid = ids.tile_to_old(nbt.get(t, "id", ""))
         if tid is None:
+            raw_id = str(nbt.get(t, "id", "") or "?")
+            if lost is not None and not (raw_id == "minecraft:cauldron" and not nbt.get(t, "PotionId")):   # an empty one is nothing
+                lost[raw_id] += 1
             continue
         if allowed_ids is not None and tid not in allowed_ids and tid not in ("ShulkerBox", "Dropper", "Hopper"):
+            if lost is not None:
+                lost[tid] += 1
             continue
         try:
             x, y, z = int(nbt.get(t, "x")), int(nbt.get(t, "y")), int(nbt.get(t, "z"))
@@ -784,6 +799,8 @@ def sanitize_tiles(tiles: List[nbt.CompoundTag], blocks: np.ndarray, dx: int, dz
             else:
                 continue
         if allowed_ids is not None and tid not in allowed_ids:
+            if lost is not None:
+                lost[tid] += 1
             continue
         t = nbt.copy(t)
         t["id"] = nbt.StringTag(tid)

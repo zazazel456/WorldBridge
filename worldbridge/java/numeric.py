@@ -15,6 +15,7 @@ import os
 import re
 import time
 import zlib
+from collections import Counter
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -30,6 +31,7 @@ from . import oldcontent
 from .oldcontent import OldContent
 from .region import ChunkIndex, JavaRegion, RegionWriter
 from ..i18n import tr
+from ..newcontent import tile_names
 
 _DIM_DIRS = {OVERWORLD: "", NETHER: "DIM-1", THE_END: "DIM1"}
 _REGION_RE = re.compile(r"^r\.(-?\d+)\.(-?\d+)\.(mca|mcr)$")
@@ -441,7 +443,7 @@ class JavaNumericWriter:
             if over.any():  # unknown to Java numeric ids (e.g. LCE aquatic without fallback)
                 blocks = np.where(over, 1, blocks)
         old = self.old
-        before = (old.dropped_items, old.dropped_entities, old.dropped_tiles) if old is not None else None
+        before = (old.dropped_items, old.dropped_entities, old.dropped_tiles, Counter(old.dropped_tile_ids)) if old is not None else None
         comp = None
         if self.opt.kind == "alpha":
             self._write_alpha(dim, c, blocks, data)
@@ -449,8 +451,9 @@ class JavaNumericWriter:
             comp = zlib.compress(nbt.dump(self._chunk_nbt(c, blocks, data), ""), 6)
         dropped = None
         if old is not None:
-            dropped = (old.dropped_items - before[0], old.dropped_entities - before[1], old.dropped_tiles - before[2])
-            old.dropped_items, old.dropped_entities, old.dropped_tiles = before
+            dropped = (old.dropped_items - before[0], old.dropped_entities - before[1], old.dropped_tiles - before[2],
+                       old.dropped_tile_ids - before[3])
+            old.dropped_items, old.dropped_entities, old.dropped_tiles, old.dropped_tile_ids = before
         return dim, c.cx, c.cz, comp, n, modern, wl, dropped
 
     def store(self, rec, dim: Optional[int] = None) -> None:
@@ -467,6 +470,7 @@ class JavaNumericWriter:
             self.old.dropped_items += dropped[0]
             self.old.dropped_entities += dropped[1]
             self.old.dropped_tiles += dropped[2]
+            self.old.dropped_tile_ids.update(dropped[3])
         if comp is None:
             return
         key = (dim, cx >> 5, cz >> 5)
@@ -493,7 +497,7 @@ class JavaNumericWriter:
         old = self.old
         ents = (old.entity(e) for e in _legacy_entities(c.entities))
         lvl["Entities"] = nbt.compound_list(e for e in ents if e is not None)
-        tiles = sanitize_tiles(c.tile_entities, blocks, 0, 0, allowed_ids=old.tile_ids)
+        tiles = sanitize_tiles(c.tile_entities, blocks, 0, 0, allowed_ids=old.tile_ids, lost=old.dropped_tile_ids)
         tiles = [t for t in (old.tile(t) for t in tiles) if t is not None]
         old.dropped_tiles += len(c.tile_entities) - len(tiles)
         lvl["TileEntities"] = nbt.compound_list(tiles)
@@ -575,6 +579,9 @@ class JavaNumericWriter:
                 self.progress.warn(tr("Content that does not exist in {version}: removed {items} items, {entities} "
                                       "entities and {tiles} block entities.", version=o.label, items=o.dropped_items,
                                       entities=o.dropped_entities, tiles=o.dropped_tiles))
+            if o.dropped_tile_ids:
+                self.progress.warn(tr("Block entities left out of {version}: {names}.", version=o.label,
+                                      names=tile_names(o.dropped_tile_ids)))
         with open(os.path.join(self.out, "session.lock"), "wb") as f:
             f.write(int(time.time() * 1000).to_bytes(8, "big"))
         return self.out

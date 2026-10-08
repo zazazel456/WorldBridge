@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import math
 import os
+from collections import Counter
 from typing import Dict, Iterable, Optional
 
 from .. import blocks as blk
@@ -248,6 +249,7 @@ class OldContent:
         self.dropped_items = 0
         self.dropped_entities = 0
         self.dropped_tiles = 0
+        self.dropped_tile_ids: Counter = Counter()     # which ones (per id) among them are known not to exist / not to be known
 
     # anvil (1.2+) reads int arrays, 1.12 long arrays
     def strip(self, tag):

@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import functools
+from collections import Counter
 from typing import Dict, Iterable, Optional, Tuple
 
 from .bedrock_item_since import ITEMS_SINCE as _BEDROCK_ITEMS_SINCE
@@ -227,16 +228,24 @@ class Tally:
         self.items = 0
         self.entities = 0
         self.tiles = 0
+        self.tile_ids: Counter = Counter()  # which block entities (per id) went, as far as known: unknown ids, kinds the target lacks
         self.renamed = 0                  # mobs the older game holds under another identifier (villager_v2...)
 
     def __bool__(self) -> bool:
         return bool(self.items or self.entities or self.tiles or self.renamed)
+
+    def lose_tile(self, ident: str, n: int = 1) -> None:
+        """A block entity the target cannot hold (or does not know) was left out: counted, per id."""
+        self.tiles += n
+        self.tile_ids[ident or "?"] += n
 
     def warn(self, progress, label: str) -> None:
         if self.items or self.entities or self.tiles:
             progress.warn(tr("Content that does not exist in {version}: removed {items} items, {entities} "
                              "entities and {tiles} block entities.", version=label, items=self.items,
                              entities=self.entities, tiles=self.tiles))
+        if self.tile_ids:
+            progress.warn(tr("Block entities left out of {version}: {names}.", version=label, names=tile_names(self.tile_ids)))
         if self.renamed:
             progress.warn(tr("{n} entities were renamed to the identifiers of {version} (villagers, trader llamas).",
                              n=self.renamed, version=label))
@@ -260,6 +269,15 @@ def item_dropped(n: int = 1) -> None:
     t = _ITEM_TALLY.get()
     if t is not None:
         t.items += n
+
+
+def tile_names(counts, top: int = 8) -> str:
+    """"chest ×3, structure_block ×1, ... and 2 more": the block entities left out, the commonest first."""
+    common = counts.most_common()
+    text = ", ".join(f"{k} ×{v}" for k, v in common[:top])
+    if len(common) > top:
+        text += tr(" and {n} more kinds", n=len(common) - top)
+    return text
 
 
 def tally_of(progress) -> Tally:

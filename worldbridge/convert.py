@@ -1059,6 +1059,12 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
                     tr("{n} Update Aquatic blocks (LCE) were replaced with 1.12 equivalents: choose a specific "
                        "(pre-converted) Java version to keep them identical.", n=n_modern)
                 )
+        if amulet_target:                    # what the translation to the legacy hub left out is counted in the same tally
+            _warn_missing_content(progress, platform, wver)
+        else:
+            from .newcontent import tally_of
+
+            tally_of(progress).warn(progress, target.describe())
         progress.done()
         return ConversionResult(out_path, written, time.time() - t0, list(progress.warnings))
     except BaseException:
