@@ -578,8 +578,8 @@ def _amulet_part(k: int):
 
 
 def _start_part_worker(state) -> None:
-    """Initializer of the workers started from the fork server (LevelDB jobs): the state and the
-    changes to Amulet that a forked worker would inherit."""
+    """Initializer of the part workers (forked or from the fork server): the job state, and the changes to
+    Amulet that a worker of the fork server does not inherit (both are idempotent for a forked one)."""
     global _AM_STATE
     _AM_STATE = state
     _quiet()
@@ -587,25 +587,22 @@ def _start_part_worker(state) -> None:
 
 
 def _run_parts(job, parts, mode, out, progress: Progress, total: int, label: str, views: List[str]) -> list:
-    global _AM_STATE
     import concurrent.futures as cf
 
     from .parallel import process_context
 
-    # Bedrock (LevelDB) in the workers: started from the fork server (parallel.process_context)
+    # Bedrock (LevelDB) in the workers: started from the fork server (parallel.process_context); the others are
+    # forked.  Either way each pool hands the job to its own workers through the initializer's arguments (a forked
+    # worker gets them by inheritance, a fork server one by pickling): nothing is left in a global of this process
+    # for a worker that starts late, or for a second conversion running in the same process.
     leveldb = job.platform == "bedrock" or _bedrock_world(job.src)
     ctx = process_context(leveldb)
     counter = ctx.Value("q", 0)
     state = (job, parts, mode, out, counter, views)
-    if leveldb:
-        pool = cf.ProcessPoolExecutor(max_workers=len(parts), mp_context=ctx, initializer=_start_part_worker,
-                                      initargs=(state,))
-    else:
-        _AM_STATE = state
-        pool = cf.ProcessPoolExecutor(max_workers=len(parts), mp_context=ctx)
+    pool = cf.ProcessPoolExecutor(max_workers=len(parts), mp_context=ctx, initializer=_start_part_worker,
+                                  initargs=(state,))
     try:
         futures = [pool.submit(_amulet_part, k) for k in range(len(parts))]
-        _AM_STATE = None
         while True:
             done, _ = cf.wait(futures, timeout=0.3)
             n = counter.value
@@ -619,7 +616,6 @@ def _run_parts(job, parts, mode, out, progress: Progress, total: int, label: str
         pool.shutdown(wait=False, cancel_futures=True)
         raise
     finally:
-        _AM_STATE = None
         pool.shutdown(wait=True)
 
 

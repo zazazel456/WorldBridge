@@ -1009,6 +1009,9 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
             if fit.lost_tiles:
                 progress.warn(tr("Mountain compression: {n} block entities (chests, spawners…) were inside the removed "
                                  "rock and were lost.", n=fit.lost_tiles))
+            if fit.lost_band_blocks:
+                progress.warn(tr("Mountain compression: {n} blocks (floating islands, builds) were inside the band removed "
+                                 "to bring tall builds under the ceiling and were lost.", n=fit.lost_band_blocks))
         if ceiling:
             for dim, cut in above.items():
                 if any(cut):
@@ -1047,6 +1050,7 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
             from .extra import inject_target_extras
 
             inject_target_extras(hub_dir, out_dir, target, src.info, progress, wver)
+            _warn_missing_content(progress, platform, wver)
             out_path = out_dir
         elif target.family == "java" and target.java_mode == "dfu":
             n_modern = sum(len(v) for v in getattr(writer, "modern", {}).values())

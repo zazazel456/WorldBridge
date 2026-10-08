@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import os
 import re
 import struct
@@ -357,6 +359,26 @@ class LCEWriteOptions:
     keep_end: Optional[Tuple[int, int, int, int]] = None
 
 
+# Where a string item that has no LCE id is counted (legacy_item has no handle on the writer): the ``_drop`` of the
+# Compat of the conversion running in this context, so the writer's report of removed items includes them.
+_UNMAPPED: contextvars.ContextVar = contextvars.ContextVar("worldbridge_lce_unmapped", default=None)
+
+
+@contextlib.contextmanager
+def _counting_unmapped(compat):
+    token = _UNMAPPED.set(compat._drop)
+    try:
+        yield
+    finally:
+        _UNMAPPED.reset(token)
+
+
+def _note_unmapped(name) -> None:
+    drop = _UNMAPPED.get()
+    if drop is not None and str(name).split(":", 1)[-1] not in ("", "air", "cave_air", "void_air"):
+        drop(f"item {name}")
+
+
 class LCEWriter:
     def __init__(self, out_dir: str, options: LCEWriteOptions, progress: Progress):
         self.out_dir = out_dir
@@ -425,6 +447,10 @@ class LCEWriter:
             self.entity_chunks.setdefault(key[0], {})[(tx, tz)] = blob
 
     def encode(self, dim: int, chunk: NumericChunk, shift: bool = True):
+        with _counting_unmapped(self.compat):
+            return self._encode(dim, chunk, shift)
+
+    def _encode(self, dim: int, chunk: NumericChunk, shift: bool = True):
         """The chunk as it goes into its region (None: outside the world).  Changes nothing in the
         writer, so it can run in a worker process (parallel.py); ``store`` keeps the result."""
         t = self.target_coords(dim, chunk.cx, chunk.cz)
@@ -524,6 +550,10 @@ class LCEWriter:
                 "world…” in the GUI).", file=fname, platform=self.platform.label.split(" (")[0]))
 
     def finish(self, info: WorldInfo) -> str:
+        with _counting_unmapped(self.compat):
+            return self._finish(info)
+
+    def _finish(self, info: WorldInfo) -> str:
         cont = SaveContainer(self.platform, self.profile.save_version, self.profile.save_version)
         level = build_lce_level(info, self.opt, self.target_coords)
         cont.files["level.dat"] = nbt.dump(nbt.CompoundTag({"Data": level}), "")
@@ -693,7 +723,10 @@ def legacy_item(it: nbt.CompoundTag) -> Optional[nbt.CompoundTag]:
             from .. import items as _items
 
             canon = _items.from_java_modern(it)
-            return _items.to_legacy(canon) if canon else None
+            li = _items.to_legacy(canon) if canon else None
+            if li is None:
+                _note_unmapped(iid.py_data)                 # no id in the LCE scheme: counted in the writer's report
+            return li
         it = nbt.copy(it)
         it["id"] = nbt.ShortTag(num)
     return it
@@ -718,7 +751,10 @@ def _modern_item(it: nbt.CompoundTag) -> Optional[nbt.CompoundTag]:
     from .. import items as _items
 
     canon = _items.from_java_modern(it) if isinstance(it, nbt.CompoundTag) else None
-    return _items.to_legacy(canon) if canon else None
+    li = _items.to_legacy(canon) if canon else None
+    if li is None and isinstance(it, nbt.CompoundTag) and isinstance(nbt.get(it, "id"), str):
+        _note_unmapped(nbt.get(it, "id"))
+    return li
 
 
 def sanitize_tiles(tiles: List[nbt.CompoundTag], blocks: np.ndarray, dx: int, dz: int,

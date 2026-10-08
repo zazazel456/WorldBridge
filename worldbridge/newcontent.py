@@ -10,9 +10,12 @@ silent drop by the game, a wrong one would destroy valid content.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import functools
 from typing import Dict, Iterable, Optional, Tuple
 
+from .bedrock_item_since import ITEMS_SINCE as _BEDROCK_ITEMS_SINCE
 from .i18n import tr
 
 Version = Tuple[int, ...]
@@ -112,6 +115,13 @@ JAVA_ITEM_SINCE = _since({
 })
 
 
+# Bedrock release that added each item (a block's own item too), from the item lists of pmmp/BedrockData (see
+# bedrock_item_since.py).  Only what came after bedrock-1.11.0, the oldest tag with a list: an older item, and a
+# name the table does not know, exist everywhere.  The names are the ones the current game uses; an older target
+# gets the stack written with its own names (items.to_bedrock: appleEnchanted, planks...), checked under those.
+BEDROCK_ITEM_SINCE = _since(_BEDROCK_ITEMS_SINCE)
+
+
 def _entity_since(table: Dict[str, Version], name: str) -> Optional[Version]:
     return table.get(name.split(":", 1)[-1])
 
@@ -156,6 +166,19 @@ def downgrade_actor(e, version: Version) -> Optional[str]:
 def bedrock_entity_exists(name: str, version: Version) -> bool:
     v = _entity_since(BEDROCK_ENTITY_SINCE, name)
     return v is None or tuple(version) >= v
+
+
+def bedrock_item_exists(name: str, version: Version) -> bool:
+    """Whether Bedrock ``version`` has the item ``name`` (as that version names it, with or without
+    ``minecraft:``).  A spawn egg follows its mob; a name the tables do not know exists."""
+    n = name.split(":", 1)[-1]
+    version = tuple(version)
+    if n.endswith("_spawn_egg"):
+        mob = n[:-10]
+        since = _entity_since(BEDROCK_ENTITY_SINCE, mob) or _entity_since(BEDROCK_ENTITY_SINCE, mob.replace("_", ""))
+        return since is None or version >= since
+    since = BEDROCK_ITEM_SINCE.get(n)
+    return since is None or version >= since
 
 
 @functools.lru_cache(maxsize=None)
@@ -217,6 +240,26 @@ class Tally:
         if self.renamed:
             progress.warn(tr("{n} entities were renamed to the identifiers of {version} (villagers, trader llamas).",
                              n=self.renamed, version=label))
+
+
+_ITEM_TALLY: contextvars.ContextVar = contextvars.ContextVar("worldbridge_item_tally", default=None)
+
+
+@contextlib.contextmanager
+def counting(tally: Optional[Tally]):
+    """Inside the block an item stack that ``items.to_bedrock`` drops because the Bedrock target lacks the item is
+    added to ``tally`` (the writers of block entities, mobs and players deep down do not carry the Tally)."""
+    token = _ITEM_TALLY.set(tally)
+    try:
+        yield tally
+    finally:
+        _ITEM_TALLY.reset(token)
+
+
+def item_dropped(n: int = 1) -> None:
+    t = _ITEM_TALLY.get()
+    if t is not None:
+        t.items += n
 
 
 def tally_of(progress) -> Tally:
