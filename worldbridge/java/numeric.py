@@ -23,7 +23,7 @@ import numpy as np
 from .. import blocks as blk
 from .. import ids, items, nbt
 from ..lce.chunk import array_to_nibbles, java128_to_yzx, nibbles_to_array, yzx_to_java128
-from ..model import NETHER, OVERWORLD, THE_END, NumericChunk, Progress, WorldInfo, WorldSource
+from ..model import NETHER, OVERWORLD, THE_END, NumericChunk, Progress, WorldInfo, WorldSource, dimension_of
 from ..entities import hanging_to_modern
 from ..maps import capped_map_file, java_map_colors
 from . import oldcontent
@@ -314,7 +314,8 @@ class JavaWriteOptions:
     kind: str = "anvil"  # anvil | mcregion | alpha
     version_limit: Optional[str] = None  # e.g. "1.8": replace newer blocks
     world_name: Optional[str] = None
-    y_offset: int = 0
+    y_offset: int = 0       # --y-offset: the whole world
+    sea_offset: int = 0     # the sea level adjustment (62 <-> 63): the overworld only
     keep_modern: bool = True  # (hub only) keep modern_blocks side info
     # players that already are Java 1.13+ data with a DataVersion up to this one stay as they are
     # (the game upgrades them from there) instead of being downgraded; 0 = none.  It must not
@@ -323,6 +324,10 @@ class JavaWriteOptions:
     # the Java release of the target (Amulet routes) and the newcontent.Tally that counts what it lacks
     target: Optional[Tuple[int, ...]] = None
     tally: Optional[object] = None
+
+    def dy(self, dim: int) -> int:
+        """How far the chunks, players and spawn of a dimension move up."""
+        return self.y_offset + (self.sea_offset if dim == OVERWORLD else 0)
 
     def old_version(self) -> Optional[str]:
         """The Java version whose content (items, mobs, block entities) the output is limited to."""
@@ -415,8 +420,8 @@ class JavaNumericWriter:
         ``store`` keeps the result."""
         if dim == THE_END and self.old is not None and self.old.r < blk.version_rank("1.0"):
             return None  # the End arrived with 1.0
-        if self.opt.y_offset and shift:
-            _shift_chunk_y(c, self.opt.y_offset)
+        if shift and self.opt.dy(dim):
+            _shift_chunk_y(c, self.opt.dy(dim))
         height = 256 if self.opt.kind == "anvil" else 128
         if c.height != height:
             c.resize(height)
@@ -741,9 +746,10 @@ def java_player_nbt(player: nbt.CompoundTag, opt: JavaWriteOptions) -> nbt.Compo
                 p[key] = items.named_items(p[key])
     if isinstance(nbt.get_tag(p, "Dimension"), nbt.StringTag):
         p["Dimension"] = nbt.IntTag({"minecraft:the_nether": -1, "minecraft:the_end": 1}.get(nbt.get(p, "Dimension"), 0))
-    if opt.y_offset and "Pos" in p and len(p["Pos"]) == 3:
+    dy = opt.dy(dimension_of(p))
+    if dy and "Pos" in p and len(p["Pos"]) == 3:
         pos = p["Pos"]
-        p["Pos"] = nbt.pos_list(pos[0], float(pos[1].py_data) + opt.y_offset, pos[2])
+        p["Pos"] = nbt.pos_list(pos[0], float(pos[1].py_data) + dy, pos[2])
     return java_entity_nbt(p)
 
 
@@ -807,7 +813,7 @@ def build_java_level(info: WorldInfo, opt: JavaWriteOptions, size_on_disk: int =
 
                 set_player_uuid(player, ln.uuid)
         return OldContent(opt.old_version()).level(src, opt.world_name or info.name, player, size_on_disk,
-                                                   y_offset=opt.y_offset)
+                                                   y_offset=opt.dy(OVERWORLD))
     out = nbt.CompoundTag()
     for key in ("RandomSeed", "generatorName", "generatorVersion", "generatorOptions", "GameType", "SpawnX",
                 "SpawnY", "SpawnZ", "Time", "DayTime", "LastPlayed", "rainTime", "raining", "thunderTime",
@@ -829,8 +835,8 @@ def build_java_level(info: WorldInfo, opt: JavaWriteOptions, size_on_disk: int =
             out[k] = nbt.IntTag(v)
     out.setdefault("LastPlayed", nbt.LongTag(int(time.time() * 1000)))
     out["initialized"] = nbt.ByteTag(1)
-    if opt.y_offset:
-        out["SpawnY"] = nbt.IntTag(int(out["SpawnY"].py_data) + opt.y_offset)
+    if opt.dy(OVERWORLD):                                   # the spawn point is in the overworld
+        out["SpawnY"] = nbt.IntTag(int(out["SpawnY"].py_data) + opt.dy(OVERWORLD))
     if opt.kind == "anvil":
         out["version"] = nbt.IntTag(19133)
     elif opt.kind == "mcregion":

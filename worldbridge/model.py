@@ -44,6 +44,13 @@ def dimension_of(player) -> int:
     except (TypeError, ValueError):
         return OVERWORLD
 DIMENSIONS = (OVERWORLD, NETHER, THE_END)
+
+
+def y_shifts(user: int, sea: int) -> Dict[int, int]:
+    """The vertical shift of every dimension: ``user`` (--y-offset) moves the whole world, ``sea`` (the automatic
+    adjustment of the sea level: 62 <-> 63) only the overworld - the Nether (lava sea at y 31) and the End have no
+    sea level, and a Nether raised by one block would push its bedrock roof (y 127) out of a 128 high target."""
+    return {d: user + (sea if d == OVERWORLD else 0) for d in DIMENSIONS}
 DIMENSION_NAMES = {OVERWORLD: "Overworld", NETHER: "Nether", THE_END: "The End"}
 
 

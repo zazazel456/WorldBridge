@@ -15,7 +15,7 @@ import numpy as np
 from . import amulet_bridge as ab
 from .i18n import N_, tr
 from . import detect as det
-from .model import (NETHER, OVERWORLD, THE_END, UNKNOWN_BIOME, BiomeFiller, ConversionCancelled, ConversionError, NumericChunk,
+from .model import (y_shifts, NETHER, OVERWORLD, THE_END, UNKNOWN_BIOME, BiomeFiller, ConversionCancelled, ConversionError, NumericChunk,
                     Progress, WorldSource, copy_tree)
 from .selection import Selection, apply_to_info, prune_bedrock, prune_java, resolve_links
 
@@ -48,7 +48,10 @@ class TargetSpec:
     lce_center_on_spawn: bool = False
     lce_player_id: Optional[str] = None
     world_name: Optional[str] = None
-    y_offset: int = 0
+    y_offset: int = 0       # --y-offset: the whole world moves by this many blocks
+    # the automatic sea level adjustment (set by convert: Alpha / Beta / PE have their sea at y 63, later games at
+    # y 62): the overworld only, the Nether and the End have no sea level
+    sea_offset: int = 0
     # the game's blending (Java / Bedrock 1.18+): worlds that come from a pre-1.18 world are written
     # as pre-1.18 chunks, so that Minecraft blends terrain + biomes with newly generated chunks and
     # fills the new depth below y=0 when the world is opened
@@ -74,6 +77,10 @@ class TargetSpec:
     depth: object = "auto"
     # dimensions not converted: the game generates them anew (NETHER, THE_END)
     regen: Tuple[int, ...] = ()
+
+    def dy(self, dim: int) -> int:
+        """How far the chunks, players and spawn of a dimension move up (--y-offset, and the sea level for the overworld)."""
+        return y_shifts(self.y_offset, self.sea_offset)[dim]
 
     def describe(self) -> str:
         if self.family == "lce":
@@ -170,9 +177,11 @@ def target_sea(t: TargetSpec) -> int:
     return 63 if (ring_mod.beta_sea(t) or t.family == "pe_old") else 62
 
 
-def shift_info_y(info, dy: int) -> None:
-    """Players and spawn point up / down with a world moved by ``dy`` blocks."""
+def shift_info_y(info, dys: Dict[int, int]) -> None:
+    """Players and spawn point up / down with a world moved by ``dys[dimension]`` blocks (the spawn point is in
+    the overworld, a player moves with the dimension it stands in)."""
     from . import nbt as _nbt
+    from .model import dimension_of
 
     lvl = info.level
     seen = set()
@@ -181,8 +190,10 @@ def shift_info_y(info, dy: int) -> None:
             continue
         seen.add(id(p))
         pos = _nbt.get_tag(p, "Pos")
-        if pos is not None and len(pos) == 3:
+        dy = dys.get(dimension_of(p), 0)
+        if pos is not None and len(pos) == 3 and dy:
             p["Pos"] = _nbt.pos_list(pos[0], float(pos[1].py_data) + dy, pos[2])
+    dy = dys.get(OVERWORLD, 0)
     if "SpawnY" in lvl:
         lvl["SpawnY"] = _nbt.IntTag(int(_nbt.get(lvl, "SpawnY")) + dy)
     sp = _nbt.get_tag(lvl, "spawn")
@@ -327,7 +338,7 @@ class _Pipeline:
     the rest of the conversion reads is changed in a worker, it comes back in ``_Done`` and ``merge``
     applies it: the result is the one of the plain loop."""
 
-    def __init__(self, src: WorldSource, progress: Progress, rows, fit, shift_here: int, biomes, move,
+    def __init__(self, src: WorldSource, progress: Progress, rows, fit, shift_here: Dict[int, int], biomes, move,
                  writer, observe: Dict[int, set], drawn_tiles: bool, filler: bool = False, depth=None):
         self.src, self.progress = src, progress
         self.depth = depth
@@ -335,7 +346,7 @@ class _Pipeline:
         # reads them back from the writer when it needs them), the others go to it as they are
         self.filler = filler
         self.rows, self.fit, self.shift_here, self.biomes, self.move = rows, fit, shift_here, biomes, move
-        self.cut_ceiling: Optional[int] = None      # no heightfit: what is above this y is cut (and counted)
+        self.cut_ceiling: Optional[Dict[int, int]] = None   # no heightfit: what is above this y is cut (and counted), per dimension
         self.writer = writer if hasattr(writer, "encode") else None
         self.observe = observe
         self.drawn_tiles = drawn_tiles
@@ -372,11 +383,11 @@ class _Pipeline:
         elif self.cut_ceiling is not None:
             from .heightfit import cut_above
 
-            out.above = cut_above(c, self.cut_ceiling)
-        if self.shift_here:
+            out.above = cut_above(c, self.cut_ceiling[dim])
+        if self.shift_here.get(dim):
             from .java.numeric import _shift_chunk_y
 
-            _shift_chunk_y(c, self.shift_here)
+            _shift_chunk_y(c, self.shift_here[dim])
         if self.biomes:
             bid = self.biomes.get(dim, {}).get((cx, cz))
             if bid is not None:
@@ -552,11 +563,11 @@ def _make_writer(t: TargetSpec, out: str, progress: Progress, src: WorldSource, 
         if lim is not None and lim not in OLD_LIMITS[t.java_mode]:
             raise ValueError(tr("--java-limit {limit} is not valid for the {format} format: use {choices}",
                                 limit=lim, format=t.java_mode, choices=", ".join(OLD_LIMITS[t.java_mode])))
-        opt = JavaWriteOptions(kind=t.java_mode, version_limit=lim, world_name=t.world_name, y_offset=t.y_offset)
+        opt = JavaWriteOptions(kind=t.java_mode, version_limit=lim, world_name=t.world_name, y_offset=t.y_offset, sea_offset=t.sea_offset)
     elif t.family == "java" and t.java_mode == "numeric":
-        opt = JavaWriteOptions(kind="anvil", version_limit=t.java_version_limit, world_name=t.world_name, y_offset=t.y_offset)
+        opt = JavaWriteOptions(kind="anvil", version_limit=t.java_version_limit, world_name=t.world_name, y_offset=t.y_offset, sea_offset=t.sea_offset)
     else:  # dfu hub or temporary hub for Amulet targets
-        opt = JavaWriteOptions(kind="anvil", world_name=t.world_name, y_offset=t.y_offset)
+        opt = JavaWriteOptions(kind="anvil", world_name=t.world_name, y_offset=t.y_offset, sea_offset=t.sea_offset)
     return JavaNumericWriter(out, opt, progress)
 
 
@@ -763,11 +774,12 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
         from .terrain import ring as ring_mod
 
         s_sea, t_sea = source_sea(d, src.info), target_sea(target)
+        target.sea_offset = 0
         if not target.y_offset and s_sea is not None and s_sea != t_sea:
             # Alpha 1.2 - Beta 1.7.3 and Pocket Edition 0.x have the sea surface at y 63, every
             # later game at y 62: the world moves by one block, so its sea, beaches and rivers
             # meet the ones the game generates around it
-            target.y_offset = t_sea - s_sea
+            target.sea_offset = t_sea - s_sea                    # the overworld only (see y_shifts)
             progress.log(tr("Sea level: y {source} in the source world, y {target_sea} in {target}: the converted world "
                             "is raised by one block (player and spawn included).", source=s_sea, target_sea=t_sea,
                             target=target.describe()) if t_sea > s_sea else
@@ -775,7 +787,8 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
                             "is lowered by one block (player and spawn included).", source=s_sea, target_sea=t_sea,
                             target=target.describe()))
         # writers without their own vertical shift (LCE, PE): the chunks are moved here
-        shift_here = target.y_offset if target.family in ("lce", "pe_old") else 0
+        dys = {dim: target.dy(dim) for dim in (OVERWORLD, NETHER, THE_END)}
+        shift_here = dys if target.family in ("lce", "pe_old") else {}
         amulet_target = _is_amulet_target(target)
         hub_dir = os.path.join(tmp, "hub_out") if amulet_target else out_dir
         dims = src.dimensions()
@@ -842,7 +855,7 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
             from .java.numeric import generator_name
 
             gen, sea = ring_mod.generator(target, seed, generator_name(src.info.level))
-            ring = ring_mod.Ring(gen, sea, placed[OVERWORLD], dy=target.y_offset, seed=seed)
+            ring = ring_mod.Ring(gen, sea, placed[OVERWORLD], dy=dys[OVERWORLD], seed=seed)
         elif plan.kind == "fill":
             from .terrain.filler import FillGenerator
 
@@ -860,7 +873,7 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
 
             mid = start + (end - start) * 0.15
             progress.stage(tr("Terrain heights"), start, mid)
-            fit = HeightFit(ceiling - target.y_offset)
+            fit = HeightFit(ceiling - target.dy(OVERWORLD))
             ow = coords[OVERWORLD]
             for i, (cx, cz) in enumerate(ow):
                 progress.check()
@@ -896,8 +909,8 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
         pipe = _Pipeline(src, progress, rows, fit, shift_here, sel.biomes if not amulet_target else None,
                          move, writer, observe, not amulet_target, filler is not None, depth)
         if ceiling and fit is None and getattr(src, "max_height", 256) > ceiling:
-            pipe.cut_ceiling = ceiling - target.y_offset          # --tall-terrain cut (or nothing to compress)
-        above = [0, 0, 0]
+            pipe.cut_ceiling = {dim: ceiling - dys[dim] for dim in dys}   # --tall-terrain cut (or nothing to compress)
+        above = {}                                               # dimension -> [blocks, tiles, entities] cut
         written_ow = set()
         track_ow = ring is not None and plan.kind == "fill"      # only the fill needs them (finite maps)
         cur_dim = None
@@ -914,7 +927,7 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
             emptied += res.emptied
             cut_tiles += res.cut_tiles
             cut_entities += res.cut_entities
-            above = [a + b for a, b in zip(above, res.above)]
+            above[res.dim] = [a + b for a, b in zip(above.get(res.dim, (0, 0, 0)), res.above)]
             empty_chests += res.empty_chests
             if res.obs is not None:
                 if ring is not None:
@@ -987,7 +1000,7 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
         if unreadable:
             progress.warn(tr("{n} chunks of the source world were unreadable (damaged or truncated) and were skipped: "
                              "Minecraft will generate them again.", n=unreadable))
-        if shift_here:
+        if any(shift_here.values()):
             shift_info_y(src.info, shift_here)
         if fit is not None:
             from .heightfit import move_players_and_spawn
@@ -996,8 +1009,10 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
             if fit.lost_tiles:
                 progress.warn(tr("Mountain compression: {n} block entities (chests, spawners…) were inside the removed "
                                  "rock and were lost.", n=fit.lost_tiles))
-        if ceiling and any(above):
-            _warn_above_ceiling(progress, above, ceiling - target.y_offset)
+        if ceiling:
+            for dim, cut in above.items():
+                if any(cut):
+                    _warn_above_ceiling(progress, cut, ceiling - dys[dim])
         _regen_players(src.info, target.regen, progress)
         move.apply_info(src.info, progress)
         progress.stage(tr("Writing the final files"), end, end + 0.02)
@@ -1287,7 +1302,7 @@ def _make_rings3d(target: TargetSpec, seed: int, coords, plan) -> dict:
         if g is None:
             continue
         gen, noise_only = g
-        out[dim] = ring3d.Ring3D(gen, dim, coords[dim], dy=target.y_offset, seed=seed, noise_only=noise_only)
+        out[dim] = ring3d.Ring3D(gen, dim, coords[dim], dy=target.dy(dim), seed=seed, noise_only=noise_only)
     return out
 
 

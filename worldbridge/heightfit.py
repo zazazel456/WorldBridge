@@ -185,6 +185,26 @@ class HeightFit:
         if (trunk >= 0).any():
             self.trunks[(c.cx, c.cz)] = trunk
 
+    # what pass 1 learns: every field written by observe(), so that the state can cross a process
+    # boundary (Amulet workers) as a whole; a new field goes here and nowhere else
+    _DICTS = ("heights", "tops", "built", "floating", "trunks")
+    _MAXES = ("max_ground", "max_top")
+
+    def observed_state(self) -> dict:
+        """Everything observe() learned, as a picklable dict (see merge_observed)."""
+        state = {k: getattr(self, k) for k in self._DICTS + self._MAXES}
+        return state
+
+    def merge_observed(self, state: dict) -> None:
+        """Adds the state another HeightFit (maybe in another process) observed."""
+        for k in self._DICTS:
+            getattr(self, k).update(state[k])
+        for k in self._MAXES:
+            setattr(self, k, max(getattr(self, k), state[k]))
+        self._rigid = None
+        self._shifts.clear()
+        self._base.clear()
+
     @property
     def ground_needed(self) -> bool:
         return self.max_ground > self.top_ground
@@ -263,6 +283,10 @@ class HeightFit:
                     if q in cols and q not in seen:
                         seen.add(q)
                         todo.append(q)
+            # a column of a chunk with no known heights or tops is unknown: left out
+            comp = [(x, z) for x, z in comp if (x >> 4, z >> 4) in self.heights and (x >> 4, z >> 4) in self.tops]
+            if not comp:
+                continue
             hs = [int(self.heights[(x >> 4, z >> 4)][z & 15, x & 15]) for x, z in comp]
             tops = [int(self.tops[(x >> 4, z >> 4)][z & 15, x & 15]) for x, z in comp]
             need = max(max(tops) - (self.ceiling - 1), 0)
@@ -329,9 +353,15 @@ class HeightFit:
         if starts is not None:
             a = int(starts[zi & 15, xi & 15])
         else:                                                         # chunk not rewritten (yet): a guess
-            h = int(self.heights[(xi >> 4, zi >> 4)][zi & 15, xi & 15])
+            hh = self.heights.get((xi >> 4, zi >> 4))
+            if hh is None:                                            # unknown chunk: no shift
+                return y
+            h = int(hh[zi & 15, xi & 15])
             if h < 0:                                                 # floating: the band is under the blocks
-                top = int(self.tops[(xi >> 4, zi >> 4)][zi & 15, xi & 15])
+                tt = self.tops.get((xi >> 4, zi >> 4))
+                if tt is None:
+                    return y
+                top = int(tt[zi & 15, xi & 15])
                 return y - s if y >= top + 1 - s else y
             a = h - KEEP + 1 - s
         if y >= a + s:

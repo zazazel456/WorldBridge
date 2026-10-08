@@ -552,7 +552,7 @@ def _amulet_part(k: int):
                 with counter.get_lock():
                     counter.value += 1
             f = depth.fit
-            return f.heights, f.built, f.trunks, f.max_ground, depth.observed
+            return f.observed_state(), depth.observed
         moved = depth.fit.moved_columns if depth is not None and depth.fit is not None else 0
         if job.move is not None:
             job.move.top = _UNSET
@@ -655,13 +655,9 @@ def _amulet_parts(job, parts, coords, total, dst_path, progress, views) -> int:
     depth = job.depth
     if depth is not None and depth.fit is not None:
         n_ow = len(coords.get("minecraft:overworld", ()))
-        for heights, built, trunks, max_ground, observed in _run_parts(job, parts, "observe", None, progress, n_ow,
-                                                                       N_("Terrain heights"), views):
-            f = depth.fit
-            f.heights.update(heights)
-            f.built.update(built)
-            f.trunks.update(trunks)
-            f.max_ground = max(f.max_ground, max_ground)
+        for state, observed in _run_parts(job, parts, "observe", None, progress, n_ow,
+                                          N_("Terrain heights"), views):
+            depth.fit.merge_observed(state)
             depth.observed += observed
     parent = os.path.dirname(os.path.abspath(dst_path)) or "."
     os.makedirs(parent, exist_ok=True)

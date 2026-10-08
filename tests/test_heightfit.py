@@ -387,3 +387,54 @@ def test_tall_terrain_cut_reports_what_it_cuts(tmp_path):
     convert(hub, str(tmp_path / "cut"), TargetSpec(family="java", java_mode="mcregion", java_version_limit="1.1",
                                                     tall_terrain="cut"), progress=Progress(on_log=msgs.append))
     assert any("did not fit under the height limit" in m for m in msgs)
+
+
+def test_observed_state_round_trips_every_field():
+    """What a worker observed crosses a process boundary as a whole: every pass-1 field is exported and merged."""
+    chunks = _island_world(True)
+    chunks.update(_column_world({(5, 5): 150}))
+    a = _fit(chunks)
+    assert a.floating and a.built and a.max_top > 127
+    state = a.observed_state()
+    assert set(state) == set(HeightFit._DICTS + HeightFit._MAXES)
+    # every field observe() fills is part of the state: nothing is left behind
+    fresh, probe = HeightFit(128), HeightFit(128)
+    probe.observe(chunks[(1, 1)])
+    probe.observe(chunks[(5, 5)])
+    filled = {n for n, v in vars(probe).items() if n in vars(fresh) and not n.startswith("_") and
+              ((isinstance(v, dict) and v) or (isinstance(v, int) and v != vars(fresh)[n]))}
+    assert filled <= set(state), filled - set(state)
+    b = HeightFit(128)
+    b.merge_observed(state)
+    for k in HeightFit._DICTS:
+        got, want = getattr(b, k), getattr(a, k)
+        assert got.keys() == want.keys() and all(np.array_equal(got[q], want[q]) for q in want), k
+    assert (b.max_ground, b.max_top) == (a.max_ground, a.max_top)
+    # two halves merged equal everything observed at once
+    c, d = HeightFit(128), HeightFit(128)
+    for i, k in enumerate(sorted(chunks)):
+        (c if i % 2 else d).observe(chunks[k])
+    e = HeightFit(128)
+    e.merge_observed(c.observed_state())
+    e.merge_observed(d.observed_state())
+    for k in HeightFit._DICTS:
+        assert getattr(e, k).keys() == getattr(a, k).keys(), k
+    assert (e.max_ground, e.max_top) == (a.max_ground, a.max_top)
+    out = {k: e.apply(ch) for k, ch in _island_world(True).items()}
+    assert all(not (np.asarray(ch.blocks)[128:] != 0).any() for ch in out.values())
+
+
+def test_a_chunk_missing_from_tops_or_heights_is_unknown_not_an_error():
+    fit = _fit(_island_world(True))
+    # a state that lost a chunk: built / floating say it is there, heights and tops do not
+    for lost in ((1, 1), (2, 1)):
+        part = HeightFit(128)
+        part.merge_observed({**fit.observed_state(), "tops": {k: v for k, v in fit.tops.items() if k != lost},
+                             "heights": {k: v for k, v in fit.heights.items() if k != lost}})
+        part.shifts(1, 1)
+        part.shifts(*lost)
+        assert part.shift_at(lost[0] * 16 + 5, 190.0, lost[1] * 16 + 5) == 190.0
+    no_tops = HeightFit(128)
+    no_tops.merge_observed({**fit.observed_state(), "tops": {}})
+    no_tops.shifts(1, 1)
+    no_tops.shift_at(24, 183.0, 24)
