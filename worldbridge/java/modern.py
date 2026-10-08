@@ -11,7 +11,7 @@ from typing import Dict, Iterator, List, Optional, Tuple
 
 from .. import entities as ent
 from .. import gameversion as gv
-from .. import nbt, newcontent, tiles
+from .. import nbt, newcontent, placement, tiles
 from ..model import NETHER, OVERWORLD, THE_END, Progress, WorldInfo
 from .region import JavaRegion, RegionWriter
 from ..i18n import tr
@@ -503,7 +503,29 @@ def _drop_bedrock_entities(root: nbt.CompoundTag) -> None:
         (lvl if lvl is not None else root)["Entities"] = nbt.compound_list(keep)
 
 
+def _chunk_exists(out_dir: str):
+    """exists(dim, cx, cz): whether the output world has that chunk (region files read once)."""
+    cache: Dict[Tuple[int, int, int], set] = {}
+
+    def exists(dim: int, cx: int, cz: int) -> bool:
+        key = (dim, cx >> 5, cz >> 5)
+        if key not in cache:
+            path = os.path.join(_folder(out_dir, dim, "region"), f"r.{key[1]}.{key[2]}.mca")
+            try:
+                cache[key] = set(JavaRegion(path).chunks()) if os.path.exists(path) else set()
+            except OSError:
+                cache[key] = set()
+        return (cx & 31, cz & 31) in cache[key]
+
+    return exists
+
+
 def inject_canon(out_dir: str, canon, progress: Progress):
+    # every entity goes into the chunk of its (final) position: the game refuses it anywhere else
+    canon, rehomed = placement.rehome_canon(canon, _chunk_exists(out_dir))
+    if rehomed:
+        progress.log(tr("{n} entities were stored in the chunk next to the one they stand in: the game would "
+                        "refuse them there, they were moved to the chunk of their position.", n=rehomed))
     by_region: Dict[Tuple[int, int, int], List[Tuple[int, int, list, list]]] = defaultdict(list)
     for (dim, cx, cz), (tl, el) in canon.items():
         by_region[(dim, cx >> 5, cz >> 5)].append((cx, cz, tl, el))

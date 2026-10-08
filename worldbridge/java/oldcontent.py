@@ -115,6 +115,35 @@ ENTITY_INTRO = _named_intro({
     "1.12": ["Parrot", "IllusionIllager"],
 })
 
+# Entities that arrived with the 1.11 registry rename (ids with a namespace and underscores): the game's
+# DataFixer (EntityId, version 704) renames every older id of its table, but it never heard of these - a
+# chunk without DataVersion that names them "EvocationIllager" is read as "minecraft:evocationillager"
+# and the entity is skipped.  A game of 1.11 or newer loads them under their registry name.
+NEW_ENTITY_IDS = {
+    "EvocationIllager": "minecraft:evocation_illager", "VindicationIllager": "minecraft:vindication_illager",
+    "IllusionIllager": "minecraft:illusion_illager", "Vex": "minecraft:vex", "EvocationFangs": "minecraft:evocation_fangs",
+    "Llama": "minecraft:llama", "LlamaSpit": "minecraft:llama_spit", "Parrot": "minecraft:parrot",
+}
+# Block entities of 1.11+ (no pre-1.11 id: the fixer's TileEntityId table stops at "Trap" ... "Structure")
+NEW_TILE_IDS = {"ShulkerBox": "minecraft:shulker_box", "Bed": "minecraft:bed"}
+_HORSE_SPLIT = {1: "minecraft:donkey", 2: "minecraft:mule", 3: "minecraft:zombie_horse", 4: "minecraft:skeleton_horse"}
+
+# Attributes (generic.* / horse.* / zombie.*) a game registers; an unknown name is logged and ignored.
+_ATTR_1_6 = frozenset(("generic.maxHealth", "generic.followRange", "generic.knockbackResistance", "generic.movementSpeed",
+                       "generic.attackDamage", "horse.jumpStrength", "zombie.spawnReinforcements"))
+_ATTR_1_9 = _ATTR_1_6 | {"generic.armor", "generic.armorToughness", "generic.attackSpeed", "generic.luck"}
+_ATTR_1_12 = _ATTR_1_9 | {"generic.flyingSpeed"}
+
+
+def attributes_known(r: int) -> frozenset:
+    """The attribute names of the game of rank ``r`` (before 1.6 there are no attributes)."""
+    if r < rank("1.6"):
+        return frozenset()
+    if r < rank("1.9"):
+        return _ATTR_1_6
+    return _ATTR_1_9 if r < rank("1.12") else _ATTR_1_12
+
+
 # before 1.5 every minecart was "Minecart" + Type
 _OLD_MINECART = {"MinecartRideable": 0, "MinecartChest": 1, "MinecartFurnace": 2}
 
@@ -317,6 +346,8 @@ class OldContent:
                 e["Motive"] = nbt.StringTag("Kebab")
         if "FallDistance" not in e and "fall_distance" in e:
             e["FallDistance"] = e["fall_distance"]
+        self._versioned_id(e, eid)
+        self._attributes(e)
         _coerce_fields(e, _ENTITY_TYPES)
         if eid == "Item":
             _coerce_fields(e, _ITEM_ENTITY_TYPES)
@@ -347,6 +378,64 @@ class OldContent:
             else:
                 e["Riding"] = rid
         return self.strip(e)
+
+    def _versioned_id(self, e: nbt.CompoundTag, eid: str) -> None:
+        """The id and the discriminator tags the game of this version reads.  1.11 split Horse / Skeleton /
+        Zombie / Guardian into one id per species (before: one id + Type / SkeletonType / ZombieType /
+        IsVillager / Elder) and named its new mobs with the registry names; a world without DataVersion is
+        upgraded by the game's fixers only for what they know (see NEW_ENTITY_IDS)."""
+        r = self.r
+        if r >= rank("1.11"):
+            if eid in NEW_ENTITY_IDS:
+                e["id"] = nbt.StringTag(NEW_ENTITY_IDS[eid])
+            elif eid == "EntityHorse":
+                new = _HORSE_SPLIT.get(int(_num(nbt.get_tag(e, "Type")) or 0))
+                if new:
+                    e["id"] = nbt.StringTag(new)
+                    e.pop("Type", None)
+            elif eid == "Skeleton":
+                kind = int(_num(nbt.get_tag(e, "SkeletonType")) or 0)
+                if kind in (1, 2):
+                    e["id"] = nbt.StringTag("minecraft:wither_skeleton" if kind == 1 else "minecraft:stray")
+                e.pop("SkeletonType", None)
+            elif eid == "Zombie":
+                ztype = int(_num(nbt.get_tag(e, "ZombieType")) or 0)
+                villager = int(_num(nbt.get_tag(e, "IsVillager")) or 0) or 1 <= ztype <= 5
+                if ztype == 6:
+                    e["id"] = nbt.StringTag("minecraft:husk")
+                elif villager:        # the fixer gives a zombie without a profession a random one
+                    prof = _num(nbt.get_tag(e, "VillagerProfession"))
+                    e["id"] = nbt.StringTag("minecraft:zombie_villager")
+                    e["Profession"] = nbt.IntTag(int(prof) if prof is not None else max(0, ztype - 1))
+                for k in ("ZombieType", "IsVillager", "VillagerProfession"):
+                    e.pop(k, None)
+            elif eid == "Guardian":
+                if int(_num(nbt.get_tag(e, "Elder")) or 0):
+                    e["id"] = nbt.StringTag("minecraft:elder_guardian")
+                e.pop("Elder", None)
+        elif eid == "Zombie":
+            if r >= rank("1.10"):    # 1.10: ZombieType 1 - 5 = villager professions, 6 = husk
+                if int(_num(nbt.get_tag(e, "IsVillager")) or 0) and "ZombieType" not in e:
+                    prof = _num(nbt.get_tag(e, "VillagerProfession"))
+                    e["ZombieType"] = nbt.IntTag(1 + max(0, min(4, int(prof) if prof is not None else 0)))
+                    e.pop("IsVillager", None)
+                    e.pop("VillagerProfession", None)
+            else:
+                e.pop("ZombieType", None)                 # no husks before 1.10
+        elif eid == "Skeleton" and r < rank("1.10") and int(_num(nbt.get_tag(e, "SkeletonType")) or 0) == 2:
+            e["SkeletonType"] = nbt.ByteTag(0)            # no strays before 1.10
+
+    def _attributes(self, e: nbt.CompoundTag) -> None:
+        """Only the attributes this version registers (older games log and ignore the others)."""
+        attrs = nbt.get_tag(e, "Attributes")
+        if not isinstance(attrs, nbt.ListTag):
+            return
+        known = attributes_known(self.r)
+        keep = nbt.ListTag([a for a in attrs if isinstance(a, nbt.CompoundTag) and str(nbt.get(a, "Name", "")) in known], 10)
+        if len(keep):
+            e["Attributes"] = keep
+        else:
+            del e["Attributes"]
 
     def _health(self, e: nbt.CompoundTag):
         hp = _num(nbt.get_tag(e, "HealF"))
@@ -383,6 +472,8 @@ class OldContent:
         _coerce_fields(t, _TILE_TYPES)
         if "Items" in t:
             t["Items"] = self.items(t["Items"])
+        if tid in NEW_TILE_IDS:
+            t["id"] = nbt.StringTag(NEW_TILE_IDS[tid])
         if tid == "MobSpawner":
             self._spawner(t)
         elif tid == "RecordPlayer":
@@ -412,6 +503,8 @@ class OldContent:
         v = ENTITY_INTRO.get(eid)
         if v is None or v > self.r or eid in ("Item", "Painting", "Mob", "Monster"):
             eid = "Pig"
+        if self.r >= rank("1.11"):
+            eid = NEW_ENTITY_IDS.get(eid, eid)        # (the game's fixer renames the others)
         t["EntityId"] = nbt.StringTag(eid)
         if "Delay" not in t:
             t["Delay"] = nbt.ShortTag(20)

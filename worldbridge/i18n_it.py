@@ -517,6 +517,10 @@ _SECTIONS = {
             'Giocatori: {n} file playerdata scritti.',
         '{n} blocks that do not exist in the target version were replaced.':
             '{n} blocchi non esistenti nella versione di destinazione sono stati sostituiti.',
+        '{n} entities were stored in the chunk next to the one they stand in: the game would refuse them there, they were moved to the chunk of their position.':
+            "{n} entità erano salvate nel chunk accanto a quello in cui si trovano: il gioco le rifiuterebbe lì, sono state spostate nel chunk della loro posizione.",
+        '{n} entities shared their UUID with another entity of the source world (the game would keep only one of each pair): they got a new UUID.':
+            "{n} entità condividevano l'UUID con un'altra entità del mondo di origine (il gioco ne terrebbe solo una per coppia): hanno ricevuto un nuovo UUID.",
         'Content that does not exist in {version}: removed {items} items, {entities} entities and {tiles} block entities.':
             'Contenuti non esistenti in {version}: rimossi {items} oggetti, {entities} entità e {tiles} blocchi-entità.',
         'Block entities left out of {version}: {names}.':

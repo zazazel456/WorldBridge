@@ -18,7 +18,7 @@ from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
 from .. import entities as ent
-from .. import items, nbt, newcontent, tiles
+from .. import items, nbt, newcontent, placement, tiles
 from ..model import NETHER, OVERWORLD, THE_END, Progress, WorldInfo
 from ..i18n import tr
 
@@ -481,6 +481,24 @@ class BedrockInjector:
         if frames:
             self._put_frames(dim, frames)
             ent_canon = [c for c in ent_canon if c not in frames]
+        # an actor goes with the chunk its position is in (a shifted or moved world, a mob that walked over a border)
+        stay, away = [], {}
+        for c in ent_canon or []:
+            home = placement.chunk_of(c.get("pos")) if isinstance(c, dict) else None
+            if home is None or home == (cx, cz) or not self._has_chunk(dim, *home):
+                stay.append(c)
+            else:
+                away.setdefault(home, []).append(c)
+        for (hx, hz), lst in away.items():
+            self._put_actors(dim, hx, hz, lst)
+        self._put_actors(dim, cx, cz, stay)
+
+    def _has_chunk(self, dim: int, cx: int, cz: int) -> bool:
+        prefix = chunk_prefix(cx, cz, dim)
+        return any(_get(self.db, prefix + bytes([tag])) is not None for tag in (0x2C, 0x76))
+
+    def _put_actors(self, dim: int, cx: int, cz: int, ent_canon: List[dict]):
+        prefix = chunk_prefix(cx, cz, dim)
         if ent_canon:
             actors = []
             keys = []

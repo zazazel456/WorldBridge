@@ -21,6 +21,17 @@ A full review of the code with 110 real worlds downloaded from the web (Java Cla
   llama decor and villager professions now go through every route (Java of every era, LCE, Bedrock).
 - **Java 1.13 – 1.16 targets got every entity twice**; `--move-to` lost the entities and block
   entities on the Java 1.13+ and Bedrock routes.
+- **Java 1.11 / 1.12 numeric worlds lost shulker boxes, illagers, vexes, llamas and parrots** (a chunk without
+  DataVersion is only renamed by the game for the ids it knew before 1.11: they now carry their registry names,
+  `minecraft:evocation_illager`, `minecraft:shulker_box`, `minecraft:bed`…, and the 1.11 species splits are
+  written whole, so a zombie villager no longer gets a random profession).
+- **Attributes older games do not know** (`generic.armor`, `armorToughness`… in a 1.8 world) are no longer written.
+- **Entities stored in the chunk next to the one they stand in** (Bedrock keeps a mob with the chunk it was
+  loaded in; a lowered or moved world shifts positions) were dropped by Java 1.12+ ("Wrong location!", the
+  Wandering Trader of a Bedrock world): every Java and Bedrock writer now stores each entity in the chunk of its
+  final position. Entities that shared a UUID in the source (one was dropped at load) get a new one.
+- **Java worlds converted from Bedrock carried the JPEG `world_icon` as `icon.png`** ("Must be 64 pixels wide"):
+  the icon is written as a 64 × 64 PNG.
 - **LZ4-compressed regions** (`region-file-compression=lz4`, 1.20.5+) lost chests, signs and mobs;
   chunks over 1 MiB were dropped instead of written to `.mcc` files.
 - **Chests of donkeys, mules and llamas were lost** (and a llama's carpet landed on the wrong slot): the

@@ -26,6 +26,7 @@ from .. import ids, items, nbt
 from ..lce.chunk import array_to_nibbles, java128_to_yzx, nibbles_to_array, yzx_to_java128
 from ..model import NETHER, OVERWORLD, THE_END, NumericChunk, Progress, WorldInfo, WorldSource, dimension_of
 from ..entities import hanging_to_modern
+from ..icon import java_icon
 from ..maps import capped_map_file, java_map_colors
 from . import oldcontent
 from .oldcontent import OldContent
@@ -362,6 +363,11 @@ class JavaNumericWriter:
         os.makedirs(out_dir, exist_ok=True)
         self._region_count = 0
         self._read_back: Dict[str, JavaRegion] = {}      # regions on disk read by stored_biomes
+        self._uuids: Dict[int, set] = {}                  # dimension -> the entity UUIDs written
+        self.new_uuids = 0                                # entities that got a new UUID (they shared one)
+        self._parked: Dict[Tuple[int, int, int], list] = {}   # entities stored in a neighbour chunk: (e, origin)
+        self.moved_entities = 0                           # ... which went to the chunk of their position
+        self.clamped_entities = 0                         # ... and which had no chunk there (put back, at the edge)
 
     def _flush_regions(self, keep: int = 64):
         if len(self.regions) <= keep:
@@ -444,23 +450,33 @@ class JavaNumericWriter:
                 blocks = np.where(over, 1, blocks)
         old = self.old
         before = (old.dropped_items, old.dropped_entities, old.dropped_tiles, Counter(old.dropped_tile_ids)) if old is not None else None
-        comp = None
+        comp = uuids = strays = None
         if self.opt.kind == "alpha":
             self._write_alpha(dim, c, blocks, data)
         else:
-            comp = zlib.compress(nbt.dump(self._chunk_nbt(c, blocks, data), ""), 6)
+            root = self._chunk_nbt(c, blocks, data)
+            lvl = root["Level"]
+            stay, strays = split_strays(nbt.get_tag(lvl, "Entities"), c.cx, c.cz)
+            if strays:                       # (stored in the chunk of their position at the end: see _place_strays)
+                lvl["Entities"] = nbt.compound_list(stay)
+            uuids = entity_uuids(nbt.get_tag(lvl, "Entities"))
+            comp = zlib.compress(nbt.dump(root, ""), 6)
         dropped = None
         if old is not None:
             dropped = (old.dropped_items - before[0], old.dropped_entities - before[1], old.dropped_tiles - before[2],
                        old.dropped_tile_ids - before[3])
             old.dropped_items, old.dropped_entities, old.dropped_tiles, old.dropped_tile_ids = before
-        return dim, c.cx, c.cz, comp, n, modern, wl, dropped
+        return dim, c.cx, c.cz, comp, n, modern, wl, dropped, uuids, strays
 
     def store(self, rec, dim: Optional[int] = None) -> None:
         """Keeps a chunk made by ``encode`` (in this process, in the conversion's order)."""
         if rec is None:
             return
-        dim, cx, cz, comp, n, modern, wl, dropped = rec
+        dim, cx, cz, comp, n, modern, wl, dropped, uuids, strays = rec
+        for e in strays or ():
+            self._parked.setdefault((dim,) + home_chunk(e), []).append((e, (cx, cz)))
+        if comp is not None and uuids:
+            comp = self._unique_uuids(dim, cx, cz, comp, uuids)
         if modern:
             self.modern.setdefault(dim, {}).update(modern)
         if wl is not None:
@@ -479,6 +495,84 @@ class JavaNumericWriter:
             rw = self.regions[key] = RegionWriter()
             self._flush_regions()
         rw.put_compressed(cx & 31, cz & 31, comp)
+
+    def _unique_uuids(self, dim: int, cx: int, cz: int, comp: bytes, uuids: list) -> bytes:
+        """A game keeps one entity per UUID in a dimension and drops the others at load ("Keeping entity ...
+        that already exists with UUID"): a source that holds two (copied chunks, cloned mobs) loses one.  The
+        later entity gets a new UUID."""
+        seen = self._uuids.setdefault(dim, set())
+        if len(set(uuids)) == len(uuids) and seen.isdisjoint(uuids):
+            seen.update(uuids)
+            return comp
+        root = nbt.load(zlib.decompress(comp), compressed=False).tag
+        for e in walk_entities(nbt.get_tag(root["Level"], "Entities")):
+            key = entity_uuid(e)
+            if key is None:
+                continue
+            if key in seen:
+                self.new_uuids += 1
+                key = fresh_uuid(e, key, (dim, cx, cz, self.new_uuids))
+            seen.add(key)
+        return zlib.compress(nbt.dump(root, ""), 6)
+
+    # -- entities stored in a chunk that does not hold their position
+    def _chunk_bytes(self, dim: int, cx: int, cz: int) -> Optional[bytes]:
+        """The NBT of a chunk this writer has (in memory or in a region already on disk)."""
+        key = (dim, cx >> 5, cz >> 5)
+        rw = self.regions.get(key)
+        comp = rw.chunks.get((cx & 31, cz & 31)) if rw is not None else None
+        if comp is not None:
+            return zlib.decompress(comp)
+        path = self._region_path(key)
+        if not os.path.exists(path):
+            return None
+        reg = self._read_back.get(path)
+        if reg is None:
+            if len(self._read_back) > 8:
+                self._read_back.clear()
+            reg = self._read_back[path] = JavaRegion(path)
+        return reg.read(cx & 31, cz & 31)
+
+    def _add_entities(self, dim: int, cx: int, cz: int, add: list) -> bool:
+        raw = self._chunk_bytes(dim, cx, cz)
+        if raw is None:
+            return False
+        root = nbt.load(raw, compressed=False).tag
+        lvl = root["Level"]
+        seen = self._uuids.setdefault(dim, set())
+        for e in walk_entities(add):
+            key = entity_uuid(e)
+            if key is not None:
+                if key in seen:
+                    self.new_uuids += 1
+                    key = fresh_uuid(e, key, (dim, cx, cz, self.new_uuids))
+                seen.add(key)
+        lvl["Entities"] = nbt.compound_list(list(nbt.get_tag(lvl, "Entities") or []) + add)
+        key = (dim, cx >> 5, cz >> 5)
+        rw = self.regions.get(key)
+        if rw is None:
+            rw = self.regions[key] = RegionWriter()
+            self._read_back.pop(self._region_path(key), None)
+        rw.put(cx & 31, cz & 31, nbt.dump(root, ""))
+        return True
+
+    def _place_strays(self) -> None:
+        """An entity can be stored in a chunk next to the one it stands in (Bedrock keeps a mob in the chunk it
+        was loaded with; a moved or lowered world shifts positions): a game of 1.12 or newer refuses it
+        ("Wrong location!") and the mob is gone.  Each goes to the chunk of its position; when the world has
+        none there, back to the chunk it came from, at its edge."""
+        back: Dict[Tuple[int, int, int], list] = {}
+        for (dim, cx, cz), lst in self._parked.items():
+            if self._add_entities(dim, cx, cz, [e for e, _o in lst]):
+                self.moved_entities += len(lst)
+                continue
+            for e, (ox, oz) in lst:
+                clamp_into_chunk(e, ox, oz)
+                back.setdefault((dim, ox, oz), []).append(e)
+        self._parked.clear()
+        for (dim, ox, oz), lst in back.items():
+            if self._add_entities(dim, ox, oz, lst):
+                self.clamped_entities += len(lst)
 
     def _common_level(self, c: NumericChunk, blocks: np.ndarray) -> nbt.CompoundTag:
         lvl = nbt.CompoundTag()
@@ -549,6 +643,7 @@ class JavaNumericWriter:
             f.write(nbt.dump(root, "", compressed=True))
 
     def finish(self, info: WorldInfo) -> str:
+        self._place_strays()
         for key, rw in self.regions.items():
             self._write_region(key, rw)
         self.regions.clear()
@@ -559,9 +654,10 @@ class JavaNumericWriter:
         n_players = write_java_players(self.out, info, self.opt)
         if n_players:
             self.progress.log(tr("Players: {n} playerdata files written.", n=n_players))
-        if info.thumbnail_png:
+        icon = java_icon(info.thumbnail_png)    # the game wants a 64 x 64 PNG (a Bedrock world_icon.jpeg is not)
+        if icon:
             with open(os.path.join(self.out, "icon.png"), "wb") as f:
-                f.write(info.thumbnail_png)
+                f.write(icon)
         data_dir = os.path.join(self.out, "data")
         max_base = java_map_colors(self.opt.old_version())  # colour ids the target registers
         for name, blob in info.extra_files.items():
@@ -573,6 +669,13 @@ class JavaNumericWriter:
                     f.write(blob)
         if self.replaced:
             self.progress.warn(tr("{n} blocks that do not exist in the target version were replaced.", n=self.replaced))
+        if self.moved_entities or self.clamped_entities:
+            self.progress.log(tr("{n} entities were stored in the chunk next to the one they stand in: the game would "
+                                 "refuse them there, they were moved to the chunk of their position.",
+                                 n=self.moved_entities + self.clamped_entities))
+        if self.new_uuids:
+            self.progress.log(tr("{n} entities shared their UUID with another entity of the source world (the game "
+                                 "would keep only one of each pair): they got a new UUID.", n=self.new_uuids))
         if self.old is not None:
             o = self.old
             if o.dropped_items or o.dropped_entities or o.dropped_tiles:
@@ -585,6 +688,84 @@ class JavaNumericWriter:
         with open(os.path.join(self.out, "session.lock"), "wb") as f:
             f.write(int(time.time() * 1000).to_bytes(8, "big"))
         return self.out
+
+
+def home_chunk(e: nbt.CompoundTag) -> Optional[Tuple[int, int]]:
+    """The chunk the game puts an entity in: the one of its position (of the wall block of a painting / item
+    frame); None when it has none."""
+    try:
+        if "TileX" in e and "TileZ" in e:
+            return int(e["TileX"].py_data) >> 4, int(e["TileZ"].py_data) >> 4
+        pos = nbt.get_tag(e, "Pos")
+        if pos is None or len(pos) != 3:
+            return None
+        return int(np.floor(float(pos[0].py_data) / 16.0)), int(np.floor(float(pos[2].py_data) / 16.0))
+    except (TypeError, ValueError, OverflowError, AttributeError):
+        return None
+
+
+def split_strays(ents, cx: int, cz: int):
+    """(the entities that belong to chunk cx, cz, the others) - riders travel with their vehicle."""
+    stay, away = [], []
+    for e in ents or ():
+        h = home_chunk(e) if isinstance(e, nbt.CompoundTag) else None
+        (stay if h is None or h == (cx, cz) else away).append(e)
+    return stay, away
+
+
+def clamp_into_chunk(e: nbt.CompoundTag, cx: int, cz: int) -> None:
+    """Move an entity (in place) to the nearest point inside chunk cx, cz."""
+    pos = nbt.get_tag(e, "Pos")
+    if pos is not None and len(pos) == 3:
+        x = min(max(float(pos[0].py_data), cx * 16 + 0.05), cx * 16 + 15.95)
+        z = min(max(float(pos[2].py_data), cz * 16 + 0.05), cz * 16 + 15.95)
+        e["Pos"] = nbt.pos_list(x, float(pos[1].py_data), z)
+    if "TileX" in e and "TileZ" in e:
+        e["TileX"] = nbt.IntTag(min(max(int(e["TileX"].py_data), cx * 16), cx * 16 + 15))
+        e["TileZ"] = nbt.IntTag(min(max(int(e["TileZ"].py_data), cz * 16), cz * 16 + 15))
+
+
+def entity_uuid(e: nbt.CompoundTag):
+    """The UUID of an entity as a hashable key (None: it has none): UUIDMost / UUIDLeast (<= 1.15) or the int array."""
+    if "UUIDMost" in e and "UUIDLeast" in e:
+        return int(e["UUIDMost"].py_data), int(e["UUIDLeast"].py_data)
+    u = nbt.get_tag(e, "UUID")
+    if isinstance(u, nbt.IntArrayTag) and u.np_array.size == 4:
+        return tuple(int(v) for v in u.np_array.tolist())
+    return None
+
+
+def walk_entities(ents):
+    """Every entity of a list, riders (``Riding`` of <= 1.8, ``Passengers`` of 1.9+) included."""
+    for e in ents or ():
+        if isinstance(e, nbt.CompoundTag):
+            yield e
+            sub = nbt.get_tag(e, "Riding")
+            if isinstance(sub, nbt.CompoundTag):
+                yield from walk_entities([sub])
+            yield from walk_entities(nbt.get_tag(e, "Passengers"))
+
+
+def entity_uuids(ents) -> list:
+    return [k for k in map(entity_uuid, walk_entities(ents)) if k is not None]
+
+
+def fresh_uuid(e: nbt.CompoundTag, old, salt) -> tuple:
+    """A new (random looking, reproducible) version 4 UUID for ``e``; returns its key."""
+    import hashlib
+
+    h = bytearray(hashlib.sha256(repr((old, salt)).encode()).digest()[:16])
+    h[6] = (h[6] & 0x0F) | 0x40
+    h[8] = (h[8] & 0x3F) | 0x80
+    hi, lo = int.from_bytes(h[:8], "big"), int.from_bytes(h[8:], "big")
+    hi, lo = _signed64(hi), _signed64(lo)
+    if "UUIDMost" in e:
+        e["UUIDMost"], e["UUIDLeast"] = nbt.LongTag(hi), nbt.LongTag(lo)
+        return hi, lo
+    ints = [(v + (1 << 32) if v < 0 else v) for v in (hi >> 32, hi, lo >> 32, lo)]
+    ints = tuple(((v & 0xFFFFFFFF) ^ 0x80000000) - 0x80000000 for v in ints)
+    e["UUID"] = nbt.IntArrayTag(np.array(ints, np.int32))
+    return ints
 
 
 def _shift_chunk_y(c: NumericChunk, dy: int):
