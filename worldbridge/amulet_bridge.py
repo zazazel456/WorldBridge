@@ -245,6 +245,48 @@ _BY_KEYWORD = (("deepslate_", None), ("copper_ore", "stone"), ("_ore", "stone"),
                ("creaking", "log"), ("crafter", "crafting_table"))
 
 
+# Bedrock 1.19.50 - 1.19.80 have the 1.20 blocks in their PyMCTranslate tables, but only as the "Next Major Update"
+# experiment (BDS 1.19.83: behavior_packs/experimental_next_major_update): a world that does not switch the toggle on
+# loses them (and their block entities, see tiles.MIN_VERSION).  They become what stands in: name -> block or None (air)
+_BEDROCK_1_20_ONLY = {"chiseled_bookshelf": "bookshelf", "calibrated_sculk_sensor": None}
+
+
+def fix_universal_sign(be):
+    """The universal sign block entity of a Java <= 1.19 sign ready for the translation to Bedrock / Java 1.13+, or
+    None when it is fine.  PyMCTranslate turns Text1..4 into ``java_json`` = ["", line 1..4] and then cannot
+    translate that list (with the leading entry, or with plain-text lines, which are all that the older games and the
+    Console editions store) to a newer game: the sign block stayed ``universal_minecraft:wall_sign``, which no game
+    knows, and the sign was gone."""
+    import copy
+
+    import amulet_nbt as an
+
+    try:
+        ft = be.nbt.compound["utags"]["front_text"]
+        lines = [str(x.py_str) if hasattr(x, "py_str") else str(x) for x in ft["java_json"]]
+    except Exception:  # noqa: BLE001 - another layout (1.20 signs): nothing to fix
+        return None
+    from .items import sign_line_json
+
+    if len(lines) == 5 and lines[0] == "":
+        lines = lines[1:]
+    fixed = [sign_line_json(x) for x in lines]
+    if fixed == lines and len(ft["java_json"]) == len(lines):
+        return None
+    out = copy.deepcopy(be)
+    out.nbt.compound["utags"]["front_text"]["java_json"] = an.ListTag([an.StringTag(x) for x in fixed])
+    return out
+
+
+def bedrock_1_20_stand_in(name: str):
+    """(known, stand-in block name or None for air) of a block that Bedrock before 1.20.0 has only as an experiment."""
+    if "hanging_sign" in name:
+        return True, None
+    if name in _BEDROCK_1_20_ONLY:
+        return True, _BEDROCK_1_20_ONLY[name]
+    return False, None
+
+
 # newer blocks and plants with a better stand-in than PyMCTranslate's (stone, dandelion)
 _STAND_IN = {"bamboo": "fence", "bamboo_mosaic": "planks", "bamboo_mosaic_slab": "wooden_slab",
              "bamboo_mosaic_stairs": "oak_stairs", "bush": ("tallgrass", 1), "firefly_bush": ("tallgrass", 1),
@@ -299,11 +341,39 @@ def _install_legacy_fallback(version_obj=None) -> None:
             # entity): the block is air, PyMCTranslate's stand-in is stone, which pops the frame off
             old = tuple(self._parent_version.version_number) < (1, 13)
             return (Block("minecraft", "air", {"block_data": an.IntTag(0)} if old else {}), None, False)
+        if block.base_name == "portal" and block.namespace == "minecraft" and "block_data" in block.properties \
+                and self._parent_version.platform != "universal":
+            # a nether portal of the numeric games with data 0 or 3 (only 1 = x and 2 = z have a translation; the
+            # games read the others as x): it stayed ``portal[block_data=0]``, a state that no newer game has
+            try:
+                axis = "z" if int(block.properties["block_data"].py_data) & 3 == 2 else "x"
+            except Exception:  # noqa: BLE001
+                axis = "x"
+            block = Block("universal_minecraft", "nether_portal", {"axis": an.StringTag(axis)})
+        if block.base_name in ("wall_sign", "sign") and block.namespace == "universal_minecraft" \
+                and self._parent_version.platform != "universal":
+            be = a[0] if a else kw.get("block_entity")
+            cb = kw.get("get_block_callback") or (a[3] if len(a) > 3 else None)
+            if be is None and cb is not None:
+                try:
+                    be = cb((0, 0, 0))[1]
+                except Exception:  # noqa: BLE001
+                    be = None
+            fixed = fix_universal_sign(be) if be is not None else None
+            if fixed is not None:
+                kw.pop("block_entity", None)
+                out = orig(self, block, fixed, *a[1:], **kw)
+                if out[0].namespace != "universal_minecraft":
+                    return out
         out = orig(self, block, *a, **kw)
         try:
             res = out[0]
             if not isinstance(res, Block):
                 return out
+            if self._parent_version.platform == "bedrock" and tuple(self._parent_version.version_number) < (1, 20, 0):
+                known, repl = bedrock_1_20_stand_in(res.base_name)
+                if known:
+                    return (Block("minecraft", repl or "air"), None, False)
             src = block.base_name
             kind = str(block.properties.get("plant_type", "")).strip('"') if src == "plant" else ""
             own = kind or src

@@ -380,6 +380,19 @@ def json_text(s: str) -> str:
     return json.dumps({"text": s}, ensure_ascii=False)
 
 
+def sign_line_json(s) -> str:
+    """A sign line as the JSON text of Java 1.8 - 1.12: a line that already is JSON stays, plain text (what the older
+    games and the Console editions store) becomes {"text": ...}."""
+    s = "" if s is None else str(s)
+    if s.startswith(("{", "[", '"')):
+        try:
+            json.loads(s)
+            return s
+        except ValueError:
+            pass
+    return json_text(s)
+
+
 def plain_text(s) -> str:
     if s is None:
         return ""

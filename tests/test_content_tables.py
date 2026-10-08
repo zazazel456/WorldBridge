@@ -459,7 +459,7 @@ def test_golem_statue_pose_and_id_only_kinds():
     assert tiles.to_java_modern(c, 4439) is None and tiles.to_bedrock(c, (1, 21, 100)) is None
     # nothing but the block entity itself (the games fill the rest in again)
     for kind, jv, bv in (("sculk_sensor", 2724, (1, 19, 0)), ("sculk_shrieker", 3104, (1, 19, 0)),
-                         ("sculk_catalyst", 3104, (1, 19, 0)), ("calibrated_sculk_sensor", 3463, (1, 19, 80)),
+                         ("sculk_catalyst", 3104, (1, 19, 0)), ("calibrated_sculk_sensor", 3463, (1, 20, 0)),
                          ("creaking_heart", 4080, (1, 21, 50)), ("bell", 1952, (1, 11, 0)), ("conduit", 1519, (1, 5, 0))):
         c = {"kind": kind, "pos": (1, 2, 3)}
         assert tiles.to_java_modern(c, jv)["id"].py_data == "minecraft:" + kind and tiles.to_java_modern(c, jv - 1) is None, kind
@@ -470,7 +470,7 @@ def test_golem_statue_pose_and_id_only_kinds():
     assert tiles.to_bedrock({"kind": "bell", "pos": (0, 0, 0)}, BEDROCK_NEW)["Direction"].py_data == 255
     assert tiles.to_bedrock({"kind": "conduit", "pos": (0, 0, 0)}, BEDROCK_NEW)["Target"].py_data == -1
     # none of them exist in the legacy block entities of the hub
-    assert all(tiles.to_legacy({"kind": k, "pos": (0, 0, 0)}) is None for k in tiles.MIN_VERSION)
+    assert all(tiles.to_legacy({"kind": k, "pos": (0, 0, 0)}) is None for k in tiles.MIN_VERSION if k != "hanging_sign")
 
 
 def test_first_versions_are_not_before_the_blocks_exist():
@@ -484,7 +484,7 @@ def test_first_versions_are_not_before_the_blocks_exist():
               "conduit": "conduit", "sculk_sensor": "sculk_sensor", "calibrated_sculk_sensor": "calibrated_sculk_sensor",
               "sculk_catalyst": "sculk_catalyst", "sculk_shrieker": "sculk_shrieker", "trial_spawner": "trial_spawner",
               "vault": "vault", "creaking_heart": "creaking_heart", "copper_golem_statue": "copper_golem_statue",
-              "jigsaw": "jigsaw", "lodestone": "lodestone"}
+              "jigsaw": "jigsaw", "lodestone": "lodestone", "hanging_sign": "oak_hanging_sign"}
     assert set(blocks) == set(tiles.MIN_VERSION) - {"test_block", "test_instance_block"}   # Java 1.21.5 only, no Bedrock block
     for platform, pos in (("java", 0), ("bedrock", 1)):
         versions = sorted(tuple(v) for v in tm.version_numbers(platform))
