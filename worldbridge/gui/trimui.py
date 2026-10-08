@@ -191,6 +191,8 @@ class CopyWorker(QObject):
             before = folder_size(self.src)
             n = trimmed_copy(self.src, self.out, self.keep, self.prog)
             self.done.emit(n, before, folder_size(self.out))
+        except ConversionCancelled:
+            self.failed.emit(tr("cancelled"))      # trimmed_copy already removed the partial folder
         except Exception as ex:  # noqa: BLE001
             self.failed.emit(str(ex))
 
@@ -201,6 +203,9 @@ class EditWorker(QObject):
     progress = Signal(float, str)
     done = Signal(object)          # chunkedit.EditResult
     failed = Signal(str)
+    # a world switch never interrupts it: its region files are rewritten one by one (see MapTab.can_switch);
+    # only closing the window cancels it, between two region files
+    interruptible = False
 
     def __init__(self, path: str, remove=None, paint=None, keep=None, dims=()):
         super().__init__()
@@ -216,5 +221,7 @@ class EditWorker(QObject):
             else:
                 res = edit_world(self.path, self.remove, self.paint, self.prog)
             self.done.emit(res)
+        except ConversionCancelled:
+            self.failed.emit(tr("cancelled"))
         except Exception as ex:  # noqa: BLE001
             self.failed.emit(str(ex))

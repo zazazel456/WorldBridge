@@ -355,12 +355,13 @@ class MainWindow(QMainWindow):
         """Rebuild the window in ``code``'s language with the same world and choices (None: not now)."""
         if code == i18n.language():
             return None
-        if self._worker is not None or self.manage_tab.has_changes():
+        if self._worker is not None or self.map_tab.jobs_running() or self.manage_tab.has_changes():
             for b in self.lang_group.buttons():
                 b.setChecked(b.property("lang") == i18n.language())
             self.tabs.setCurrentIndex(0)
-            self.message.show_message("neutral", tr("The language can be changed when no conversion is running and "
-                                                    "the world management tab has no unsaved changes."))
+            self.message.show_message("neutral", tr("The language can be changed when no conversion or change to the "
+                                                    "world is running and the world management tab has no unsaved "
+                                                    "changes."))
             return None
         state = self.export_state()
         i18n.set_language(code)
@@ -858,6 +859,13 @@ class MainWindow(QMainWindow):
         path = self.src_edit.text().strip()
         if not path or self._closing or (path == self._analysed and not force):
             return
+        if self._worker is not None:                    # the preview, the players and the options belong to the world converting
+            self._keep_world(tr("A conversion is running: the world can be changed when it ends."), self._analysed)
+            return
+        if not self.map_tab.can_switch(path):
+            self._keep_world(tr("The world is being edited: it can be changed when the edit ends."),
+                             self.map_tab.path)
+            return
         self._analysed = path
         self._detect_seq += 1
         seq = self._detect_seq
@@ -865,7 +873,20 @@ class MainWindow(QMainWindow):
         self._run_thread(DetectWorker(path), "done",
                          self._gui.wrap(lambda *a: self._on_detected(*a) if seq == self._detect_seq else None))
 
+    def _keep_world(self, text: str, path) -> None:
+        """The world cannot change now: the box goes back to the one that stays."""
+        self.src_edit.setText(path or "")
+        self._analysed = path or None
+        self.message.show_message("negative", text)
+
     def _on_detected(self, lines, kind: str, name: str):
+        path = self.src_edit.text().strip()
+        if kind and not self.map_tab.can_switch(path):   # an edit of the map's world started during the analysis
+            self._keep_world(tr("The world is being edited: it can be changed when the edit ends."),
+                             self.map_tab.path)
+            if self.map_tab.path:
+                self._on_source_changed(force=True)
+            return
         self.src_info.setText(format_summary(lines))
         self._src_kind = kind
         self._src_name = name
@@ -1000,6 +1021,11 @@ class MainWindow(QMainWindow):
         return final
 
     def _start(self):
+        if self.map_tab.jobs_running():
+            self.tabs.setCurrentIndex(0)
+            self.message.show_message("negative", tr("A change to the source world (edit, trim or copy) is running: "
+                                                     "convert when it ends."))
+            return
         src = self.src_edit.text().strip()
         if not src or not os.path.exists(src):
             self.tabs.setCurrentIndex(0)
@@ -1034,7 +1060,7 @@ class MainWindow(QMainWindow):
         self.bar.show()
         self.bar.setValue(0)
         self.bar.setFormat(tr("Starting…"))
-        self.map_tab.pause_preview(True)          # the conversion reads the world at full speed
+        self.map_tab.set_conversion_running(True)  # the conversion reads the world at full speed
         self._worker = ConvertWorker(src, out, target)
         self._worker.progress.connect(self._on_progress)
         self._worker.log.connect(self._log)
@@ -1063,7 +1089,7 @@ class MainWindow(QMainWindow):
             self._close_pending = False
             self.close()
             return
-        self.map_tab.pause_preview(False)
+        self.map_tab.set_conversion_running(False)
         self.btn_convert.setEnabled(True)
         self.btn_cancel.setEnabled(False)
         self.btn_cancel.hide()

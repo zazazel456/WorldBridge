@@ -239,6 +239,16 @@ def error_text(ex: BaseException) -> str:
     return str(ex)
 
 
+def _target_dv(target) -> Optional[int]:
+    """The DataVersion of a Java target (the chunks may be written older, see convert._write_version): None for
+    Bedrock or an unknown version."""
+    if target.family != "java" or not target.version:
+        return None
+    from . import gameversion as gv
+
+    return gv.java_data_version(target.version)
+
+
 def inject_target_extras(hub_dir: str, out_dir: str, target, info: WorldInfo, progress: Progress, version=None) -> None:
     """After Amulet produced the target from the numeric hub: write block
     entities, entities and players in the target's native format."""
@@ -250,7 +260,7 @@ def inject_target_extras(hub_dir: str, out_dir: str, target, info: WorldInfo, pr
         else:
             from .java.modern import inject_from_hub as inject_java
 
-            inject_java(hub_dir, out_dir, info, progress)
+            inject_java(hub_dir, out_dir, info, progress, _target_dv(target))
             _copy_maps(hub_dir, out_dir, _map_colors(target, version))
     except Exception as ex:  # noqa: BLE001
         progress.warn(tr("Entities / containers not fully transferred: {error}", error=error_text(ex)))
@@ -277,7 +287,7 @@ def direct_extras(d, out_dir: str, target, info: WorldInfo, progress: Progress, 
         elif target.family == "java" and d.kind == "bedrock":
             from .java.modern import inject_from_bedrock
 
-            inject_from_bedrock(d.path, out_dir, info, progress, move, depth)
+            inject_from_bedrock(d.path, out_dir, info, progress, move, depth, _target_dv(target))
             for name, blob in info.extra_files.items():  # maps
                 if name.startswith("data/map_"):
                     os.makedirs(os.path.join(out_dir, "data"), exist_ok=True)
@@ -286,7 +296,7 @@ def direct_extras(d, out_dir: str, target, info: WorldInfo, progress: Progress, 
         elif target.family == "java" and d.kind == "java_modern":
             from .java.modern import inject_from_java
 
-            inject_from_java(d.path, out_dir, info, progress, move, depth)
+            inject_from_java(d.path, out_dir, info, progress, move, depth, _target_dv(target))
             _copy_java_side_files(d.path, out_dir, bool(info.player_links), _map_colors(target, version))
         elif target.family == "bedrock" and d.kind == "bedrock":
             from .bedrock.extra import copy_bedrock_extras

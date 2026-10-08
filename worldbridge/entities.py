@@ -6,7 +6,7 @@ import random
 import re
 import struct
 import uuid
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from . import ids, items, nbt, newcontent
 
@@ -544,6 +544,14 @@ JAVA_CAT_VARIANT_DV = 3105                                        # 1.19: cats h
 # Bedrock's preferred professions (villager_v2) by Java's profession name
 BEDROCK_PROFESSIONS = ("farmer", "fisherman", "shepherd", "fletcher", "librarian", "cartographer", "cleric", "armorer",
                        "weaponsmith", "toolsmith", "butcher", "leatherworker", "mason", "nitwit")
+# villager_v2.json of the vanilla behaviour pack (identical from 1.11 to 1.26): the component groups are not
+# namespaced ("+farmer", "+adult"), each profession group sets the ``minecraft:variant`` below, and the biome
+# skin groups set ``minecraft:mark_variant`` (plains: no group, 0).
+VILLAGER_VARIANT = {"unskilled": 0, "farmer": 1, "fisherman": 2, "shepherd": 3, "fletcher": 4, "librarian": 5,
+                    "cartographer": 6, "cleric": 7, "armorer": 8, "weaponsmith": 9, "toolsmith": 10, "butcher": 11,
+                    "leatherworker": 12, "mason": 13, "nitwit": 14}
+VILLAGER_PEASANTS = ("unskilled", "farmer", "fisherman", "shepherd", "fletcher", "nitwit")   # behavior_peasant
+VILLAGER_BIOMES = ("plains", "desert", "jungle", "savanna", "snow", "swamp", "taiga")        # = MarkVariant
 
 
 def _int_extra(extra: dict, key: str) -> Optional[int]:
@@ -592,6 +600,8 @@ def write_bedrock_variants(e: nbt.CompoundTag, c: dict, bname: str, version) -> 
         variant = CAT_BEDROCK[v] if v is not None and 0 <= v < len(CAT_BEDROCK) else None
     elif bname == "rabbit":
         variant = _int_extra(extra, "RabbitType")
+        if variant is not None and 0 <= variant < len(RABBIT_COATS):
+            defs.append(nbt.StringTag("+coat_" + RABBIT_COATS[variant]))
     elif bname == "fox":
         t = _str_extra(extra, "Type")
         variant = FOX_TYPES.index(t) if t in FOX_TYPES else None
@@ -645,8 +655,24 @@ def write_bedrock_variants(e: nbt.CompoundTag, c: dict, bname: str, version) -> 
         prof = str(nbt.get(vd, "profession", "")).split(":", 1)[-1] if vd is not None else ""
         if prof in BEDROCK_PROFESSIONS:
             e["PreferredProfession"] = nbt.StringTag(prof)
-            defs.append(nbt.StringTag("+" + prof))
             e["TradeTier"] = nbt.IntTag(max(0, int(nbt.get(vd, "level", 1) or 1) - 1))
+        # the component groups the game itself adds (entity_spawned / entity_born / ageable_grow_up events)
+        job = prof if prof in VILLAGER_VARIANT else "unskilled"
+        if nbt.get(e, "IsBaby"):
+            job = "unskilled"
+            groups = ["baby", "unskilled", "child_schedule"]
+        elif job == "nitwit":
+            groups = ["adult", "nitwit", "behavior_peasant", "jobless_schedule"]
+        else:
+            groups = ["adult", job, "behavior_peasant" if job in VILLAGER_PEASANTS else "behavior_non_peasant",
+                      "basic_schedule"]
+        defs.extend(nbt.StringTag("+" + g) for g in groups)
+        e["Variant"] = nbt.IntTag(VILLAGER_VARIANT[job])
+        biome = str(nbt.get(vd, "type", "plains")).split(":", 1)[-1] if vd is not None else "plains"
+        mark = VILLAGER_BIOMES.index(biome) if biome in VILLAGER_BIOMES else 0
+        e["MarkVariant"] = nbt.IntTag(mark)
+        if mark:
+            defs.append(nbt.StringTag("+" + biome + "_villager"))
 
 
 def read_bedrock_variants(c: dict, e: nbt.CompoundTag, n: str, version=None) -> None:
@@ -703,11 +729,40 @@ def read_bedrock_variants(c: dict, e: nbt.CompoundTag, n: str, version=None) -> 
             eq["saddle"], eq["body"] = saddle, body
     if n == "villager":
         prof = nbt.get(e, "PreferredProfession")
-        if prof:
+        mark = int(nbt.get(e, "MarkVariant", 0) or 0)
+        biome = VILLAGER_BIOMES[mark] if 0 <= mark < len(VILLAGER_BIOMES) else "plains"
+        if prof or biome != "plains":
             extra["VillagerData"] = nbt.CompoundTag({
-                "profession": nbt.StringTag("minecraft:" + str(prof).split(":", 1)[-1]),
+                "profession": nbt.StringTag("minecraft:" + (str(prof).split(":", 1)[-1] if prof else "none")),
                 "level": nbt.IntTag(max(1, min(5, int(nbt.get(e, "TradeTier", 0) or 0) + 1))),
-                "type": nbt.StringTag("minecraft:plains")})
+                "type": nbt.StringTag("minecraft:" + biome)})
+
+
+# The component groups with which the vanilla behaviour packs (BDS 1.6 - 1.26) make a mob an adult / a baby: (adult,
+# baby), the names as the packs spell them in ``component_groups`` (a name that is not there is not a group: the game
+# drops it).  Most animals use ``minecraft:<mob>_adult`` / ``_baby``; the others are listed.  A mob that is not here
+# has no such group (bat, spider...).
+BEDROCK_AGE_GROUPS: Dict[str, Tuple[Optional[str], Optional[str]]] = {
+    **{m: (f"minecraft:{m}_adult", f"minecraft:{m}_baby") for m in (
+        "pig", "cow", "sheep", "chicken", "wolf", "horse", "donkey", "mule", "llama", "ocelot", "cat", "panda", "fox",
+        "skeleton_horse", "squid", "camel", "hoglin", "strider", "zombie", "dolphin", "nautilus")},
+    "mooshroom": ("minecraft:cow_adult", "minecraft:cow_baby"),            # a mooshroom is a cow with the red/brown group
+    "rabbit": ("adult", "baby"),                                            # not namespaced
+    "bee": ("bee_adult", "bee_baby"), "goat": ("goat_adult", "goat_baby"), "axolotl": ("axolotl_adult", "axolotl_baby"),
+    "piglin": ("piglin_adult", "piglin_baby"), "zoglin": ("zoglin_adult", "zoglin_baby"),
+    "sniffer": ("sniffer_adult", "sniffer_baby"),
+    "turtle": ("minecraft:adult", "minecraft:baby"), "polar_bear": ("minecraft:adult", "minecraft:baby"),
+    "glow_squid": ("minecraft:squid_adult", "minecraft:squid_baby"),
+    "husk": ("minecraft:zombie_husk_adult", "minecraft:zombie_husk_baby"),
+    "drowned": ("minecraft:adult_drowned", "minecraft:baby_drowned"),
+    "zombie_pigman": ("minecraft:pig_zombie_adult", "minecraft:pig_zombie_baby"),
+    "zombie_horse": ("minecraft:horse_adult", "minecraft:horse_baby"),
+    "trader_llama": ("minecraft:llama_adult", "minecraft:llama_baby"),
+}
+# the mobs that get their adult group written (the others are adult by default and keep whatever the game gives)
+BEDROCK_ADULT_MOBS = ("pig", "cow", "sheep", "chicken", "mooshroom", "rabbit", "wolf", "horse", "donkey", "mule", "llama",
+                      "ocelot", "cat", "panda", "fox", "bee", "goat", "turtle", "polar_bear")
+RABBIT_COATS = ("brown", "white", "black", "splotched", "desert", "salt")        # RabbitType 0 - 5 (99: the killer bunny)
 
 
 # Pocket Edition 0.9 - 0.16 (LevelDB) saved an entity by its number, ``id`` (a few later versions OR the
@@ -979,13 +1034,15 @@ def to_bedrock(c: dict, uid: int, owner_uid: Optional[int] = None, version=(1, 2
         e["CustomName"] = nbt.StringTag(c["custom_name"])
         e["CustomNameVisible"] = nbt.ByteTag(1 if c.get("name_visible") else 0)
     extra = c.get("extra") or {}
-    if "Age" in extra and int(extra["Age"].py_data) < 0:
+    baby = "Age" in extra and int(extra["Age"].py_data) < 0
+    if baby:
         e["IsBaby"] = nbt.ByteTag(1)
-        e["definitions"].append(nbt.StringTag(f"+minecraft:{bname}_baby"))
+    if bname == "villager_v2":
+        pass                                       # adult / baby are the plain groups of write_bedrock_variants
     else:
-        if bname in ("pig", "cow", "sheep", "chicken", "mooshroom", "rabbit", "wolf", "horse", "donkey", "mule", "llama",
-                     "villager_v2", "ocelot", "cat", "panda", "fox", "bee", "goat", "turtle", "polar_bear"):
-            e["definitions"].append(nbt.StringTag(f"+minecraft:{bname}_adult"))
+        age_group = BEDROCK_AGE_GROUPS.get(bname)
+        if age_group is not None and (baby or bname in BEDROCK_ADULT_MOBS):
+            e["definitions"].append(nbt.StringTag("+" + age_group[1 if baby else 0]))
     if "Color" in extra and bname == "sheep":
         e["Color"] = nbt.ByteTag(int(extra["Color"].py_data))
     if "Sheared" in extra:

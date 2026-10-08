@@ -601,6 +601,44 @@ def validate_target(t: TargetSpec) -> None:
                                      limit=lim, format=t.java_mode, choices=", ".join(choices)))
 
 
+def resolve_explicit_version(t: TargetSpec) -> Optional[str]:
+    """An explicit ``--version`` is never ignored: with the automatic (or dfu) Java route it picks the route that
+    writes exactly that version (Amulet from 1.13, the numeric Anvil writer up to 1.12).  Returns the log line
+    that says so (None: nothing to resolve).  ``ConversionError``: a version the chosen format cannot be."""
+    if t.family != "java" or t.version is None:
+        return None
+    v = tuple(int(x) for x in t.version)
+    name = ab.version_str(v)
+    if t.java_mode in ("auto", "dfu"):
+        if v >= (1, 13):
+            t.java_mode = "amulet"
+            return tr("Java route: --version {version} was given, so the world is converted explicitly to that version "
+                      "(Amulet).", version=name)
+        lim = f"{v[0]}.{v[1]}" if len(v) > 1 else str(v[0])
+        if lim not in _numeric_limits():
+            raise ConversionError(tr("--version {version} has no Anvil format: for versions before 1.2 use --java-mode "
+                                     "mcregion or alpha with --java-limit", version=name))
+        t.java_mode, t.java_version_limit = "numeric", t.java_version_limit or lim
+        if t.java_version_limit != lim:
+            raise ConversionError(tr("--version {version} and --java-limit {limit} name different versions",
+                                     version=name, limit=t.java_version_limit))
+        return tr("Java route: --version {version} was given, so the world is written in the numeric Anvil format of "
+                  "that version.", version=name)
+    if t.java_mode == "numeric":
+        lim = f"{v[0]}.{v[1]}" if len(v) > 1 else str(v[0])
+        if t.java_version_limit and t.java_version_limit != lim:
+            raise ConversionError(tr("--version {version} and --java-limit {limit} name different versions",
+                                     version=name, limit=t.java_version_limit))
+        if not t.java_version_limit:
+            if lim not in _numeric_limits():
+                raise ConversionError(tr("--version {version} has no numeric Anvil format (1.2 to 1.12)", version=name))
+            t.java_version_limit = lim
+    elif t.java_mode in OLD_LIMITS:
+        raise ConversionError(tr("--version does not apply to the {format} format: choose the version with --java-limit "
+                                 "({choices})", format=t.java_mode, choices=", ".join(OLD_LIMITS[t.java_mode])))
+    return None
+
+
 def _numeric_limits() -> Tuple[str, ...]:
     from .blocks import _V
 
@@ -630,6 +668,7 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
     progress = progress or Progress()
     t0 = time.time()
     validate_target(target)
+    route_note = resolve_explicit_version(target)
     check_output_folder(src_path, out_dir)
     if os.path.exists(out_dir) and os.listdir(out_dir):
         raise ConversionError(tr("The output folder is not empty: {path}", path=out_dir))
@@ -665,6 +704,8 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
         if d.kind == "bta":
             return _convert_bta(d, out_dir, target, progress, t0)
         progress.log(tr("Target: {target}  ({path})", target=target.describe(), path=out_dir))
+        if route_note:
+            progress.log(route_note)
         if target.version is None and _is_amulet_target(target):
             target.version = ab.latest("bedrock" if target.family == "bedrock" else "java")
 
@@ -1009,6 +1050,9 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
             if fit.lost_tiles:
                 progress.warn(tr("Mountain compression: {n} block entities (chests, spawners…) were inside the removed "
                                  "rock and were lost.", n=fit.lost_tiles))
+            if fit.lost_band_blocks:
+                progress.warn(tr("Mountain compression: {n} blocks (floating islands, builds) were inside the band removed "
+                                 "to bring tall builds under the ceiling and were lost.", n=fit.lost_band_blocks))
         if ceiling:
             for dim, cut in above.items():
                 if any(cut):
@@ -1047,6 +1091,7 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
             from .extra import inject_target_extras
 
             inject_target_extras(hub_dir, out_dir, target, src.info, progress, wver)
+            _warn_missing_content(progress, platform, wver)
             out_path = out_dir
         elif target.family == "java" and target.java_mode == "dfu":
             n_modern = sum(len(v) for v in getattr(writer, "modern", {}).values())
@@ -1055,6 +1100,12 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
                     tr("{n} Update Aquatic blocks (LCE) were replaced with 1.12 equivalents: choose a specific "
                        "(pre-converted) Java version to keep them identical.", n=n_modern)
                 )
+        if amulet_target:                    # what the translation to the legacy hub left out is counted in the same tally
+            _warn_missing_content(progress, platform, wver)
+        else:
+            from .newcontent import tally_of
+
+            tally_of(progress).warn(progress, target.describe())
         progress.done()
         return ConversionResult(out_path, written, time.time() - t0, list(progress.warnings))
     except BaseException:

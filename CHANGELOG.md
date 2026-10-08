@@ -5,7 +5,49 @@
 A full review of the code with 110 real worlds downloaded from the web (Java Classic → 26.3, Bedrock
 1.1 → 1.26.40, PE 0.x, LCE on PS3 / PS4 / Vita / Wii U / Xbox 360). Fixed so far:
 
+**Found by opening converted worlds in real Bedrock Dedicated Servers (1.14 - 26.52)**
+- **Signs of Java ≤ 1.19 and Console worlds were lost on Bedrock 1.18+** (the block stayed an unknown
+  `universal_minecraft:wall_sign`): their lines are translated before the block. Old numeric Nether portals
+  (data 0 / 3) get their axis.
+- Hanging signs, chiseled bookshelves, brushable and calibrated sculk blocks start at Bedrock 1.20.0 (1.19.x has them
+  only as an experiment): older targets get the closest block and lose the block entity, counted.
+- Bedrock villagers carry the real `villager_v2` component groups (profession, schedule, biome) and Variant /
+  MarkVariant; the biome comes back to Java.
+- **Bedrock targets older than an item** drop it and count it (a table of 1014 items by release, 1.11 → 26.30,
+  from the game data of every release); spawn eggs follow the mob table.
+- **Block entities WorldBridge did not know were dropped silently**: structure blocks, pistons (Bedrock `PistonArm`
+  on every piston), lodestones, cauldrons with potions (Bedrock and PS4), test blocks and the whole state of command
+  blocks are converted; any block entity still left out is listed by id in one warning. A command block whose last
+  output held arrays stopped the whole transfer of block entities and mobs to Bedrock.
+- LCE: items with no Console id and blocks removed by the mountain compression from floating builds are counted.
+
+**Interface (map tab)**
+- Switching world no longer leaves a scan or a copy running on the previous one (an edit in progress finishes
+  first and keeps its world selected); nothing new starts while a map job or a conversion runs; the late signals
+  of the previous world's map are ignored.
+- A click or shift-click selects only chunks that exist (an empty or still-loading dimension selected up to 1024
+  phantom chunks); the CSV import says how many chunks it left out.
+- Cancelling the trimmed copy removes the partial folder and says "Operation cancelled.".
+
+- Bedrock → older Bedrock: attributes the target lacks are no longer written (`minecraft:lava_movement` came with
+  1.16; BDS 1.14 logged "Cannot find attribute" for every actor and player), also for the actors kept raw.
+- A numeric-Java record player with a record (data 1) is `jukebox` for every Bedrock (it stayed
+  `jukebox[block_data=1]`, a state Bedrock 1.14 - 1.18 reject while loading the chunk) and has `has_record` in Java 1.13+.
+- Map records no longer carry `parentMapId: -1` (Bedrock 1.17+ logged "Map item N has invalid parentMapId" at every load).
+- The age component groups of mooshroom (`minecraft:cow_adult`), rabbit (`adult`, `baby`, `coat_*`), bee, goat, turtle,
+  polar bear, piglin and others are the ones of the vanilla behaviour packs (the converter invented `minecraft:<mob>_adult`).
+
 **Java, by version**
+- **Java 26.2+ has no bed block entity** (a 26.3 server's registry lists 49 block entity types and no
+  `minecraft:bed`; the colour is in the block): beds are no longer written for such a target (chunks written in
+  the older blending format included, and Amulet's own copies go too), they are not counted as lost, and the
+  colour is read from the block when the source has none. The soul campfire and the bee nest are written
+  under the registry's `campfire` / `beehive` ids, and spawners as `mob_spawner` on every version (the
+  1.20.5+ files had an unknown `minecraft:spawner`).
+- **`--to java --version X` with the default Java mode ignored the version** (a 1.20.4 request wrote the latest,
+  26.3): an explicit version now picks the route that writes exactly it (Amulet from 1.13, the numeric Anvil
+  format up to 1.12) and the log says so. Hanging signs, barrels, smokers and blast furnaces no longer leave
+  orphan block entities in targets older than the block (the game logged "Skipping BlockEntity").
 - **Java 1.13+ → the same or a newer Java lost book text, lore, leather dye** and other item data,
   on the default route too: the world is now copied and upgraded by the game itself (1.18+ targets,
   or without the ring).
@@ -17,6 +59,17 @@ A full review of the code with 110 real worlds downloaded from the web (Java Cla
   llama decor and villager professions now go through every route (Java of every era, LCE, Bedrock).
 - **Java 1.13 – 1.16 targets got every entity twice**; `--move-to` lost the entities and block
   entities on the Java 1.13+ and Bedrock routes.
+- **Java 1.11 / 1.12 numeric worlds lost shulker boxes, illagers, vexes, llamas and parrots** (a chunk without
+  DataVersion is only renamed by the game for the ids it knew before 1.11: they now carry their registry names,
+  `minecraft:evocation_illager`, `minecraft:shulker_box`, `minecraft:bed`…, and the 1.11 species splits are
+  written whole, so a zombie villager no longer gets a random profession).
+- **Attributes older games do not know** (`generic.armor`, `armorToughness`… in a 1.8 world) are no longer written.
+- **Entities stored in the chunk next to the one they stand in** (Bedrock keeps a mob with the chunk it was
+  loaded in; a lowered or moved world shifts positions) were dropped by Java 1.12+ ("Wrong location!", the
+  Wandering Trader of a Bedrock world): every Java and Bedrock writer now stores each entity in the chunk of its
+  final position. Entities that shared a UUID in the source (one was dropped at load) get a new one.
+- **Java worlds converted from Bedrock carried the JPEG `world_icon` as `icon.png`** ("Must be 64 pixels wide"):
+  the icon is written as a 64 × 64 PNG.
 - **LZ4-compressed regions** (`region-file-compression=lz4`, 1.20.5+) lost chests, signs and mobs;
   chunks over 1 MiB were dropped instead of written to `.mcc` files.
 - **Chests of donkeys, mules and llamas were lost** (and a llama's carpet landed on the wrong slot): the

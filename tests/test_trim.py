@@ -159,3 +159,43 @@ def test_cli_trim_uses_the_world_folder_and_refuses_bad_outputs(tmp_path, capsys
     assert main(["--lang", "en", "trim", world, "--min-time", "abc"]) == 1
     err = capsys.readouterr().err
     assert "invalid duration" in err and "Traceback" not in err
+
+
+def test_a_cancelled_or_failed_trimmed_copy_leaves_no_partial_folder(tmp_path, monkeypatch):
+    """Cancelling "Save trimmed world" (or an error half way) left the half-copied folder behind."""
+    from worldbridge.model import ConversionCancelled, ConversionError
+
+    world = _java_world(tmp_path / "w")
+    sc = trim.scan(world)
+    keep = trim.plan(sc, trim.TrimOptions(ring=0, spawn_radius=-1))
+    real_copy = trim.copy_tree
+
+    def cancelling(src, dst, progress, ignore=None):
+        real_copy(src, dst, progress, ignore=ignore)
+        progress.cancel()
+        progress.check()
+
+    monkeypatch.setattr(trim, "copy_tree", cancelling)
+    new = tmp_path / "new"                                   # did not exist: removed entirely
+    with pytest.raises(ConversionCancelled):
+        trim.trimmed_copy(world, str(new), keep, Progress())
+    assert not new.exists()
+    empty = tmp_path / "empty"                               # existed (empty): stays, emptied
+    empty.mkdir()
+    with pytest.raises(ConversionCancelled):
+        trim.trimmed_copy(world, str(empty), keep, Progress())
+    assert empty.is_dir() and os.listdir(empty) == []
+
+    monkeypatch.setattr(trim, "copy_tree", real_copy)
+    monkeypatch.setattr(trim, "prune_java_raw", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    with pytest.raises(OSError):
+        trim.trimmed_copy(world, str(new), keep, Progress())
+    assert not new.exists()
+
+    full = tmp_path / "full"                                 # not empty: refused, and never touched
+    full.mkdir()
+    (full / "mine.txt").write_text("keep")
+    with pytest.raises(ConversionError):
+        trim.trimmed_copy(world, str(full), keep, Progress())
+    assert (full / "mine.txt").read_text() == "keep"
+    assert os.path.isfile(os.path.join(world, "level.dat"))  # the source is never touched

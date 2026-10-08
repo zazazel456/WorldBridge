@@ -18,7 +18,7 @@ from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
 from .. import entities as ent
-from .. import items, nbt, newcontent, tiles
+from .. import items, nbt, newcontent, placement, tiles
 from ..model import NETHER, OVERWORLD, THE_END, Progress, WorldInfo
 from ..i18n import tr
 
@@ -268,6 +268,7 @@ def legacy_player_to_bedrock(p: nbt.CompoundTag, version, uid: int, world_game_t
     if lvl is not None:
         attrs.append(attr("minecraft:player.level", max(0, min(int(lvl), 24791)), 24791.0, 0.0))
         attrs.append(attr("minecraft:player.experience", max(0.0, min(float(nbt.get(p, "XpP", 0.0) or 0), 1.0)), 1.0, 0.0))
+    attrs = [a for a in attrs if newcontent.bedrock_attribute_exists(str(nbt.get(a, "Name", "")), version)]
     if attrs:
         out["Attributes"] = nbt.ListTag(attrs, 10)
     return out
@@ -370,8 +371,8 @@ class BedrockExtras:
             frames = []
             if raw:
                 raw_tiles = read_nbt_list(raw)
-                canon = [c for c in (tiles.from_bedrock(t) for t in raw_tiles) if c is not None]
-                tl = tiles.write_list(canon, "legacy")
+                canon = tiles.read_canon(raw_tiles, "bedrock")
+                tl = tiles.write_list(canon, "legacy", newcontent.tally_of(self.progress) if getattr(self, "progress", None) is not None else None)
                 frames = [t for t in raw_tiles if is_frame_tile(t)]
             el = [e for e in (self._frame(prefix, t) for t in frames) if e is not None]
             for e in self._actors(prefix):
@@ -438,11 +439,21 @@ def frame_block(version, facing: int, is_map: bool, glow: bool = False):
     return _frame_block(tuple(version)[:3], int(facing), bool(is_map), bool(glow))
 
 
+def _counted(fn):
+    """The items a method drops because the Bedrock target lacks them are counted in the conversion's Tally."""
+    @functools.wraps(fn)
+    def wrapper(self, *a, **k):
+        with newcontent.counting(self.tally):
+            return fn(self, *a, **k)
+    return wrapper
+
+
 class BedrockInjector:
     def __init__(self, out_dir: str, version, progress: Progress):
         self.db = _db(out_dir)
         self.version = tuple(version)
         self.progress = progress
+        self.tally = newcontent.tally_of(progress)
         self.ids = ent.ActorIds()
         _key, self.player_uid = self.ids.next()  # tamed animals belong to the world's player
         self.modern_actors = self.version >= (1, 18, 30)
@@ -452,6 +463,7 @@ class BedrockInjector:
         self.n_frames_lost = 0
         self.n_maps = 0
 
+    @_counted
     def put_chunk(self, dim: int, cx: int, cz: int, tile_canon: List[dict], ent_canon: List[dict]):
         prefix = chunk_prefix(cx, cz, dim)
         if tile_canon:
@@ -459,9 +471,10 @@ class BedrockInjector:
             existing = read_nbt_list(_get(self.db, key) or b"")
             by_pos = {(int(nbt.get(t, "x", 0)), int(nbt.get(t, "y", 0)), int(nbt.get(t, "z", 0))): t for t in existing}
             for c in tile_canon:  # a block entity this version does not have: Amulet's copy of Java's goes too
-                if not tiles.exists_in_bedrock(c["kind"], self.version):
+                if c["kind"] == tiles.UNKNOWN or not tiles.exists_in_bedrock(c["kind"], self.version):
                     by_pos.pop(tuple(c["pos"]), None)
-            for t in tiles.write_list(tile_canon, "bedrock", version=self.version):
+            tally = newcontent.tally_of(self.progress)
+            for t in tiles.write_list(tile_canon, "bedrock", tally, version=self.version):
                 by_pos[(int(t["x"].py_data), int(t["y"].py_data), int(t["z"].py_data))] = t
                 self.n_tiles += 1
             self.db.put(key, write_nbt_list(list(by_pos.values())))
@@ -469,6 +482,24 @@ class BedrockInjector:
         if frames:
             self._put_frames(dim, frames)
             ent_canon = [c for c in ent_canon if c not in frames]
+        # an actor goes with the chunk its position is in (a shifted or moved world, a mob that walked over a border)
+        stay, away = [], {}
+        for c in ent_canon or []:
+            home = placement.chunk_of(c.get("pos")) if isinstance(c, dict) else None
+            if home is None or home == (cx, cz) or not self._has_chunk(dim, *home):
+                stay.append(c)
+            else:
+                away.setdefault(home, []).append(c)
+        for (hx, hz), lst in away.items():
+            self._put_actors(dim, hx, hz, lst)
+        self._put_actors(dim, cx, cz, stay)
+
+    def _has_chunk(self, dim: int, cx: int, cz: int) -> bool:
+        prefix = chunk_prefix(cx, cz, dim)
+        return any(_get(self.db, prefix + bytes([tag])) is not None for tag in (0x2C, 0x76))
+
+    def _put_actors(self, dim: int, cx: int, cz: int, ent_canon: List[dict]):
+        prefix = chunk_prefix(cx, cz, dim)
         if ent_canon:
             actors = []
             keys = []
@@ -589,6 +620,7 @@ class BedrockInjector:
         except Exception as ex:  # noqa: BLE001
             self.progress.warn(tr("Height maps not recomputed: {error}", error=ex))
 
+    @_counted
     def put_player(self, player: nbt.CompoundTag, world_game_type: Optional[int] = None):
         p = legacy_player_to_bedrock(player, self.version, self.player_uid, world_game_type)
         self.db.put(b"~local_player", nbt.dump(p, "", little_endian=True))
@@ -628,7 +660,7 @@ def inject_from_hub(hub_dir: str, out_dir: str, version, info: WorldInfo, progre
                 done += 1
                 if c is None:
                     continue
-                tl = [x for x in (tiles.from_legacy(t) for t in c.tile_entities) if x is not None]
+                tl = tiles.read_canon(c.tile_entities, "legacy")
                 el = ent.read_list(c.entities, "legacy")
                 if tl or el:
                     inj.put_chunk(dim, cx, cz, tl, el)
@@ -649,7 +681,7 @@ def inject_from_java_modern(src: str, out_dir: str, version, info: WorldInfo, pr
     inj = BedrockInjector(out_dir, version, progress)
     try:
         for dim, cx, cz, tiles_raw, ents_raw in iter_modern_extras(src, progress, with_states=True):
-            tl = [x for x in (t if isinstance(t, dict) else tiles.from_java_modern(t) for t in tiles_raw) if x is not None]
+            tl = tiles.read_canon(tiles_raw, "java")
             el = ent.read_list(ents_raw, "java")
             if depth is not None and dim == OVERWORLD:
                 tl, el = depth.move_canon(cx, cz, tl, el)       # with their blocks (worldbridge.depthfit)
@@ -786,24 +818,50 @@ def level_version(path: str) -> Optional[Tuple[int, ...]]:
 
 
 def retarget_stack(t, version):
-    """A Bedrock item stack written the way Bedrock ``version`` names / stores it (an empty slot stays)."""
+    """A Bedrock item stack written the way Bedrock ``version`` names / stores it (an empty slot stays).  None when
+    that version lacks the item (counted by items.to_bedrock in the Tally of the conversion)."""
     try:
         it = items.from_bedrock(t)
-        new = items.to_bedrock(it, tuple(version)) if it is not None else None
+        if it is None:
+            return t
+        return items.to_bedrock(it, tuple(version))
     except Exception:  # noqa: BLE001
         return t
-    return new if new is not None else t
 
 
-def retarget_items(tag: nbt.CompoundTag, version) -> None:
-    """The item stacks held by an actor / player / block entity (inventory, armour, hands, ``Item``...)."""
+def _empty_stack(t: nbt.CompoundTag) -> nbt.CompoundTag:
+    """The empty slot that replaces a stack the version lacks (it keeps the slot number)."""
+    e = nbt.CompoundTag({"Count": nbt.ByteTag(0), "Damage": nbt.ShortTag(0), "Name": nbt.StringTag(""),
+                         "WasPickedUp": nbt.ByteTag(0)})
+    if "Slot" in t:
+        e["Slot"] = t["Slot"]
+    return e
+
+
+def retarget_items(tag: nbt.CompoundTag, version) -> bool:
+    """The item stacks held by an actor / player / block entity (inventory, armour, hands, ``Item``...), for
+    ``version``; a stack it lacks becomes an empty slot.  Returns False when the single ``Item`` of the tag (an
+    item entity, a record) was one of those: there is nothing left to hold."""
+    ok = True
     for k in _ITEM_LISTS:
         lst = nbt.get_tag(tag, k)
         if isinstance(lst, nbt.ListTag):
-            tag[k] = nbt.ListTag([retarget_stack(x, version) if isinstance(x, nbt.CompoundTag) else x for x in lst], 10)
+            out = []
+            for x in lst:
+                if isinstance(x, nbt.CompoundTag):
+                    r = retarget_stack(x, version)
+                    x = _empty_stack(x) if r is None else r
+                out.append(x)
+            tag[k] = nbt.ListTag(out, 10)
     for k in ("Item", "RecordItem"):
         if isinstance(nbt.get_tag(tag, k), nbt.CompoundTag):
-            tag[k] = retarget_stack(tag[k], version)
+            r = retarget_stack(tag[k], version)
+            if r is None:
+                del tag[k]
+                ok = False
+            else:
+                tag[k] = r
+    return ok
 
 
 def _shift_pos(e: nbt.CompoundTag, dx: int, dz: int) -> None:
@@ -817,6 +875,9 @@ def _shift_tile(t: nbt.CompoundTag, dx: int, dz: int) -> None:
     for k, d in (("x", dx * 16), ("z", dz * 16), ("pairx", dx * 16), ("pairz", dz * 16)):
         if d and k in t:
             t[k] = nbt.IntTag(int(t[k].py_data) + d)
+
+
+_RAW_KINDS = frozenset({"piston_arm", "lodestone", "cauldron"})   # Bedrock only: no change to make going to Bedrock
 
 
 class _Downgrade:
@@ -837,9 +898,11 @@ class _Downgrade:
         canon, raw = [], []
         for t in tiles_raw:
             c = tiles.from_bedrock(t)
+            if c is not None and c["kind"] in _RAW_KINDS:          # only Bedrock has them: kept as they are
+                c = None
             if c is not None:
                 if not tiles.exists_in_bedrock(c["kind"], self.version):
-                    self.tally.tiles += 1
+                    self.tally.lose_tile(str(nbt.get(t, "id", "")))
                     continue
                 if dx or dz:
                     c["pos"] = (c["pos"][0] + dx * 16, c["pos"][1], c["pos"][2] + dz * 16)
@@ -848,7 +911,7 @@ class _Downgrade:
                 canon.append(c)
                 continue
             if str(nbt.get(t, "id", "")) == "GlowItemFrame" and self.version < (1, 17, 0):
-                self.tally.tiles += 1
+                self.tally.lose_tile("GlowItemFrame")
                 continue
             retarget_items(t, self.version)
             _shift_tile(t, dx, dz)
@@ -861,7 +924,9 @@ class _Downgrade:
                 continue
             if verdict == "renamed":
                 self.tally.renamed += 1
-            retarget_items(e, self.version)
+            if not retarget_items(e, self.version) and str(nbt.get(e, "identifier", "")).endswith(":item"):
+                self.tally.entities += 1                    # a dropped item whose item entity has nothing left
+                continue
             _shift_pos(e, dx, dz)
             keep.append(e)
         if canon:
@@ -874,6 +939,7 @@ class _Downgrade:
 
 def _retarget_player(root: nbt.CompoundTag, version) -> None:
     retarget_items(root, version)
+    newcontent.filter_attributes(root, version)
     gm = nbt.get(root, "PlayerGameMode")
     if gm is not None and int(gm) == 6 and tuple(version) < (1, 21, 40):    # Spectator came with 1.21.40
         root["PlayerGameMode"] = nbt.IntTag(1)
@@ -929,6 +995,12 @@ def _delete_chunk_extras(db, tags) -> None:
 
 def copy_bedrock_extras(src: str, dst: str, progress: Progress, depth=None, move=None, version=None,
                         keep_state: bool = False):
+    with newcontent.counting(newcontent.tally_of(progress)):
+        return _copy_bedrock_extras(src, dst, progress, depth, move, version, keep_state)
+
+
+def _copy_bedrock_extras(src: str, dst: str, progress: Progress, depth=None, move=None, version=None,
+                         keep_state: bool = False):
     """Bedrock -> Bedrock: the block entities, actors, players, maps and every other record of the source that
     Amulet does not write, for the target ``version``.
 

@@ -321,3 +321,31 @@ def test_ordered_map_is_safe_for_concurrent_callers(monkeypatch):
     for t in ts:
         t.join()
     assert not bad, bad[:3]
+
+
+def _probe_part(k):
+    """Stands for ``_amulet_part``: the state the worker got through the pool's initializer."""
+    from worldbridge import amulet_bridge as ab
+
+    job, parts, mode, out, counter, views = ab._AM_STATE
+    return k, job.platform, parts[k], mode, out, views[k]
+
+
+class _FakeJob:
+    def __init__(self, platform, src):
+        self.platform = platform
+        self.src = src
+
+
+@pytest.mark.parametrize("platform", ["java", "bedrock"])           # fork / fork server
+def test_the_part_workers_get_the_job_through_the_pool_initializer(monkeypatch, platform):
+    from worldbridge import amulet_bridge as ab
+    from worldbridge.model import Progress
+
+    monkeypatch.setattr(ab, "_amulet_part", _probe_part)
+    monkeypatch.setattr(ab, "_bedrock_world", lambda p: False)
+    ab._AM_STATE = None
+    parts = [{"minecraft:overworld": [(0, 0)]}, {"minecraft:overworld": [(1, 1)]}]
+    res = ab._run_parts(_FakeJob(platform, "src"), parts, "save", "/out", Progress(), 2, "x", ["v0", "v1"])
+    assert res == [(k, platform, parts[k], "save", "/out", f"v{k}") for k in range(2)]
+    assert ab._AM_STATE is None                                      # nothing handed over through a global of the parent

@@ -51,8 +51,20 @@ _SECTIONS = {
             'auto = ultima versione col percorso migliore; dfu = mondo aggiornato dal gioco; amulet = pre-convertito alla --version',
         'target version inside the chosen format: --java-mode numeric 1.2 … 1.12; mcregion b1.3, b1.4, b1.5, b1.6, b1.7, b1.8, 1.0, 1.1; alpha: alpha (Alpha 1.2.x), b1.2 (Beta 1.0 – 1.2_02, default)':
             'versione di destinazione dentro al formato scelto: --java-mode numeric 1.2 … 1.12; mcregion b1.3, b1.4, b1.5, b1.6, b1.7, b1.8, 1.0, 1.1; alpha: alpha (Alpha 1.2.x), b1.2 (Beta 1.0 – 1.2_02, predefinito)',
-        'target version (e.g. 1.20.1 or 1.21.0)':
-            'versione di destinazione (es. 1.20.1 o 1.21.0)',
+        'target version (e.g. 1.20.1 or 1.21.0); with the default Java mode it picks the route that writes exactly that version (Amulet from 1.13, the numeric Anvil format up to 1.12)':
+            'versione di destinazione (es. 1.20.1 o 1.21.0); con la modalità Java predefinita sceglie la strada che scrive esattamente quella versione (Amulet dalla 1.13, il formato Anvil numerico fino alla 1.12)',
+        'Java route: --version {version} was given, so the world is converted explicitly to that version (Amulet).':
+            'Strada Java: è stata indicata --version {version}, quindi il mondo viene convertito esplicitamente a quella versione (Amulet).',
+        'Java route: --version {version} was given, so the world is written in the numeric Anvil format of that version.':
+            'Strada Java: è stata indicata --version {version}, quindi il mondo è scritto nel formato Anvil numerico di quella versione.',
+        '--version {version} has no Anvil format: for versions before 1.2 use --java-mode mcregion or alpha with --java-limit':
+            '--version {version} non ha un formato Anvil: per le versioni prima della 1.2 usa --java-mode mcregion o alpha con --java-limit',
+        '--version {version} and --java-limit {limit} name different versions':
+            '--version {version} e --java-limit {limit} indicano versioni diverse',
+        '--version {version} has no numeric Anvil format (1.2 to 1.12)':
+            '--version {version} non ha un formato Anvil numerico (da 1.2 a 1.12)',
+        '--version does not apply to the {format} format: choose the version with --java-limit ({choices})':
+            '--version non vale per il formato {format}: scegli la versione con --java-limit ({choices})',
         'LCE platform: win64, xbox360, ps3, wiiu, vita, ps4, xboxone, switch':
             'piattaforma LCE: win64, xbox360, ps3, wiiu, vita, ps4, xboxone, switch',
         'LCE console version: tu54 (default), tu46, tu31. Windows64 is always neoLegacy TU31':
@@ -249,6 +261,8 @@ _SECTIONS = {
             'Sottosuolo (automatico): la superficie di questo mondo sta sopra y 0 (mediana y {y}): quello che sta sotto y 0 viene tagliato (--depth keep lo tiene).',
         'Mountain compression: {n} block entities (chests, spawners…) were inside the removed rock and were lost.':
             'Compressione delle montagne: {n} blocchi-entità (casse, spawner…) erano dentro la roccia tolta e sono andati persi.',
+        'Mountain compression: {n} blocks (floating islands, builds) were inside the band removed to bring tall builds under the ceiling and were lost.':
+            'Compressione delle montagne: {n} blocchi (isole fluttuanti, costruzioni) erano dentro la fascia tolta per far entrare le costruzioni alte sotto il limite e sono andati persi.',
         '{blocks} blocks, {tiles} block entities (chests, signs, spawners…) and {entities} entities above y {limit} did not fit under the height limit of the target game (the compression could not lower them, or the terrain is cut) and were cut.':
             '{blocks} blocchi, {tiles} blocchi-entità (casse, cartelli, spawner…) e {entities} entità sopra y {limit} non entravano nel limite di altezza del gioco di destinazione (la compressione non è riuscita ad abbassarli, oppure il terreno è tagliato) e sono stati tagliati.',
         'Builds up to y {top} (floating islands, towers): they come down whole, with the ground under them, to stay under the y {limit} limit.':
@@ -421,6 +435,8 @@ _SECTIONS = {
             '{n} incantesimi',
         'the entities {names}':
             'le entità {names}',
+        'the block entities {names}':
+            'i blocchi-entità {names}',
         ' and ':
             ' e ',
         '{version} does not have {what} of the source world: removed (the game does not know them); new arrows, boats and potions become their classic versions.':
@@ -501,8 +517,16 @@ _SECTIONS = {
             'Giocatori: {n} file playerdata scritti.',
         '{n} blocks that do not exist in the target version were replaced.':
             '{n} blocchi non esistenti nella versione di destinazione sono stati sostituiti.',
+        '{n} entities were stored in the chunk next to the one they stand in: the game would refuse them there, they were moved to the chunk of their position.':
+            "{n} entità erano salvate nel chunk accanto a quello in cui si trovano: il gioco le rifiuterebbe lì, sono state spostate nel chunk della loro posizione.",
+        '{n} entities shared their UUID with another entity of the source world (the game would keep only one of each pair): they got a new UUID.':
+            "{n} entità condividevano l'UUID con un'altra entità del mondo di origine (il gioco ne terrebbe solo una per coppia): hanno ricevuto un nuovo UUID.",
         'Content that does not exist in {version}: removed {items} items, {entities} entities and {tiles} block entities.':
             'Contenuti non esistenti in {version}: rimossi {items} oggetti, {entities} entità e {tiles} blocchi-entità.',
+        'Block entities left out of {version}: {names}.':
+            'Blocchi-entità lasciati fuori da {version}: {names}.',
+        ' and {n} more kinds':
+            ' e altri {n} tipi',
         '{n} entities were renamed to the identifiers of {version} (villagers, trader llamas).':
             '{n} entità rinominate con gli identificatori di {version} (abitanti, lama mercante).',
     },
@@ -825,6 +849,22 @@ _SECTIONS = {
             'annullato',
     },
     'worldbridge/gui/mapwidget.py': {
+        'Cancel':
+            'Annulla',
+        'Stops the operation running on the world':
+            "Ferma l'operazione in corso sul mondo",
+        'The world is being edited: wait for the edit to finish.':
+            'Il mondo è in modifica: aspetta che la modifica finisca.',
+        'Another operation on the world is running: wait for it to finish.':
+            "Un'altra operazione sul mondo è in corso: aspetta che finisca.",
+        'Operation cancelled.':
+            'Operazione annullata.',
+        'Import not possible yet: the map of this dimension is still loading.':
+            'Importazione non ancora possibile: la mappa di questa dimensione è ancora in caricamento.',
+        '{n} chunks selected from the file':
+            '{n} chunk selezionati dal file',
+        '{n} left out (they do not exist in this world)':
+            '{n} esclusi (non esistono in questo mondo)',
         'In the converted world the selected chunks do not stay at their coordinates: the centre of the selection goes to the centre of the world (0, 0) or to the chosen coordinates. Useful for finite worlds (LCE, Pocket Edition) or to bring a build near the spawn.':
             'Nel mondo convertito i chunk selezionati non restano alle loro coordinate: il centro della selezione va al centro del mondo (0, 0) o alle coordinate scelte. Utile per i mondi finiti (LCE, Pocket Edition) o per portare una costruzione vicino allo spawn.',
         "A regenerated dimension is not converted: the game generates it anew, with its generator and the world's seed, the first time you enter it; the players who were there go back to the spawn.\nIf you convert it instead, WorldBridge writes a ring of the game's terrain (Java Alpha 1.2 – 1.17) around the converted part that joins it smoothly.":
@@ -1465,8 +1505,14 @@ _SECTIONS = {
             'I dettagli sono nel registro qui sotto.',
         'Language of the interface':
             "Lingua dell'interfaccia",
-        'The language can be changed when no conversion is running and the world management tab has no unsaved changes.':
-            "La lingua si può cambiare quando non c'è una conversione in corso e la scheda «Gestione mondo» non ha modifiche non salvate.",
+        'The language can be changed when no conversion or change to the world is running and the world management tab has no unsaved changes.':
+            "La lingua si può cambiare quando non c'è una conversione o una modifica del mondo in corso e la scheda «Gestione mondo» non ha modifiche non salvate.",
+        'A conversion is running: the world can be changed when it ends.':
+            'Una conversione è in corso: il mondo si può cambiare quando finisce.',
+        'The world is being edited: it can be changed when the edit ends.':
+            'Il mondo è in modifica: si può cambiare quando la modifica finisce.',
+        'A change to the source world (edit, trim or copy) is running: convert when it ends.':
+            'Una modifica del mondo di origine (modifica, trim o copia) è in corso: converti quando finisce.',
     },
 }
 

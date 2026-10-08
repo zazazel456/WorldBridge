@@ -11,7 +11,7 @@ from typing import Dict, Iterator, List, Optional, Tuple
 
 from .. import entities as ent
 from .. import gameversion as gv
-from .. import nbt, newcontent, tiles
+from .. import items, nbt, newcontent, placement, tiles
 from ..model import NETHER, OVERWORLD, THE_END, Progress, WorldInfo
 from .region import JavaRegion, RegionWriter
 from ..i18n import tr
@@ -57,6 +57,10 @@ def _chunk_parts(root: nbt.CompoundTag):
 SPANNING_DV = 2527  # before 20w17a (1.16) palette entries may span two longs
 
 
+_CAULDRONS = frozenset({"cauldron", "water_cauldron", "lava_cauldron", "powder_snow_cauldron"})
+_STATE_BLOCKS = frozenset({"piston", "sticky_piston", "lodestone"}) | _CAULDRONS
+
+
 def _state_tile(name: str, props) -> Optional[dict]:
     name = name.split(":", 1)[-1]
     if name.startswith("potted_"):
@@ -67,6 +71,15 @@ def _state_tile(name: str, props) -> Optional[dict]:
             return {"kind": "noteblock", "note": int(str(nbt.get(props, "note", 0)))}
         except ValueError:
             return None
+    # blocks Bedrock keeps a block entity for although Java has none (je2be does the same): the piston arm of every piston,
+    # the cauldron, the lodestone's handle
+    if name in ("piston", "sticky_piston"):
+        return {"kind": "piston_arm", "sticky": name == "sticky_piston",
+                "extended": str(nbt.get(props, "extended", "false")) == "true"}
+    if name in _CAULDRONS:
+        return {"kind": "cauldron"}
+    if name == "lodestone":
+        return {"kind": "lodestone"}
     # block entities whose data is partly in the block state: merged into the block entity of the chunk
     if name in ("suspicious_sand", "suspicious_gravel"):
         try:
@@ -74,6 +87,10 @@ def _state_tile(name: str, props) -> Optional[dict]:
         except ValueError:
             dusted = 0
         return {"kind": "brushable_block", "block": name, "dusted": dusted, "merge": True}
+    if name.endswith("_bed") and name[:-4] in items.WOOL:
+        # the colour of a bed is its block; Java 26.x has no bed block entity any more (tiles.REMOVED_IN), the older games
+        # (and Bedrock) keep the colour in theirs
+        return {"kind": "bed", "color": items.WOOL.index(name[:-4]), "merge": True}
     if name.endswith("copper_golem_statue"):
         return {"kind": "copper_golem_statue", "pose": str(nbt.get(props, "copper_golem_pose", "standing")), "merge": True}
     return None
@@ -154,7 +171,8 @@ def state_tiles(root: nbt.CompoundTag, cx: int, cz: int) -> List[dict]:
         wanted = {}
         for i, st in enumerate(palette):
             name = nbt.state_name(st, "")
-            if "potted_" in name or name.endswith(("note_block", "copper_golem_statue")) or "suspicious_" in name:
+            if ("potted_" in name or name.endswith(("note_block", "copper_golem_statue", "_bed")) or "suspicious_" in name
+                    or name.split(":", 1)[-1] in _STATE_BLOCKS):
                 t = _state_tile(name, nbt.state_props(st))
                 if t is not None:
                     wanted[i] = t
@@ -359,7 +377,10 @@ def iter_modern_extras(world: str, progress: Optional[Progress] = None,
 class JavaModernExtras:
     """Java 1.13+ block entities / entities, converted to the legacy hub format per chunk."""
 
+    progress: Optional[Progress] = None
+
     def __init__(self, path: str, progress: Progress):
+        self.progress = progress
         self.data: Dict[Tuple[int, int, int], Tuple[list, list]] = {}
         for dim, cx, cz, te, en in iter_modern_extras(path, progress, with_states=True):
             self.data[(dim, cx, cz)] = (te, en)
@@ -369,12 +390,11 @@ class JavaModernExtras:
         and drops those that end out of 0 - 255."""
         te, en = self.data.get((dim, cx, cz), ([], []))
         canon, seen = [], set()
-        for t in te:
-            c = t if isinstance(t, dict) else tiles.from_java_modern(t)
-            if c is not None and tuple(c["pos"]) not in seen:
+        for c in tiles.read_canon(te, "java"):
+            if tuple(c["pos"]) not in seen:
                 seen.add(tuple(c["pos"]))
                 canon.append(c)
-        tl = tiles.write_list(canon, "legacy")
+        tl = tiles.write_list(canon, "legacy", newcontent.tally_of(self.progress) if self.progress is not None else None)
         el = []
         for c in ent.read_list(en, "java"):
             e = ent.to_legacy(c)
@@ -434,31 +454,31 @@ def _moved_key(move, dim: int, cx: int, cz: int, tl: list, el: list):
     return (dim,) + tuple(move.canon_chunk(dim, cx, cz, tl, el))
 
 
-def inject_from_bedrock(src: str, out_dir: str, info: WorldInfo, progress: Progress, move=None, depth=None):
+def inject_from_bedrock(src: str, out_dir: str, info: WorldInfo, progress: Progress, move=None, depth=None, target_dv=None):
     canon = {}
     for (dim, cx, cz), (te, en) in _bedrock_chunks(src).items():
-        tl = [c for c in (tiles.from_bedrock(t) for t in te) if c is not None]
+        tl = tiles.read_canon(te, "bedrock")
         el = [e for e in en if isinstance(e, dict)] + ent.read_list([e for e in en if not isinstance(e, dict)], "bedrock")
         if depth is not None and dim == OVERWORLD:
             tl, el = depth.move_canon(cx, cz, tl, el)           # with their blocks (worldbridge.depthfit)
         if tl or el:
             canon[_moved_key(move, dim, cx, cz, tl, el)] = (tl, el)
-    inject_canon(out_dir, canon, progress)
+    inject_canon(out_dir, canon, progress, target_dv)
 
 
-def inject_from_java(src: str, out_dir: str, info: WorldInfo, progress: Progress, move=None, depth=None):
+def inject_from_java(src: str, out_dir: str, info: WorldInfo, progress: Progress, move=None, depth=None, target_dv=None):
     canon = {}
     for dim, cx, cz, te, en in iter_modern_extras(src, progress):
-        tl = [c for c in (tiles.from_java_modern(t) for t in te) if c is not None]
+        tl = tiles.read_canon(te, "java")
         el = ent.read_list(en, "java")
         if depth is not None and dim == OVERWORLD:
             tl, el = depth.move_canon(cx, cz, tl, el)
         if tl or el:
             canon[_moved_key(move, dim, cx, cz, tl, el)] = (tl, el)
-    inject_canon(out_dir, canon, progress)
+    inject_canon(out_dir, canon, progress, target_dv)
 
 
-def inject_from_hub(hub_dir: str, out_dir: str, info: WorldInfo, progress: Progress):
+def inject_from_hub(hub_dir: str, out_dir: str, info: WorldInfo, progress: Progress, target_dv=None):
     from .numeric import JavaNumericWorld
 
     hub = JavaNumericWorld(hub_dir)
@@ -468,11 +488,11 @@ def inject_from_hub(hub_dir: str, out_dir: str, info: WorldInfo, progress: Progr
             c = hub.read_chunk(dim, cx, cz)
             if c is None:
                 continue
-            tl = [x for x in (tiles.from_legacy(t) for t in c.tile_entities) if x is not None]
+            tl = tiles.read_canon(c.tile_entities, "legacy")
             el = ent.read_list(c.entities, "legacy")
             if tl or el:
                 canon[(dim, cx, cz)] = (tl, el)
-    inject_canon(out_dir, canon, progress)
+    inject_canon(out_dir, canon, progress, target_dv)
 
 
 def _drop_bedrock_entities(root: nbt.CompoundTag) -> None:
@@ -487,7 +507,35 @@ def _drop_bedrock_entities(root: nbt.CompoundTag) -> None:
         (lvl if lvl is not None else root)["Entities"] = nbt.compound_list(keep)
 
 
-def inject_canon(out_dir: str, canon, progress: Progress):
+def _chunk_exists(out_dir: str):
+    """exists(dim, cx, cz): whether the output world has that chunk (region files read once)."""
+    cache: Dict[Tuple[int, int, int], set] = {}
+
+    def exists(dim: int, cx: int, cz: int) -> bool:
+        key = (dim, cx >> 5, cz >> 5)
+        if key not in cache:
+            path = os.path.join(_folder(out_dir, dim, "region"), f"r.{key[1]}.{key[2]}.mca")
+            try:
+                cache[key] = set(JavaRegion(path).chunks()) if os.path.exists(path) else set()
+            except OSError:
+                cache[key] = set()
+        return (cx & 31, cz & 31) in cache[key]
+
+    return exists
+
+
+def _removed_id(bid: str, dv: int, target_dv: Optional[int]) -> bool:
+    """Whether the block entity id ``bid`` is one the game of ``max(dv, target_dv)`` no longer has (tiles.REMOVED_IN)."""
+    kind = tiles.JAVA_TO_KIND.get(bid.split(":", 1)[-1])
+    return kind is not None and tiles.removed_in_java(kind, dv, target_dv)
+
+
+def inject_canon(out_dir: str, canon, progress: Progress, target_dv: Optional[int] = None):
+    # every entity goes into the chunk of its (final) position: the game refuses it anywhere else
+    canon, rehomed = placement.rehome_canon(canon, _chunk_exists(out_dir))
+    if rehomed:
+        progress.log(tr("{n} entities were stored in the chunk next to the one they stand in: the game would "
+                        "refuse them there, they were moved to the chunk of their position.", n=rehomed))
     by_region: Dict[Tuple[int, int, int], List[Tuple[int, int, list, list]]] = defaultdict(list)
     for (dim, cx, cz), (tl, el) in canon.items():
         by_region[(dim, cx >> 5, cz >> 5)].append((cx, cz, tl, el))
@@ -526,15 +574,19 @@ def inject_canon(out_dir: str, canon, progress: Progress):
                 tl, el = newcontent.clean_extras(tl, el, jver[1], tally)
             resolve_kinds(root, tl)
             apply_state_tiles(root, tl)
-            new_tiles = tiles.write_list(tl, "java", data_version=dv)
             lvl = nbt.get_tag(root, "Level")
             holder, key = (lvl, "TileEntities") if lvl is not None else (root, "block_entities")
             existing = {(int(nbt.get(t, "x", 0)), int(nbt.get(t, "y", 0)), int(nbt.get(t, "z", 0))): t
                         for t in (nbt.get_tag(holder, key) or [])}
+            # an id nothing here knows stays as Amulet copied it when it did; else it is lost (and counted below)
+            tl = [c for c in tl if not (c["kind"] == tiles.UNKNOWN and tuple(c["pos"]) in existing)]
+            new_tiles = tiles.write_list(tl, "java", tally, data_version=dv, target_dv=target_dv)
             for c in tl:  # a block entity the target version does not have: Amulet's copy of the other game's one goes too
-                if not tiles.exists_in_java(c["kind"], dv):
+                if c["kind"] != tiles.UNKNOWN and (tiles.KINDS[c["kind"]][1] is None or not tiles.exists_in_java(c["kind"], dv, target_dv)):
                     existing.pop(tuple(c["pos"]), None)
-                    tally.tiles += 1
+            # what the target's game dropped (the bed): Amulet's own copies of it go too, canonical or not
+            for pos in [p for p, t in existing.items() if _removed_id(str(nbt.get(t, "id", "")), dv, target_dv)]:
+                del existing[pos]
             for t in new_tiles:
                 existing[(int(t["x"].py_data), int(t["y"].py_data), int(t["z"].py_data))] = t
                 n_t += 1

@@ -149,6 +149,9 @@ class HeightFit:
         self.buildings = 0
         self.moved_columns = 0
         self.lost_tiles = 0                                      # block entities inside the removed rock
+        # blocks of a floating piece (no natural ground in the column) or of a build that no air band could take
+        # the place of: the band went through them
+        self.lost_band_blocks = 0
         # what was still above the ceiling after the compression (cut, never silently)
         self.lost_blocks = 0
         self.lost_tiles_above = 0
@@ -494,6 +497,20 @@ class HeightFit:
         self.lost_tiles_above += nt
         self.lost_entities += ne
 
+    def _count_band_loss(self, c: NumericChunk, s: np.ndarray, start: np.ndarray) -> None:
+        """Counts the blocks the removed band takes with it where it should have been air: every block of a column
+        with no natural ground (a floating island, a sky build under which no air band was tall enough) and any
+        built block (PROTECTED) anywhere.  The natural ground the compression of a mountain removes is the design,
+        not a loss."""
+        h = self.heights.get((c.cx, c.cz))
+        if h is None:
+            return
+        b = np.asarray(c.blocks, np.int64)
+        y = np.arange(c.height)[:, None, None]
+        inband = (y >= start[None]) & (y < (start + s)[None])
+        lost = inband & (b != 0) & ((h < 0)[None] | PROTECTED[b])
+        self.lost_band_blocks += int(lost.sum())
+
     def _remap(self, c: NumericChunk, s: np.ndarray) -> None:
         start = self._band_starts(c, s)                           # [z, x] first removed y
         self._starts[(c.cx, c.cz)] = start
@@ -509,6 +526,7 @@ class HeightFit:
             out = np.take_along_axis(arr, src_c, axis=0)
             return np.where(inside, out, fill).astype(arr.dtype)
 
+        self._count_band_loss(c, s, start)
         trees = self._tree_blocks(c, s)
         c.blocks = remap(c.blocks)
         c.data = remap(c.data)

@@ -14,7 +14,7 @@ import json
 import logging
 from typing import Dict, Optional, Tuple
 
-from . import ids, nbt
+from . import ids, nbt, newcontent
 
 WOOL = ["white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray", "light_gray", "cyan",
         "purple", "blue", "brown", "green", "red", "black"]
@@ -378,6 +378,19 @@ def potion_type_to_legacy(t: str, splash: bool) -> int:
 # ------------------------------------------------------------------ text helpers
 def json_text(s: str) -> str:
     return json.dumps({"text": s}, ensure_ascii=False)
+
+
+def sign_line_json(s) -> str:
+    """A sign line as the JSON text of Java 1.8 - 1.12: a line that already is JSON stays, plain text (what the older
+    games and the Console editions store) becomes {"text": ...}."""
+    s = "" if s is None else str(s)
+    if s.startswith(("{", "[", '"')):
+        try:
+            json.loads(s)
+            return s
+        except ValueError:
+            pass
+    return json_text(s)
 
 
 def plain_text(s) -> str:
@@ -819,6 +832,9 @@ def to_bedrock(it: Item, version: Tuple[int, ...]) -> Optional[nbt.CompoundTag]:
                 dmg = aux
         else:
             bname = "minecraft:" + bedrock_item_name(name, version)
+    if not newcontent.bedrock_item_exists(bname, version):    # an item this Bedrock version lacks: dropped, counted
+        newcontent.item_dropped()
+        return None
     out = nbt.CompoundTag({"Name": nbt.StringTag(bname), "Count": nbt.ByteTag(max(1, min(127, int(it.get("count", 1))))),
                            "Damage": nbt.ShortTag(dmg), "WasPickedUp": nbt.ByteTag(0)})
     if it.get("slot") is not None:

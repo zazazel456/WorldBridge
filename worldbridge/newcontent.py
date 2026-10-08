@@ -10,9 +10,13 @@ silent drop by the game, a wrong one would destroy valid content.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import functools
+from collections import Counter
 from typing import Dict, Iterable, Optional, Tuple
 
+from .bedrock_item_since import ITEMS_SINCE as _BEDROCK_ITEMS_SINCE
 from .i18n import tr
 
 Version = Tuple[int, ...]
@@ -112,6 +116,13 @@ JAVA_ITEM_SINCE = _since({
 })
 
 
+# Bedrock release that added each item (a block's own item too), from the item lists of pmmp/BedrockData (see
+# bedrock_item_since.py).  Only what came after bedrock-1.11.0, the oldest tag with a list: an older item, and a
+# name the table does not know, exist everywhere.  The names are the ones the current game uses; an older target
+# gets the stack written with its own names (items.to_bedrock: appleEnchanted, planks...), checked under those.
+BEDROCK_ITEM_SINCE = _since(_BEDROCK_ITEMS_SINCE)
+
+
 def _entity_since(table: Dict[str, Version], name: str) -> Optional[Version]:
     return table.get(name.split(":", 1)[-1])
 
@@ -129,6 +140,31 @@ def bedrock_entity_rename(name: str, version: Version) -> Optional[Tuple[str, Tu
     return None
 
 
+# Bedrock release that added each attribute (the string table of the dedicated servers 1.6 - 1.26): a game that
+# lacks one logs "Cannot find attribute minecraft:lava_movement" for every actor / player that carries it.
+BEDROCK_ATTRIBUTE_SINCE = _since({(1, 16, 0): ["lava_movement"]})
+
+
+def bedrock_attribute_exists(name: str, version: Version) -> bool:
+    v = BEDROCK_ATTRIBUTE_SINCE.get(name.split(":", 1)[-1])
+    return v is None or tuple(version) >= v
+
+
+def filter_attributes(e, version: Version) -> int:
+    """Removes from the ``Attributes`` list of the Bedrock actor / player ``e`` the attributes ``version`` lacks.
+    Returns how many were removed."""
+    from . import nbt
+
+    attrs = nbt.get_tag(e, "Attributes")
+    if attrs is None:
+        return 0
+    keep = [a for a in attrs if bedrock_attribute_exists(str(nbt.get(a, "Name", "") or ""), version)]
+    if len(keep) == len(attrs):
+        return 0
+    e["Attributes"] = nbt.ListTag(keep, 10)
+    return len(attrs) - len(keep)
+
+
 def downgrade_actor(e, version: Version) -> Optional[str]:
     """Rewrites the identifier (and the definitions) of the Bedrock actor ``e`` for ``version`` in place.  Returns
     "renamed", "removed" (``version`` lacks the mob: the caller drops it) or None (unchanged)."""
@@ -137,6 +173,7 @@ def downgrade_actor(e, version: Version) -> Optional[str]:
     ident = str(nbt.get(e, "identifier", "") or "")
     if not ident:
         return None
+    filter_attributes(e, version)
     r = bedrock_entity_rename(ident, version)
     if r is not None:
         old = ident.split(":", 1)[-1]
@@ -156,6 +193,19 @@ def downgrade_actor(e, version: Version) -> Optional[str]:
 def bedrock_entity_exists(name: str, version: Version) -> bool:
     v = _entity_since(BEDROCK_ENTITY_SINCE, name)
     return v is None or tuple(version) >= v
+
+
+def bedrock_item_exists(name: str, version: Version) -> bool:
+    """Whether Bedrock ``version`` has the item ``name`` (as that version names it, with or without
+    ``minecraft:``).  A spawn egg follows its mob; a name the tables do not know exists."""
+    n = name.split(":", 1)[-1]
+    version = tuple(version)
+    if n.endswith("_spawn_egg"):
+        mob = n[:-10]
+        since = _entity_since(BEDROCK_ENTITY_SINCE, mob) or _entity_since(BEDROCK_ENTITY_SINCE, mob.replace("_", ""))
+        return since is None or version >= since
+    since = BEDROCK_ITEM_SINCE.get(n)
+    return since is None or version >= since
 
 
 @functools.lru_cache(maxsize=None)
@@ -204,19 +254,56 @@ class Tally:
         self.items = 0
         self.entities = 0
         self.tiles = 0
+        self.tile_ids: Counter = Counter()  # which block entities (per id) went, as far as known: unknown ids, kinds the target lacks
         self.renamed = 0                  # mobs the older game holds under another identifier (villager_v2...)
 
     def __bool__(self) -> bool:
         return bool(self.items or self.entities or self.tiles or self.renamed)
+
+    def lose_tile(self, ident: str, n: int = 1) -> None:
+        """A block entity the target cannot hold (or does not know) was left out: counted, per id."""
+        self.tiles += n
+        self.tile_ids[ident or "?"] += n
 
     def warn(self, progress, label: str) -> None:
         if self.items or self.entities or self.tiles:
             progress.warn(tr("Content that does not exist in {version}: removed {items} items, {entities} "
                              "entities and {tiles} block entities.", version=label, items=self.items,
                              entities=self.entities, tiles=self.tiles))
+        if self.tile_ids:
+            progress.warn(tr("Block entities left out of {version}: {names}.", version=label, names=tile_names(self.tile_ids)))
         if self.renamed:
             progress.warn(tr("{n} entities were renamed to the identifiers of {version} (villagers, trader llamas).",
                              n=self.renamed, version=label))
+
+
+_ITEM_TALLY: contextvars.ContextVar = contextvars.ContextVar("worldbridge_item_tally", default=None)
+
+
+@contextlib.contextmanager
+def counting(tally: Optional[Tally]):
+    """Inside the block an item stack that ``items.to_bedrock`` drops because the Bedrock target lacks the item is
+    added to ``tally`` (the writers of block entities, mobs and players deep down do not carry the Tally)."""
+    token = _ITEM_TALLY.set(tally)
+    try:
+        yield tally
+    finally:
+        _ITEM_TALLY.reset(token)
+
+
+def item_dropped(n: int = 1) -> None:
+    t = _ITEM_TALLY.get()
+    if t is not None:
+        t.items += n
+
+
+def tile_names(counts, top: int = 8) -> str:
+    """"chest ×3, structure_block ×1, ... and 2 more": the block entities left out, the commonest first."""
+    common = counts.most_common()
+    text = ", ".join(f"{k} ×{v}" for k, v in common[:top])
+    if len(common) > top:
+        text += tr(" and {n} more kinds", n=len(common) - top)
+    return text
 
 
 def tally_of(progress) -> Tally:
