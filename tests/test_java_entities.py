@@ -116,6 +116,63 @@ def test_bedrock_actors_carry_variants_saddles_and_professions():
     assert legacy["PreferredProfession"].py_data == "librarian"
 
 
+# the component groups of the vanilla villager_v2.json behaviour pack (Bedrock 1.11 - 1.26)
+_VILLAGER_V2_GROUPS = {
+    "baby", "adult", "unskilled", "farmer", "fisherman", "shepherd", "fletcher", "librarian", "cartographer", "cleric",
+    "armorer", "weaponsmith", "toolsmith", "butcher", "leatherworker", "mason", "nitwit", "behavior_peasant",
+    "behavior_non_peasant", "basic_schedule", "child_schedule", "jobless_schedule", "desert_villager",
+    "jungle_villager", "savanna_villager", "snow_villager", "swamp_villager", "taiga_villager"}
+
+
+def _villager(profession="none", level=1, biome="plains", **extra):
+    S, I = nbt.StringTag, nbt.IntTag
+    return _to_bedrock("villager", VillagerData=nbt.CompoundTag({
+        "profession": S("minecraft:" + profession), "level": I(level), "type": S("minecraft:" + biome)}), **extra)
+
+
+def test_villager_definitions_are_groups_of_the_vanilla_villager_v2():
+    """There is no "villager_v2_adult": adult / baby, the profession, its behaviour and schedule and the biome skin
+    are the (not namespaced) component groups of villager_v2.json."""
+    I = nbt.IntTag
+    # a farmer from a desert village
+    v = _villager("farmer", 3, "desert")
+    d = _defs(v)
+    assert d == {"+minecraft:villager_v2", "+adult", "+farmer", "+behavior_peasant", "+basic_schedule",
+                 "+desert_villager"}
+    assert v["Variant"].py_data == 1 and v["MarkVariant"].py_data == 1 and v["PreferredProfession"].py_data == "farmer"
+    assert v["TradeTier"].py_data == 2
+    # a mason is not a peasant; plains has no biome group
+    m = _villager("mason")
+    assert _defs(m) == {"+minecraft:villager_v2", "+adult", "+mason", "+behavior_non_peasant", "+basic_schedule"}
+    assert m["Variant"].py_data == 13 and m["MarkVariant"].py_data == 0
+    # nitwit: jobless; no profession: unskilled
+    assert _defs(_villager("nitwit")) >= {"+nitwit", "+behavior_peasant", "+jobless_schedule", "+adult"}
+    u = _villager("none", biome="taiga")
+    assert _defs(u) == {"+minecraft:villager_v2", "+adult", "+unskilled", "+behavior_peasant", "+basic_schedule",
+                        "+taiga_villager"}
+    assert u["Variant"].py_data == 0 and u["MarkVariant"].py_data == 6 and "PreferredProfession" not in u
+    # a child
+    baby = _villager("none", Age=I(-24000))
+    assert _defs(baby) == {"+minecraft:villager_v2", "+baby", "+unskilled", "+child_schedule"}
+    assert baby["IsBaby"].py_data == 1
+    # an old Java villager (Profession / Career numbers) and one with no data at all
+    assert "+librarian" in _defs(_to_bedrock("villager", Profession=I(1)))
+    assert "+adult" in _defs(_to_bedrock("villager")) and "+unskilled" in _defs(_to_bedrock("villager"))
+    for t in (v, m, u, baby, _to_bedrock("villager")):
+        names = {x.removeprefix("+") for x in _defs(t)} - {"minecraft:villager_v2"}
+        assert names <= _VILLAGER_V2_GROUPS, names - _VILLAGER_V2_GROUPS
+        assert not any("villager_v2_" in x for x in _defs(t))
+    # a Bedrock without villager_v2 (before 1.11): the old villager, no v2 group
+    old = _to_bedrock("villager", version=(1, 10, 0), VillagerData=nbt.CompoundTag({
+        "profession": nbt.StringTag("minecraft:farmer"), "level": I(1), "type": nbt.StringTag("minecraft:plains")}))
+    assert str(old["identifier"].py_data) == "minecraft:villager"
+    # the biome comes back
+    from worldbridge import entities
+
+    out = entities.to_java_modern(entities.from_bedrock(v), 2724)
+    assert out["VillagerData"]["type"].py_data == "minecraft:desert" and out["VillagerData"]["profession"].py_data == "minecraft:farmer"
+
+
 def test_bedrock_variants_read_back_as_java():
     from worldbridge import entities
 

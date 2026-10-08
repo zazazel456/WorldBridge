@@ -85,6 +85,7 @@ def test_switching_world_cancels_the_copy_and_removes_the_partial_folder(app, tm
     try:
         t.set_source(a)
         assert _wait(app, lambda: t._meta is not None)
+        _loaded(app, t)                                        # the map has finished: no loader event can come later
         t._save_trimmed({0: {(0, 0)}})
         assert _wait(app, lambda: started.is_set())
         assert t.busy() and t.cancel_btn.isVisibleTo(t) and not t.trim_btn.isEnabled()
@@ -122,12 +123,16 @@ def test_the_cancel_button_stops_the_copy_without_an_error_box(app, tmp_path, mo
     try:
         t.set_source(_java_world(tmp_path, "a"))
         assert _wait(app, lambda: t._meta is not None)
+        _loaded(app, t)                                        # the map has finished: no loader event can come later
         t._save_trimmed({0: {(0, 0)}})
         assert _wait(app, lambda: started.is_set())
+        assert _wait(app, lambda: t.cancel_btn.isVisibleTo(t) and t.cancel_btn.isEnabled())
         t.cancel_btn.click()
         assert _wait(app, lambda: not t.busy())
+        # the status is set by the same call that ends the job; the map was fully loaded before the copy
+        # started (_loaded above), so no loader signal can overwrite it
+        assert _wait(app, lambda: t.status.text() == "Operation cancelled.")
         assert os.listdir(dest) == [] and boxes == []
-        assert t.status.text() == "Operation cancelled."
         assert t.trim_btn.isEnabled()
     finally:
         _close_map_tab(app, t)
@@ -142,6 +147,7 @@ def test_a_second_edit_is_refused_and_the_world_is_not_switched_during_an_edit(a
     try:
         t.set_source(a)
         assert _wait(app, lambda: t._meta is not None)
+        _loaded(app, t)                                        # the map has finished: no loader event can come later
         shown = []
         monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a_, **k: shown.append(a_[2])))
         first, second = _SlowEdit(release), _SlowEdit(release)
@@ -169,6 +175,7 @@ def test_closing_cancels_the_edit_and_waits_for_it(app, tmp_path):
     try:
         t.set_source(_java_world(tmp_path, "a"))
         assert _wait(app, lambda: t._meta is not None)
+        _loaded(app, t)                                        # the map has finished: no loader event can come later
         ed = _SlowEdit(release)
         shown = []
         assert t._run_worker(ed, lambda r: shown.append(r), lambda m: shown.append(m))
@@ -187,6 +194,7 @@ def test_the_map_edits_are_disabled_during_a_conversion(app, tmp_path):
     try:
         t.set_source(_java_world(tmp_path, "a"))
         assert _wait(app, lambda: t._meta is not None)
+        _loaded(app, t)                                        # the map has finished: no loader event can come later
         assert t.trim_btn.isEnabled() and all(b.isEnabled() for b in t._edit_buttons)
         t.set_conversion_running(True)
         assert not t.trim_btn.isEnabled() and all(not b.isEnabled() for b in t._edit_buttons)
@@ -247,9 +255,11 @@ def test_the_signals_of_the_previous_worlds_loader_are_ignored(app, tmp_path):
         t.set_source(a)
         old = t._loader
         assert _wait(app, lambda: t._meta is not None)
+        _loaded(app, t)                                        # the map has finished: no loader event can come later
         t.set_source(b)
         assert t._loader is not old
         assert _wait(app, lambda: t._meta is not None)
+        _loaded(app, t)                                        # the map has finished: no loader event can come later
         meta = t._meta
         old.meta.emit({"dims": [7], "spawn": (0, 0, 0), "players": [], "counts": {7: 1}, "description": "STALE",
                        "kind": "x"})
@@ -343,9 +353,9 @@ def test_csv_import_selects_only_existing_chunks_and_reports_the_rest(app, tmp_p
     try:
         t.set_source(_java_world(tmp_path, "a"))
         assert _wait(app, lambda: t._meta is not None)
+        _loaded(app, t)                                        # the map has finished: no loader event can come later
         csv = tmp_path / "sel.csv"
         monkeypatch.setattr(QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (str(csv), "")))
-        _loaded(app, t)
         have = sorted(t.canvas.present[0])
         assert have
         loaded = set(t._loaded_dims)

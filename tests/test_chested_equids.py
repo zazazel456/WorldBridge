@@ -158,10 +158,10 @@ def _actor(ident, defs=()):
 
 
 def test_raw_actors_are_renamed_not_dropped_for_an_older_bedrock():
-    v = _actor("villager_v2", ["+minecraft:villager_v2", "+minecraft:villager_v2_adult"])
+    v = _actor("villager_v2", ["+minecraft:villager_v2", "+adult"])
     assert newcontent.downgrade_actor(v, (1, 10, 0)) == "renamed"
     assert str(v["identifier"].py_data) == "minecraft:villager"
-    assert [str(d.py_data) for d in v["definitions"]] == ["+minecraft:villager", "+minecraft:villager_adult"]
+    assert [str(d.py_data) for d in v["definitions"]] == ["+minecraft:villager", "+adult"]
     z = _actor("zombie_villager_v2")
     assert newcontent.downgrade_actor(z, (1, 10, 0)) == "renamed" and str(z["identifier"].py_data) == "minecraft:zombie_villager"
     keep = _actor("villager_v2")
