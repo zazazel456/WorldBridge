@@ -351,12 +351,36 @@ def trimmed_copy(src: str, out: str, keep: Dict[int, Set[Chunk]], progress: Opti
     """A trimmed copy of a Java world (the source is never modified).  Returns the chunks removed."""
     progress = progress or Progress()
     check_output(src, out)
-    progress.stage(tr("Copying the world"), 0.0, 0.4)
-    copy_tree(src, out, progress, ignore=shutil.ignore_patterns("session.lock"))
-    progress.stage(tr("Removing the unused chunks"), 0.4, 1.0)
-    n = prune_java_raw(out, keep, progress)
-    progress.done()
+    existed = os.path.isdir(out)                  # check_output: then it is empty
+    try:
+        progress.stage(tr("Copying the world"), 0.0, 0.4)
+        copy_tree(src, out, progress, ignore=shutil.ignore_patterns("session.lock"))
+        progress.stage(tr("Removing the unused chunks"), 0.4, 1.0)
+        n = prune_java_raw(out, keep, progress)
+        progress.done()
+    except BaseException:                         # cancelled or failed: no half-made world left behind
+        discard_partial(out, existed)
+        raise
     return n
+
+
+def discard_partial(out: str, existed: bool) -> None:
+    """Removes what an interrupted copy wrote into ``out``: the folder itself when the copy created it, only
+    its (empty before the copy) contents when it already existed.  Never touches anything else."""
+    try:
+        if os.path.islink(out) or not os.path.isdir(out):
+            return
+        if not existed:
+            shutil.rmtree(out, ignore_errors=True)
+            return
+        for name in os.listdir(out):
+            p = os.path.join(out, name)
+            if os.path.isdir(p) and not os.path.islink(p):
+                shutil.rmtree(p, ignore_errors=True)
+            else:
+                os.remove(p)
+    except OSError:
+        pass
 
 
 def folder_size(path: str) -> int:

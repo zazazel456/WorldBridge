@@ -334,16 +334,24 @@ class MapCanvas(QWidget):
         for cx, cz in chunks:
             self._sel_img.pop((self.dim, cx >> 5, cz >> 5), None)
 
-    def set_chunks(self, chunks, on: bool, dim: Optional[int] = None):
+    def set_chunks(self, chunks, on: bool, dim: Optional[int] = None) -> int:
+        """Selects (``on``) or deselects chunks.  Only chunks present in the dimension can be selected (what is
+        not there, or not drawn yet, cannot be): returns how many of the given chunks were left out."""
         s = self.selected(dim)
         chunks = list(chunks)
+        skipped = 0
         if on:
+            pres = self.present.get(self.dim if dim is None else dim, ())
+            ok = [c for c in chunks if c in pres]
+            skipped = len(chunks) - len(ok)
+            chunks = ok
             s.update(chunks)
         else:
             s.difference_update(chunks)
         self._mark_dirty(chunks)
         self.selection_changed.emit()
         self.update()
+        return skipped
 
     def select_all(self):
         self.set_chunks(self.present.get(self.dim, set()), True)
@@ -557,7 +565,7 @@ class MapCanvas(QWidget):
                     rx, rz = cx >> 5, cz >> 5
                     pres = self.present.get(self.dim, set())
                     region = [(rx * 32 + x, rz * 32 + z) for x in range(32) for z in range(32)]
-                    self.set_chunks([c for c in region if c in pres] if pres else region, not remove)
+                    self.set_chunks([c for c in region if c in pres], not remove)   # no chunks present: nothing
                 else:
                     on = not remove and (cx, cz) not in self.selected()
                     self.set_chunks([(cx, cz)], on)
@@ -645,17 +653,25 @@ class MapTab(QWidget):
         self.hover_label = HintLabel(" ", wrap=False)
         self.hover_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.status = QLabel(tr("No world open."))
+        self.cancel_btn = QPushButton(tr("Cancel"))
+        self.cancel_btn.setToolTip(tr("Stops the operation running on the world"))
+        self.cancel_btn.clicked.connect(self._cancel_job)
+        self.cancel_btn.hide()
         foot.addWidget(self.hover_label, 1)
         foot.addWidget(self.status)
+        foot.addWidget(self.cancel_btn)
         v.addLayout(foot)
         self._world_game = ("", None)
         self.painted: Dict[int, Dict[Chunk, int]] = {}
         self.set_target_game("java", None)
         self._trim_scan = None
         self._trim_active = False
-        self._trim_thread = None
-        self._job = None                 # the background worker running (trim scan, copy or edit), if any
+        self._workers: List[Tuple[QThread, object]] = []   # every worker thread not finished yet
+        self._active: List[object] = []  # the workers whose answer has not arrived (trim scan, copy or edit)
         self._gen = 0                    # counts the worlds opened: a worker's late answer is for an old one
+        self._paused = False             # a conversion is running: the preview waits
+        self._conversion = False         # ... and nothing may touch the world
+        self._closing = False
         self._syncing = False
         self._pending = None
         self._keep_view = False
@@ -994,11 +1010,25 @@ class MapTab(QWidget):
 
 
     # ---------------------------------------------------------- loading
-    def set_source(self, path: str):
+    @property
+    def path(self) -> str:
+        return self._path
+
+    def can_switch(self, path: str = "") -> bool:
+        """False while an edit rewrites the open world: it cannot be interrupted halfway (a region file
+        would be left half rewritten), so the map stays on that world until it ends."""
+        return path == self._path or not any(not getattr(w, "interruptible", True) for w in self._active)
+
+    def set_source(self, path: str) -> bool:
+        """Shows another world; False (nothing changed) while an edit of the current one runs.  A running
+        scan or copy is cancelled and waited for (a copy removes its partial folder)."""
         if path == self._path:
-            return
+            return True
+        if not self.can_switch(path):
+            self.status.setText(tr("The world is being edited: wait for the edit to finish."))
+            return False
         self._shutdown()
-        self._drop_job()
+        self._stop_workers(cancel_edits=False, wait_ms=self.STOP_WAIT_MS)
         self._gen += 1
         self._path = path
         self._meta = None
@@ -1019,24 +1049,26 @@ class MapTab(QWidget):
         self.move_sel.setChecked(False)
         self._trim_scan = None
         self._trim_active = False
-        self.trim_btn.setEnabled(bool(path))
+        self._refresh_busy()
         self._set_world_game(path)
         if not path:
             self.status.setText(tr("No world loaded."))
-            return
+            return True
         self.status.setText(tr("Opening the world…"))
         self._thread = QThread(self)
-        self._loader = MapLoader(path)
+        loader = self._loader = MapLoader(path)
+        loader.paused = self._paused
         self._bridge = _Bridge()
-        self._loader.moveToThread(self._thread)
-        self._bridge.open.connect(self._loader.open)
-        self._bridge.render.connect(self._loader.render)
-        self._bridge.close.connect(self._loader.close)
-        self._loader.meta.connect(self._on_meta)
-        self._loader.batch.connect(self._on_batch)
-        self._loader.progress.connect(self._on_progress)
-        self._loader.failed.connect(self._gui.wrap(lambda m: self.status.setText(tr("Map not available: {error}", error=m))))
-        self._loader.dim_done.connect(self._on_dim_done)
+        loader.moveToThread(self._thread)
+        self._bridge.open.connect(loader.open)
+        self._bridge.render.connect(loader.render)
+        self._bridge.close.connect(loader.close)
+        # the answers of a loader that is no longer the current one (another world was opened) are dropped
+        loader.meta.connect(self._for(loader, self._on_meta))
+        loader.batch.connect(self._for(loader, self._on_batch))
+        loader.progress.connect(self._for(loader, self._on_progress))
+        loader.failed.connect(self._for(loader, lambda m: self.status.setText(tr("Map not available: {error}", error=m))))
+        loader.dim_done.connect(self._for(loader, self._on_dim_done))
         self._thread.start()
         self._bridge.open.emit()
         if self._focus_timer is None:
@@ -1045,6 +1077,11 @@ class MapTab(QWidget):
             self._focus_timer = QTimer(self)
             self._focus_timer.timeout.connect(self._push_focus)
             self._focus_timer.start(300)
+        return True
+
+    def _for(self, loader, fn):
+        """``fn`` as a slot (run in the interface's thread) that ignores the signals of any other loader."""
+        return self._gui.wrap(lambda *a: fn(*a) if loader is self._loader and not self._closing else None)
 
     def _push_focus(self):
         """The loader draws first what is on screen (it reads this from its thread)."""
@@ -1052,8 +1089,16 @@ class MapTab(QWidget):
             c = self.canvas.center
             self._loader.focus[self.canvas.dim] = (int(math.floor(c.x())) >> 4, int(math.floor(c.y())) >> 4)
 
+    def set_conversion_running(self, on: bool) -> None:
+        """A conversion is running: the preview waits and the world cannot be edited, trimmed or copied."""
+        self._conversion = on
+        self.pause_preview(on)
+        self._refresh_busy()
+
     def pause_preview(self, on: bool) -> None:
-        """A conversion is running: the preview stops reading the world, and goes on afterwards."""
+        """A conversion is running: the preview stops reading the world, and goes on afterwards (also the
+        loader of a world opened meanwhile)."""
+        self._paused = on
         if self._loader is not None:
             self._loader.paused = on
         if on and self._loader is not None and self._meta is not None:
@@ -1082,6 +1127,8 @@ class MapTab(QWidget):
         self._set_spawn_boxes(sp)
         self.canvas.center_on(sp[0], sp[2])
         self.status.setText(meta["description"])
+        if self._paused:
+            self.status.setText(tr("Preview paused during the conversion"))
         self.players_loaded.emit(meta["players"])
         self.meta_loaded.emit(meta)
         self._apply_pending()
@@ -1129,13 +1176,12 @@ class MapTab(QWidget):
         self._thread = self._loader = self._bridge = None
 
     def shutdown(self):
+        """The window closes: every worker is cancelled and waited for.  An edit stops between two region
+        files (each is replaced atomically and the originals are in the backup folder), never inside one."""
+        self._closing = True
+        self._gen += 1                                   # no answer reaches the interface any more
         self._shutdown()
-        if self._trim_thread is not None:
-            th, worker = self._trim_thread
-            worker.prog.cancel()
-            th.quit()
-            th.wait(10000)
-            self._trim_thread = None
+        self._stop_workers(cancel_edits=True, wait_ms=10000, edit_wait_ms=120000)
 
     def showEvent(self, e):
         super().showEvent(e)
@@ -1164,10 +1210,29 @@ class MapTab(QWidget):
         f, _ = QFileDialog.getOpenFileName(self, tr("Import selection"), "", tr("MCA Selector selection") + " (*.csv);;" + tr("All files") + " (*)")
         if f:
             try:
-                self.canvas.set_chunks(load_csv(f), True)
-                self.scope_sel.setChecked(True)
+                self.import_chunks(load_csv(f))
             except Exception as ex:  # noqa: BLE001
                 self.status.setText(tr("Import failed: {error}", error=ex))
+
+    def import_chunks(self, chunks) -> Tuple[int, int]:
+        """Selects the chunks of an imported list that exist in the dimension shown; the others are only
+        counted and reported.  Returns (selected, left out).  Nothing is imported while the dimension is
+        still being read (the chunks that exist are not all known yet)."""
+        dim = self.canvas.dim
+        chunks = set(chunks)
+        if dim not in self._loaded_dims:
+            self.status.setText(tr("Import not possible yet: the map of this dimension is still loading."))
+            return 0, len(chunks)
+        before = len(self.canvas.selected(dim))
+        skipped = self.canvas.set_chunks(chunks, True, dim)
+        n = len(self.canvas.selected(dim)) - before
+        if n:
+            self.scope_sel.setChecked(True)
+        msg = tr("{n} chunks selected from the file", n=len(chunks) - skipped)
+        if skipped:
+            msg += " · " + tr("{n} left out (they do not exist in this world)", n=skipped)
+        self.status.setText(msg)
+        return len(chunks) - skipped, skipped
 
     def _export(self):
         from ..selection import save_csv
@@ -1195,49 +1260,85 @@ class MapTab(QWidget):
         self.summary_changed.emit()
 
     # ---------------------------------------------------------- world trim
-    def _run_worker(self, worker, on_done, on_failed):
-        """Runs ``worker`` in its own thread. Its answer is dropped when another world was opened meanwhile."""
+    STOP_WAIT_MS = 5000      # how long a world switch waits for a cancelled scan or copy
+
+    def busy(self) -> bool:
+        """A scan, copy or edit of the world runs (or a conversion): no second one."""
+        return bool(self._active) or self._conversion
+
+    def jobs_running(self) -> bool:
+        return bool(self._active)
+
+    def _run_worker(self, worker, on_done, on_failed) -> bool:
+        """Runs ``worker`` in its own thread (False: not started, another job or a conversion runs).  Its
+        answer is dropped when another world was opened meanwhile."""
+        if self.busy() or self._closing:
+            return False
         th = QThread(self)
         worker.moveToThread(th)
         th.started.connect(worker.run)
         gen = self._gen
 
-        def answer(fn):
+        def answer(fn, failing=False):
             def call(*args):
-                if self._job is worker:
-                    self._job = None
-                    self._set_busy(False)
-                if gen == self._gen:                         # else: the answer is for the previous world
-                    fn(*args)
+                if worker in self._active:
+                    self._active.remove(worker)
+                    self._refresh_busy()
+                if gen != self._gen or self._closing:        # else: the answer is for the previous world
+                    return
+                if failing and worker.prog.cancelled:
+                    self.status.setText(tr("Operation cancelled."))
+                    return
+                fn(*args)
             return call
 
         worker.done.connect(self._gui.wrap(answer(on_done)))         # the callbacks show message boxes: interface thread
-        worker.failed.connect(self._gui.wrap(answer(on_failed)))
+        worker.failed.connect(self._gui.wrap(answer(on_failed, True)))
         worker.done.connect(th.quit)
         worker.failed.connect(th.quit)
         worker.progress.connect(self._gui.wrap(lambda f, m: self.status.setText(f"{m}  ({f * 100:.0f}%)")
                                                if gen == self._gen else None))
-        self._trim_thread = (th, worker)
-        self._job = worker
-        self._set_busy(True)
+        entry = (th, worker)
+        th.finished.connect(self._gui.wrap(lambda: self._workers.remove(entry) if entry in self._workers else None))
+        self._workers.append(entry)
+        self._active.append(worker)
+        self._refresh_busy()
         th.start()
+        return True
 
-    def _set_busy(self, on: bool) -> None:
-        """While a scan, copy or edit runs: no second one (two edits on the same files), no trim."""
+    def _refresh_busy(self) -> None:
+        """While a scan, copy or edit (or a conversion) runs: no second one (two edits on the same files), no trim."""
+        on = self.busy()
         for b in self._edit_buttons:
             b.setEnabled(not on)
         self.trim_btn.setEnabled(bool(self._path) and not on)
+        self.cancel_btn.setVisible(any(getattr(w, "interruptible", True) for w in self._active))
 
-    def _drop_job(self) -> None:
-        """The world changes: a running scan is cancelled and the answer of any worker will be ignored."""
-        job, self._job = self._job, None
-        if isinstance(job, ScanWorker):
-            job.prog.cancel()
-        self._set_busy(False)
+    def _cancel_job(self) -> None:
+        for w in self._active:
+            if getattr(w, "interruptible", True):
+                w.prog.cancel()
+        self.cancel_btn.setEnabled(False)
+
+    def _stop_workers(self, cancel_edits: bool, wait_ms: int, edit_wait_ms: int = 0) -> None:
+        """Cancels the workers (the edits only when ``cancel_edits``) and waits for their threads.  What a
+        cancelled copy wrote is removed by the worker itself before the thread ends."""
+        for th, w in list(self._workers):
+            if getattr(w, "interruptible", True) or cancel_edits:
+                w.prog.cancel()
+        for th, w in list(self._workers):
+            th.quit()
+            if th.wait(wait_ms if getattr(w, "interruptible", True) else edit_wait_ms or wait_ms):
+                if (th, w) in self._workers:
+                    self._workers.remove((th, w))
+        # whatever is still running no longer matters to the next world (a scan or a copy only reads the old one)
+        self._active = [w for w in self._active if not getattr(w, "interruptible", True) and not cancel_edits]
+        self.cancel_btn.setEnabled(True)
+        self._refresh_busy()
 
     def run_trim(self):
         """✂: reads InhabitedTime (once per world) and selects the chunks that stay."""
-        if not self._path or self._job is not None:
+        if not self._path or self.busy():
             return
         if self._trim_scan is not None:
             self._apply_trim(ask=True)
@@ -1348,7 +1449,8 @@ class MapTab(QWidget):
             self.status.setText(tr("Saving the trimmed world failed: {error}", error=msg))
             QMessageBox.critical(self, tr("World trim"), tr("Saving failed:") + f"\n\n{msg}")
 
-        self._run_worker(CopyWorker(root, out, keep), done, failed)
+        if not self._run_worker(CopyWorker(root, out, keep), done, failed):
+            self.status.setText(tr("Another operation on the world is running: wait for it to finish."))
 
     # ---------------------------------------------------------- spawn
     def _set_spawn_boxes(self, sp):
@@ -1500,7 +1602,8 @@ class MapTab(QWidget):
             QMessageBox.critical(self, tr("Edit the world"), tr("Edit failed:") + f"\n\n{msg}")
 
         self.status.setText(tr("Editing the world…"))
-        self._run_worker(worker, done, failed)
+        if not self._run_worker(worker, done, failed):
+            self.status.setText(tr("Another operation on the world is running: wait for it to finish."))
 
     def reload(self) -> None:
         """Reads the world again (after it was changed on disk)."""

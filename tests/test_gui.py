@@ -144,7 +144,7 @@ def test_target_spec(win):
         ("lce", "win64", "123", False, -20, "Nuovo")
     assert t.selection is None
     m = win.map_tab
-    m.canvas.selection = {0: {(0, 0), (1, 0)}}
+    m.canvas.selection = {0: {(0, 0), (-1, 0)}}
     m.scope_sel.setChecked(True)
     m.move_sel.setChecked(True)
     m.move_x.setValue(100)
@@ -152,7 +152,7 @@ def test_target_spec(win):
     m.sx.setValue(5)
     m.regen_end.setChecked(True)
     t = win._target()
-    assert t.selection.chunks == {0: {(0, 0), (1, 0)}} and t.selection.move_to == (100, 0)
+    assert t.selection.chunks == {0: {(0, 0), (-1, 0)}} and t.selection.move_to == (100, 0)
     assert t.selection.spawn == (5, m.sy.value(), m.sz.value()) and t.regen == (1,)
     # the conversion tab says it
     text = win.scope_label.text()
@@ -326,7 +326,9 @@ def test_language_switch_keeps_every_choice(win, app, tmp_path):
     win.ring.setChecked(False)
     win.name_edit.setText("Renamed")
     m = win.map_tab
-    m.canvas.set_chunks([(0, 0), (1, 0)], True, 0)
+    m.ensure_rendered()
+    assert _wait(app, lambda: 0 in m._loaded_dims)          # only the chunks that exist can be selected
+    m.canvas.set_chunks([(0, 0), (-1, 0)], True, 0)
     m.scope_sel.setChecked(True)
     m.use_spawn.setChecked(True)
     m.sx.setValue(7)
@@ -344,7 +346,7 @@ def test_language_switch_keeps_every_choice(win, app, tmp_path):
         after = it._target()
         assert (after.family, after.java_mode, after.java_version_limit, after.ring, after.world_name, after.regen) == \
             (before.family, before.java_mode, before.java_version_limit, before.ring, before.world_name, before.regen)
-        assert after.selection.chunks == before.selection.chunks == {0: {(0, 0), (1, 0)}}
+        assert after.selection.chunks == before.selection.chunks == {0: {(0, 0), (-1, 0)}}
         assert after.selection.spawn[0] == 7
         assert it.tabs.currentWidget() is it.map_tab
         assert "Solo i chunk selezionati (2)" in it.scope_label.text()
@@ -475,6 +477,7 @@ def test_a_trim_scan_of_another_world_is_dropped(app, tmp_path, monkeypatch):
             self.done.emit(object())             # ignores the cancel: the worst case
 
     monkeypatch.setattr(mapwidget, "ScanWorker", SlowScan)
+    monkeypatch.setattr(mapwidget.MapTab, "STOP_WAIT_MS", 200)       # the fake scan ignores the cancel
     applied = []
     a, b = _java_world(tmp_path, "a"), _java_world(tmp_path, "b")
     t = _map_tab(app)

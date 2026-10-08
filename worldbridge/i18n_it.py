@@ -825,6 +825,22 @@ _SECTIONS = {
             'annullato',
     },
     'worldbridge/gui/mapwidget.py': {
+        'Cancel':
+            'Annulla',
+        'Stops the operation running on the world':
+            "Ferma l'operazione in corso sul mondo",
+        'The world is being edited: wait for the edit to finish.':
+            'Il mondo è in modifica: aspetta che la modifica finisca.',
+        'Another operation on the world is running: wait for it to finish.':
+            "Un'altra operazione sul mondo è in corso: aspetta che finisca.",
+        'Operation cancelled.':
+            'Operazione annullata.',
+        'Import not possible yet: the map of this dimension is still loading.':
+            'Importazione non ancora possibile: la mappa di questa dimensione è ancora in caricamento.',
+        '{n} chunks selected from the file':
+            '{n} chunk selezionati dal file',
+        '{n} left out (they do not exist in this world)':
+            '{n} esclusi (non esistono in questo mondo)',
         'In the converted world the selected chunks do not stay at their coordinates: the centre of the selection goes to the centre of the world (0, 0) or to the chosen coordinates. Useful for finite worlds (LCE, Pocket Edition) or to bring a build near the spawn.':
             'Nel mondo convertito i chunk selezionati non restano alle loro coordinate: il centro della selezione va al centro del mondo (0, 0) o alle coordinate scelte. Utile per i mondi finiti (LCE, Pocket Edition) o per portare una costruzione vicino allo spawn.',
         "A regenerated dimension is not converted: the game generates it anew, with its generator and the world's seed, the first time you enter it; the players who were there go back to the spawn.\nIf you convert it instead, WorldBridge writes a ring of the game's terrain (Java Alpha 1.2 – 1.17) around the converted part that joins it smoothly.":
@@ -1465,8 +1481,14 @@ _SECTIONS = {
             'I dettagli sono nel registro qui sotto.',
         'Language of the interface':
             "Lingua dell'interfaccia",
-        'The language can be changed when no conversion is running and the world management tab has no unsaved changes.':
-            "La lingua si può cambiare quando non c'è una conversione in corso e la scheda «Gestione mondo» non ha modifiche non salvate.",
+        'The language can be changed when no conversion or change to the world is running and the world management tab has no unsaved changes.':
+            "La lingua si può cambiare quando non c'è una conversione o una modifica del mondo in corso e la scheda «Gestione mondo» non ha modifiche non salvate.",
+        'A conversion is running: the world can be changed when it ends.':
+            'Una conversione è in corso: il mondo si può cambiare quando finisce.',
+        'The world is being edited: it can be changed when the edit ends.':
+            'Il mondo è in modifica: si può cambiare quando la modifica finisce.',
+        'A change to the source world (edit, trim or copy) is running: convert when it ends.':
+            'Una modifica del mondo di origine (modifica, trim o copia) è in corso: converti quando finisce.',
     },
 }
 
