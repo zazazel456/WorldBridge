@@ -438,3 +438,38 @@ def test_a_chunk_missing_from_tops_or_heights_is_unknown_not_an_error():
     no_tops.merge_observed({**fit.observed_state(), "tops": {}})
     no_tops.shifts(1, 1)
     no_tops.shift_at(24, 183.0, 24)
+
+
+def test_a_band_that_goes_through_blocks_is_counted():
+    """A floating island with a tall tower right on it and no air in the column: no s-high band of air exists, the
+    band goes through the piece and the blocks it takes are counted (never silently)."""
+    c = NumericChunk(0, 0, 256)
+    c.blocks[20:201, 3, 3] = 35                                             # island + tower, 181 blocks, no air
+    c.blocks[20:30, 9, 9] = 35                                              # a lower island of its own, fits as it is
+    fit = _fit({(0, 0): c})
+    assert fit.needed
+    out = fit.apply(c)
+    s = int(fit.shifts(0, 0)[3, 3])
+    assert s == 200 - 127
+    left = int((np.asarray(out.blocks[:, 3, 3]) != 0).sum())
+    assert left == 127                                                      # the column is brought under the ceiling
+    assert fit.lost_band_blocks == 181 - left == 54                         # the band (73 high) took the air under the island too
+    assert int((np.asarray(out.blocks[:, 9, 9]) != 0).sum()) == 10          # the other column keeps all of its blocks
+
+
+def test_a_band_of_air_costs_nothing():
+    c = NumericChunk(0, 0, 256)
+    c.blocks[20:30, 3, 3] = 35                                              # island
+    c.blocks[130:201, 3, 3] = 35                                            # a tower far above it: 100 blocks of air between
+    fit = _fit({(0, 0): c})
+    out = fit.apply(c)
+    assert int((np.asarray(out.blocks[:, 3, 3]) != 0).sum()) == 10 + 71
+    assert fit.lost_band_blocks == 0
+
+
+def test_the_band_loss_message_has_an_italian_text():
+    from worldbridge import i18n_it
+
+    msg = ("Mountain compression: {n} blocks (floating islands, builds) were inside the band removed to bring tall builds "
+           "under the ceiling and were lost.")
+    assert "{n}" in i18n_it.IT[msg]

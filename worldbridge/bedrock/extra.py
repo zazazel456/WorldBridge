@@ -438,11 +438,21 @@ def frame_block(version, facing: int, is_map: bool, glow: bool = False):
     return _frame_block(tuple(version)[:3], int(facing), bool(is_map), bool(glow))
 
 
+def _counted(fn):
+    """The items a method drops because the Bedrock target lacks them are counted in the conversion's Tally."""
+    @functools.wraps(fn)
+    def wrapper(self, *a, **k):
+        with newcontent.counting(self.tally):
+            return fn(self, *a, **k)
+    return wrapper
+
+
 class BedrockInjector:
     def __init__(self, out_dir: str, version, progress: Progress):
         self.db = _db(out_dir)
         self.version = tuple(version)
         self.progress = progress
+        self.tally = newcontent.tally_of(progress)
         self.ids = ent.ActorIds()
         _key, self.player_uid = self.ids.next()  # tamed animals belong to the world's player
         self.modern_actors = self.version >= (1, 18, 30)
@@ -452,6 +462,7 @@ class BedrockInjector:
         self.n_frames_lost = 0
         self.n_maps = 0
 
+    @_counted
     def put_chunk(self, dim: int, cx: int, cz: int, tile_canon: List[dict], ent_canon: List[dict]):
         prefix = chunk_prefix(cx, cz, dim)
         if tile_canon:
@@ -589,6 +600,7 @@ class BedrockInjector:
         except Exception as ex:  # noqa: BLE001
             self.progress.warn(tr("Height maps not recomputed: {error}", error=ex))
 
+    @_counted
     def put_player(self, player: nbt.CompoundTag, world_game_type: Optional[int] = None):
         p = legacy_player_to_bedrock(player, self.version, self.player_uid, world_game_type)
         self.db.put(b"~local_player", nbt.dump(p, "", little_endian=True))
@@ -786,24 +798,50 @@ def level_version(path: str) -> Optional[Tuple[int, ...]]:
 
 
 def retarget_stack(t, version):
-    """A Bedrock item stack written the way Bedrock ``version`` names / stores it (an empty slot stays)."""
+    """A Bedrock item stack written the way Bedrock ``version`` names / stores it (an empty slot stays).  None when
+    that version lacks the item (counted by items.to_bedrock in the Tally of the conversion)."""
     try:
         it = items.from_bedrock(t)
-        new = items.to_bedrock(it, tuple(version)) if it is not None else None
+        if it is None:
+            return t
+        return items.to_bedrock(it, tuple(version))
     except Exception:  # noqa: BLE001
         return t
-    return new if new is not None else t
 
 
-def retarget_items(tag: nbt.CompoundTag, version) -> None:
-    """The item stacks held by an actor / player / block entity (inventory, armour, hands, ``Item``...)."""
+def _empty_stack(t: nbt.CompoundTag) -> nbt.CompoundTag:
+    """The empty slot that replaces a stack the version lacks (it keeps the slot number)."""
+    e = nbt.CompoundTag({"Count": nbt.ByteTag(0), "Damage": nbt.ShortTag(0), "Name": nbt.StringTag(""),
+                         "WasPickedUp": nbt.ByteTag(0)})
+    if "Slot" in t:
+        e["Slot"] = t["Slot"]
+    return e
+
+
+def retarget_items(tag: nbt.CompoundTag, version) -> bool:
+    """The item stacks held by an actor / player / block entity (inventory, armour, hands, ``Item``...), for
+    ``version``; a stack it lacks becomes an empty slot.  Returns False when the single ``Item`` of the tag (an
+    item entity, a record) was one of those: there is nothing left to hold."""
+    ok = True
     for k in _ITEM_LISTS:
         lst = nbt.get_tag(tag, k)
         if isinstance(lst, nbt.ListTag):
-            tag[k] = nbt.ListTag([retarget_stack(x, version) if isinstance(x, nbt.CompoundTag) else x for x in lst], 10)
+            out = []
+            for x in lst:
+                if isinstance(x, nbt.CompoundTag):
+                    r = retarget_stack(x, version)
+                    x = _empty_stack(x) if r is None else r
+                out.append(x)
+            tag[k] = nbt.ListTag(out, 10)
     for k in ("Item", "RecordItem"):
         if isinstance(nbt.get_tag(tag, k), nbt.CompoundTag):
-            tag[k] = retarget_stack(tag[k], version)
+            r = retarget_stack(tag[k], version)
+            if r is None:
+                del tag[k]
+                ok = False
+            else:
+                tag[k] = r
+    return ok
 
 
 def _shift_pos(e: nbt.CompoundTag, dx: int, dz: int) -> None:
@@ -861,7 +899,9 @@ class _Downgrade:
                 continue
             if verdict == "renamed":
                 self.tally.renamed += 1
-            retarget_items(e, self.version)
+            if not retarget_items(e, self.version) and str(nbt.get(e, "identifier", "")).endswith(":item"):
+                self.tally.entities += 1                    # a dropped item whose item entity has nothing left
+                continue
             _shift_pos(e, dx, dz)
             keep.append(e)
         if canon:
@@ -929,6 +969,12 @@ def _delete_chunk_extras(db, tags) -> None:
 
 def copy_bedrock_extras(src: str, dst: str, progress: Progress, depth=None, move=None, version=None,
                         keep_state: bool = False):
+    with newcontent.counting(newcontent.tally_of(progress)):
+        return _copy_bedrock_extras(src, dst, progress, depth, move, version, keep_state)
+
+
+def _copy_bedrock_extras(src: str, dst: str, progress: Progress, depth=None, move=None, version=None,
+                         keep_state: bool = False):
     """Bedrock -> Bedrock: the block entities, actors, players, maps and every other record of the source that
     Amulet does not write, for the target ``version``.
 
