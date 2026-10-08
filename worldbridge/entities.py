@@ -8,7 +8,7 @@ import struct
 import uuid
 from typing import List, Optional
 
-from . import ids, items, nbt
+from . import ids, items, nbt, newcontent
 
 # canonical (java 1.13 style name) -> bedrock identifier when different
 TO_BEDROCK = {"zombified_piglin": "zombie_pigman", "zombie_pigman": "zombie_pigman", "iron_golem": "iron_golem",
@@ -355,6 +355,59 @@ def _read_java_specific(c: dict, e: nbt.CompoundTag, src: str):
         if key in e:
             c["items"] = [it for it in (reader(t) for t in e[key]) if it]
     _read_java_equipment(c, e, reader)
+    if c["name"] in EQUIDS:
+        _read_java_chest(c, e, src)
+
+
+# Canonical chest of donkeys, mules and llamas: c["chested"] (the animal carries a chest) and c["chest"], the
+# stacks of the chest with ``slot`` = 0-based position in the chest (0 .. 14).  Java keeps them in "Items" with
+# the saddle / armour / carpet slots in front of them in the old inventory: slots 2 .. 16 before 24w05a (1.20.5,
+# data version 3809), 0 .. 14 after it.  Bedrock keeps the chest in ChestItems slots 1 .. 15 (slot 0: the saddle
+# of a donkey / mule, the carpet of a llama).
+CHESTED = ("donkey", "mule", "llama", "trader_llama")
+CHEST_SLOTS = 15
+CHEST_DV = 3809                  # Java 24w05a (1.20.5): the chest starts at slot 0
+EQUIPMENT_COMPOUND_DV = 4325     # Java 1.21.5: "equipment" holds the saddle and the body armour
+DV_STAMP = "_wb_dv"              # DataVersion of the chunk an entity was read from (set by java.modern.iter_modern_extras)
+
+
+def _java_chest_new_layout(e: nbt.CompoundTag, src: str, slots) -> bool:
+    """Whether the chest of a Java entity starts at slot 0 (data version >= 3809); the version of its chunk when known,
+    else the keys of the entity (body_armor_item / equipment: new; ArmorItem / DecorItem: old), else the slots."""
+    if src == "legacy":
+        return False
+    dv = nbt.get(e, DV_STAMP)
+    if dv is not None:
+        return int(dv) >= CHEST_DV
+    if "equipment" in e or "body_armor_item" in e:
+        return True
+    if "ArmorItem" in e or "DecorItem" in e:
+        return False
+    if slots:
+        if max(slots) >= CHEST_SLOTS:
+            return False
+        if min(slots) < 2:
+            return True
+    return True
+
+
+def _read_java_chest(c: dict, e: nbt.CompoundTag, src: str) -> None:
+    its = c.pop("items", None) or []                   # an equid's "Items" are its inventory, not a container
+    if c["name"] not in CHESTED:
+        return
+    slots = [int(it["slot"]) for it in its if it.get("slot") is not None]
+    off = 0 if _java_chest_new_layout(e, src, slots) else 2
+    chest = []
+    for it in its:
+        if it.get("slot") is None:
+            continue
+        idx = int(it["slot"]) - off
+        if 0 <= idx < CHEST_SLOTS:
+            it["slot"] = idx
+            chest.append(it)
+    if nbt.get(e, "ChestedHorse") or chest:
+        c["chested"] = True
+        c["chest"] = sorted(chest, key=lambda it: it["slot"])
 
 
 # Canonical equipment: c["equip"] = {"hand": [main, off], "armor": [feet, legs, chest, head],
@@ -396,8 +449,10 @@ def _read_java_equipment(c: dict, e: nbt.CompoundTag, reader) -> None:
         c["equip"] = eq
 
 
-def _write_java_equipment(e: nbt.CompoundTag, c: dict, write) -> None:
-    """Equipment in the Java 1.9 - 1.20.4 layout (the game upgrades it); ``write``: item writer."""
+def _write_java_equipment(e: nbt.CompoundTag, c: dict, write, data_version: Optional[int] = None) -> None:
+    """Equipment in the Java 1.9 - 1.20.4 layout (the game upgrades it); ``write``: item writer.  The horse armour
+    / llama carpet and the saddle follow ``data_version`` where the layout changed: body_armor_item from 1.20.5
+    (3809), the "equipment" compound from 1.21.5 (4325)."""
     eq = c.get("equip")
     if not eq:
         return
@@ -413,14 +468,43 @@ def _write_java_equipment(e: nbt.CompoundTag, c: dict, write) -> None:
         e["HandItems"] = nbt.ListTag([stack(it) for it in eq["hand"]], 10)
         e["ArmorItems"] = nbt.ListTag([stack(it) for it in eq["armor"]], 10)
     if c["name"] in RIDEABLE or c["name"] in ("horse", "donkey", "mule", "skeleton_horse", "zombie_horse"):
-        if eq.get("saddle"):
-            saddle = stack(eq["saddle"])
-            if len(saddle):
-                e["SaddleItem"] = saddle
-        if eq.get("body"):
-            body = stack(eq["body"])
-            if len(body):
-                e["DecorItem" if c["name"] in ("llama", "trader_llama") else "ArmorItem"] = body
+        saddle = stack(eq["saddle"]) if eq.get("saddle") else None
+        body = stack(eq["body"]) if eq.get("body") else None
+        saddle = saddle if saddle is not None and len(saddle) else None
+        body = body if body is not None and len(body) else None
+        dv = data_version or 0
+        if dv >= EQUIPMENT_COMPOUND_DV:
+            if saddle is not None or body is not None:
+                new_eq = e["equipment"] if isinstance(nbt.get_tag(e, "equipment"), nbt.CompoundTag) else nbt.CompoundTag()
+                if saddle is not None:
+                    new_eq["saddle"] = saddle
+                if body is not None:
+                    new_eq["body"] = body
+                e["equipment"] = new_eq
+            return
+        if saddle is not None:
+            e["SaddleItem"] = saddle
+        if body is not None:
+            e["body_armor_item" if dv >= CHEST_DV else
+              "DecorItem" if c["name"] in ("llama", "trader_llama") else "ArmorItem"] = body
+
+
+def _write_java_chest(e: nbt.CompoundTag, c: dict, write, data_version: Optional[int]) -> None:
+    """ChestedHorse and the chest "Items" of a donkey / mule / llama in the layout of ``data_version`` (None: the
+    legacy one, slots 2 .. 16)."""
+    if c["name"] not in CHESTED or not c.get("chested"):
+        return
+    e["ChestedHorse"] = nbt.ByteTag(1)
+    off = 0 if data_version is not None and data_version >= CHEST_DV else 2
+    out = []
+    for it in c.get("chest") or []:
+        idx = it.get("slot")
+        t = write(it)
+        if t is None or idx is None or not 0 <= int(idx) < CHEST_SLOTS:
+            continue
+        t["Slot"] = nbt.ByteTag(int(idx) + off)
+        out.append(t)
+    e["Items"] = nbt.ListTag(out, 10)
 
 
 def from_java_modern(e: nbt.CompoundTag) -> Optional[dict]:
@@ -527,9 +611,28 @@ def write_bedrock_variants(e: nbt.CompoundTag, c: dict, bname: str, version) -> 
         body = eq.get("body")
         if saddled:
             e["Saddled"] = nbt.ByteTag(1)
-        if saddle or body:                       # the saddle is slot 0 of the animal's inventory, the armour / carpet slot 1
+        chested_kind = bname in CHESTED
+        chested = chested_kind and bool(c.get("chested"))
+        if chested_kind:
+            e["Chested"] = nbt.ByteTag(int(chested))
+            if chested:
+                key = "llama" if bname in ("llama", "trader_llama") else bname
+                defs.append(nbt.StringTag(f"-minecraft:{key}_unchested"))
+                defs.append(nbt.StringTag(f"+minecraft:{key}_chested"))
+        # slot 0 of the animal's inventory: the saddle (a llama wears a carpet there), slot 1 the horse armour,
+        # slots 1 .. 15 the chest of a donkey / mule / llama
+        first = body if bname in ("llama", "trader_llama") else saddle
+        second = None if chested_kind else body
+        chest = {}
+        if chested:
+            for it in c.get("chest") or []:
+                idx = it.get("slot")
+                if idx is not None and 0 <= int(idx) < CHEST_SLOTS:
+                    chest[int(idx) + 1] = it
+        if first or second or chest:
             slots = []
-            for i, it in enumerate((saddle, body)):
+            for i in range(CHEST_SLOTS + 1 if chested else 2):
+                it = first if i == 0 else second if i == 1 and not chested_kind else chest.get(i)
                 t = items.to_bedrock(it, tuple(version)) if it else None
                 if t is None:
                     t = _empty_slot(i)
@@ -571,16 +674,29 @@ def read_bedrock_variants(c: dict, e: nbt.CompoundTag, n: str, version=None) -> 
             extra["Saddle"] = nbt.ByteTag(1)
         return
     if n in EQUIDS:
-        chest = {}
+        slots = {}
         for i, t in enumerate(nbt.get_tag(e, "ChestItems") or []):
             if isinstance(t, nbt.CompoundTag) and str(nbt.get(t, "Name", "") or ""):
-                chest[int(nbt.get(t, "Slot", i))] = items.from_bedrock(t)
-        saddle, body = chest.get(0), chest.get(1)
-        if body is None:                         # horse armour is also kept in the Armor list
+                it = items.from_bedrock(t)
+                if it is not None:
+                    slots[int(nbt.get(t, "Slot", i))] = it
+        llama = n in ("llama", "trader_llama")
+        first, second = slots.get(0), slots.get(1)
+        saddle, body = (None, first) if llama else (first, None if n in CHESTED else second)
+        if body is None and not llama:               # horse armour is also kept in the Armor list
             for t in nbt.get_tag(e, "Armor") or []:
                 if isinstance(t, nbt.CompoundTag) and str(nbt.get(t, "Name", "") or "").endswith("horse_armor"):
                     body = items.from_bedrock(t)
-        if saddle is None and saddled:
+        if n in CHESTED:
+            chest = []
+            for s_, it in sorted(slots.items()):
+                if 1 <= s_ <= CHEST_SLOTS:
+                    it["slot"] = s_ - 1
+                    chest.append(it)
+            if nbt.get(e, "Chested") or chest:
+                c["chested"] = True
+                c["chest"] = chest
+        if saddle is None and saddled and not llama:
             saddle = items.Item(name="saddle", count=1, damage=0, slot=None)
         if saddle or body:
             eq = c.setdefault("equip", {"hand": [None, None], "armor": [None] * 4, "saddle": None, "body": None})
@@ -746,6 +862,7 @@ def to_legacy(c: dict, allowed: Optional[set] = None) -> Optional[nbt.CompoundTa
         e["Value"] = nbt.ShortTag(c.get("xp", 1))
     if c.get("items"):
         e["Items"] = nbt.ListTag([t for t in (items.to_legacy(it) for it in c["items"]) if t is not None], 10)
+    _write_java_chest(e, c, items.to_legacy, None)
     _write_java_equipment(e, c, items.to_legacy)
     return e
 
@@ -814,7 +931,8 @@ def to_java_modern(c: dict, data_version: int) -> Optional[nbt.CompoundTag]:
         e["Value"] = nbt.ShortTag(c.get("xp", 1))
     if c.get("items"):
         e["Items"] = nbt.ListTag([items.to_java_modern(it, data_version) for it in c["items"]], 10)
-    _write_java_equipment(e, c, lambda it: items.to_java_modern(it, data_version))
+    _write_java_chest(e, c, lambda it: items.to_java_modern(it, data_version), data_version)
+    _write_java_equipment(e, c, lambda it: items.to_java_modern(it, data_version), data_version)
     return e
 
 
@@ -842,12 +960,18 @@ def to_bedrock(c: dict, uid: int, owner_uid: Optional[int] = None, version=(1, 2
     bname = TO_BEDROCK.get(name, name)
     if bname is None:
         return None
+    renamed = newcontent.bedrock_entity_rename(bname, version)   # villager_v2 -> villager for Bedrock < 1.11...
+    if renamed is not None:
+        bname = renamed[0]
+    elif not newcontent.bedrock_entity_exists(bname, version):
+        return None                                           # a mob this Bedrock version does not have
     e = nbt.CompoundTag({"identifier": nbt.StringTag("minecraft:" + bname)})
     e["Pos"] = nbt.ListTag([nbt.FloatTag(v) for v in c["pos"]], 5)
     e["Rotation"] = nbt.ListTag([nbt.FloatTag(v) for v in c["rot"]], 5)
     e["Motion"] = nbt.ListTag([nbt.FloatTag(v) for v in c["motion"]], 5)
     e["UniqueID"] = nbt.LongTag(uid)
-    e["definitions"] = nbt.ListTag([nbt.StringTag("+minecraft:" + bname)], 8)
+    e["definitions"] = nbt.ListTag([nbt.StringTag("+minecraft:" + bname)] +
+                                   [nbt.StringTag(d) for d in (renamed[1] if renamed else ())], 8)
     e["Persistent"] = nbt.ByteTag(1)
     e["OnGround"] = nbt.ByteTag(1)
     e["Invulnerable"] = nbt.ByteTag(0)
@@ -902,7 +1026,7 @@ def to_bedrock(c: dict, uid: int, owner_uid: Optional[int] = None, version=(1, 2
         e["definitions"] = nbt.ListTag([], 8)
     if bname == "xp_orb":
         e["experience value"] = nbt.IntTag(c.get("xp", 1))
-    if c.get("items"):
+    if c.get("items") and bname not in EQUIDS:
         e["Items"] = nbt.ListTag([t for t in (items.to_bedrock(it, version) for it in c["items"]) if t is not None], 10)
     eq = c.get("equip")
     if eq and (any(eq["hand"]) or any(eq["armor"])):

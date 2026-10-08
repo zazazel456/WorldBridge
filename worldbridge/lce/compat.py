@@ -21,7 +21,8 @@ from typing import Callable, Dict, FrozenSet, Optional, Tuple
 import numpy as np
 
 from .. import blocks as blk
-from .. import nbt
+from .. import ids, nbt
+from .. import items as _items
 
 RECORDS = frozenset(range(2256, 2268))
 # Java item ids by the version that added them (above 431 all are 1.9+)
@@ -76,6 +77,7 @@ class Compat:
     entities: Optional[FrozenSet[str]] = None
     item_map: Dict[int, int] = field(default_factory=dict)
     ench_map: Dict[int, int] = field(default_factory=dict)
+    string_items: bool = False          # item ids as registry names ("minecraft:egg"), as the console saves have them
     dropped: Dict[str, int] = field(default_factory=dict)
 
     # ------------------------------------------------------------------ items
@@ -110,6 +112,8 @@ class Compat:
             self._drop(f"item {iid}")
             return None
         it["id"] = nbt.ShortTag(iid)
+        if self.string_items:
+            it = _items.named_item(it)          # after the filtering above, which works on the number
         tag = nbt.get_tag(it, "tag")
         if isinstance(tag, nbt.CompoundTag):
             for key in ("ench", "StoredEnchantments"):
@@ -215,9 +219,118 @@ def compat_for(profile_key: str, platform: str, blocks: Optional[FrozenSet[int]]
     if platform == "win64":            # neoLegacy, checked against its source
         return Compat(blocks, NEOLEGACY_ITEMS, NEOLEGACY_ENCH, NEOLEGACY_ENTITIES,
                       item_map={425: 176}, ench_map={61: 65, 62: 64})
-    items = {"tu31": _ITEMS_18, "tu46": _ITEMS_19}.get(profile_key, _ITEMS_112)
+    allowed = {"tu31": _ITEMS_18, "tu46": _ITEMS_19}.get(profile_key, _ITEMS_112)
     ench = {"tu31": _ENCH_18, "tu46": _ENCH_19}.get(profile_key, _ENCH_112)
-    return Compat(blocks, items, ench)
+    # the console saves (X360 TU31+, Wii U v112+, PS3 / PS4 / Vita) name their items; only the oldest ones
+    # (X360 TU12 / TU19, Wii U v1) and neoLegacy use numbers
+    return Compat(blocks, allowed, ench, string_items=True)
+
+
+# ============================================================ namespaced ids (TU54+)
+
+_HORSE_TYPES = {0: "Horse", 1: "Donkey", 2: "Mule", 3: "ZombieHorse", 4: "SkeletonHorse"}
+_ENDER_CHEST = "minecraft:ender_Chest"        # as the game itself spells it (capital C)
+
+
+def _modern_name(old: str, e: Optional[nbt.CompoundTag] = None) -> str:
+    """The registry name ("minecraft:..." of Java 1.11 - 1.12) of an entity of the pre-1.11 id ``old``;
+    the 1.11 splits (EntityHorseSplitFix, EntitySkeletonSplitFix, EntityZombieSplitFix, the elder
+    guardian) are read from the discriminator tags of ``e``, which are then removed."""
+    if e is not None:
+        if old == "EntityHorse":
+            old = _HORSE_TYPES.get(_i(nbt.get(e, "Type", 0)), "Horse")
+            e.pop("Type", None)
+        elif old == "Skeleton":
+            kind = _i(nbt.get(e, "SkeletonType", 0))
+            e.pop("SkeletonType", None)
+            old = {1: "WitherSkeleton", 2: "Stray"}.get(kind, old)
+        elif old == "Zombie":
+            ztype = _i(nbt.get(e, "ZombieType", 0))
+            villager = bool(nbt.get(e, "IsVillager", 0)) or 1 <= ztype <= 5
+            for k in ("ZombieType", "IsVillager"):
+                e.pop(k, None)
+            if ztype == 6:
+                old = "Husk"
+            elif villager:
+                old = "ZombieVillager"
+                if "Profession" not in e:      # the profession of the villager the zombie was
+                    prof = nbt.get(e, "VillagerProfession")
+                    e["Profession"] = nbt.IntTag(_i(prof) if prof is not None else max(0, ztype - 1))
+                e.pop("VillagerProfession", None)
+        elif old == "Guardian":
+            elder = bool(nbt.get(e, "Elder", 0))
+            e.pop("Elder", None)
+            if elder:
+                old = "ElderGuardian"
+    new = ids.ENTITY_OLD_TO_NEW.get(old)
+    return "minecraft:" + new if new else old
+
+
+def modern_entity(e: nbt.CompoundTag) -> nbt.CompoundTag:
+    """The entity (in place) with the namespaced id of the TU54+ games; what rides it too."""
+    old = nbt.get(e, "id", "")
+    if isinstance(old, str) and old and ":" not in old:
+        e["id"] = nbt.StringTag(_modern_name(old, e))
+    for key in ("Riding",):
+        r = nbt.get_tag(e, key)
+        if isinstance(r, nbt.CompoundTag):
+            modern_entity(r)
+    for r in nbt.get_tag(e, "Passengers") or []:
+        if isinstance(r, nbt.CompoundTag):
+            modern_entity(r)
+    _modern_spawner(e)
+    return e
+
+
+def _spawn_name(eid) -> Optional[str]:
+    """The namespaced name of the mob a spawner spawns (``eid``: any id scheme)."""
+    old, extra = ids.entity_to_old(str(eid or ""))
+    if old is None:
+        return None
+    probe = nbt.CompoundTag({"id": nbt.StringTag(old)})
+    for k, v in extra.items():
+        probe[k] = nbt.IntTag(v)
+    return _modern_name(old, probe)
+
+
+def _modern_spawner(t: nbt.CompoundTag) -> None:
+    """A spawner (block entity or minecart) in the layout the TU54+ games write: the mob in SpawnData
+    and SpawnPotentials (no ``EntityId``)."""
+    eid = nbt.get(t, "EntityId")
+    sd = nbt.get_tag(t, "SpawnData")
+    pots = nbt.get_tag(t, "SpawnPotentials")
+    if eid is None and sd is None and pots is None:
+        return
+    name = _spawn_name(eid) if isinstance(eid, str) and eid else None
+    if isinstance(sd, nbt.CompoundTag) and "id" in sd:
+        name = _spawn_name(nbt.get(sd, "id")) or name
+    name = name or "minecraft:pig"
+    t.pop("EntityId", None)
+    if not isinstance(sd, nbt.CompoundTag):
+        sd = nbt.CompoundTag()
+        t["SpawnData"] = sd
+    sd["id"] = nbt.StringTag(name)
+    if isinstance(pots, nbt.ListTag) and len(pots):
+        for entry in pots:
+            ent = nbt.get_tag(entry, "Entity")
+            if isinstance(ent, nbt.CompoundTag) and "id" in ent:
+                ent["id"] = nbt.StringTag(_spawn_name(nbt.get(ent, "id")) or name)
+    else:
+        t["SpawnPotentials"] = nbt.ListTag([nbt.CompoundTag({
+            "Entity": nbt.CompoundTag({"id": nbt.StringTag(name)}), "Weight": nbt.IntTag(1)})], 10)
+
+
+def modern_tile(t: nbt.CompoundTag) -> nbt.CompoundTag:
+    """The block entity (in place) with the namespaced id of the TU54+ games."""
+    old = nbt.get(t, "id", "")
+    if isinstance(old, str) and old and ":" not in old:
+        if old == "EnderChest":
+            t["id"] = nbt.StringTag(_ENDER_CHEST)
+        elif old in ids.TILE_OLD_TO_NEW:
+            t["id"] = nbt.StringTag("minecraft:" + ids.TILE_OLD_TO_NEW[old])
+    if nbt.get(t, "id") == "minecraft:mob_spawner":
+        _modern_spawner(t)
+    return t
 
 
 # ============================================================ players

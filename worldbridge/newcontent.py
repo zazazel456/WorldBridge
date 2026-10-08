@@ -45,6 +45,15 @@ JAVA_ENTITY_SINCE = _since({
 # the same for Bedrock (release that added the mob; only the ones whose release is certain: the older mobs of
 # Java 1.13 / 1.14 were in Bedrock long before its own 1.13 / 1.14)
 BEDROCK_ENTITY_SINCE = _since({
+    (1, 2, 0): ["parrot"],
+    (1, 4, 0): ["cod", "salmon", "pufferfish", "tropicalfish", "dolphin", "drowned", "thrown_trident"],
+    (1, 5, 0): ["turtle"],
+    (1, 6, 0): ["phantom"],
+    (1, 8, 0): ["panda", "cat"],
+    (1, 10, 0): ["pillager"],
+    (1, 11, 0): ["ravager", "wandering_trader"],
+    (1, 13, 0): ["fox"],
+    (1, 14, 0): ["bee"],
     (1, 16, 0): ["hoglin", "piglin", "strider", "zoglin"],
     (1, 16, 200): ["piglin_brute"],
     (1, 17, 0): ["axolotl", "glow_squid", "goat"],
@@ -55,7 +64,17 @@ BEDROCK_ENTITY_SINCE = _since({
     (1, 21, 50): ["creaking"],
     (1, 21, 90): ["happy_ghast"],
     (1, 21, 110): ["copper_golem"],
+    (1, 21, 130): ["camel_husk", "nautilus", "parched", "zombie_nautilus"],
+    (26, 20, 0): ["sulfur_cube"],                       # 26.x versions are (26, minor, 0), as amulet_bridge.versions lists them
 })
+
+# A mob that an older Bedrock holds under another identifier: (version it changed in, the older identifier, the
+# definitions the older identifier needs).  Renamed, not dropped: a villager must never get lost for an old target.
+BEDROCK_ENTITY_RENAMES = {
+    "villager_v2": ((1, 11, 0), "villager", ()),
+    "zombie_villager_v2": ((1, 11, 0), "zombie_villager", ()),
+    "trader_llama": ((1, 19, 10), "llama", ("+minecraft:llama_wandering_trader",)),
+}
 
 _SMITHING = ["netherite_upgrade", "sentry", "dune", "coast", "wild", "ward", "eye", "vex", "tide", "snout", "rib", "spire",
              "silence", "raiser", "host", "wayfinder", "shaper"]
@@ -100,6 +119,38 @@ def _entity_since(table: Dict[str, Version], name: str) -> Optional[Version]:
 def java_entity_exists(name: str, version: Version) -> bool:
     v = _entity_since(JAVA_ENTITY_SINCE, name)
     return v is None or tuple(version) >= v
+
+
+def bedrock_entity_rename(name: str, version: Version) -> Optional[Tuple[str, Tuple[str, ...]]]:
+    """(older identifier, definitions to add) when Bedrock ``version`` holds the mob ``name`` under another one."""
+    r = BEDROCK_ENTITY_RENAMES.get(name.split(":", 1)[-1])
+    if r is not None and tuple(version) < r[0]:
+        return r[1], r[2]
+    return None
+
+
+def downgrade_actor(e, version: Version) -> Optional[str]:
+    """Rewrites the identifier (and the definitions) of the Bedrock actor ``e`` for ``version`` in place.  Returns
+    "renamed", "removed" (``version`` lacks the mob: the caller drops it) or None (unchanged)."""
+    from . import nbt
+
+    ident = str(nbt.get(e, "identifier", "") or "")
+    if not ident:
+        return None
+    r = bedrock_entity_rename(ident, version)
+    if r is not None:
+        old = ident.split(":", 1)[-1]
+        e["identifier"] = nbt.StringTag("minecraft:" + r[0])
+        defs = []
+        for d in nbt.get_tag(e, "definitions") or []:
+            s = str(d.py_data) if hasattr(d, "py_data") else str(d)
+            defs.append(s.replace(old, r[0]) if old.endswith("_v2") else s)
+        for d in (f"+minecraft:{r[0]}",) + tuple(r[1]):
+            if d not in defs:
+                defs.append(d)
+        e["definitions"] = nbt.ListTag([nbt.StringTag(d) for d in defs], 8)
+        return "renamed"
+    return None if bedrock_entity_exists(ident, version) else "removed"
 
 
 def bedrock_entity_exists(name: str, version: Version) -> bool:
@@ -153,15 +204,19 @@ class Tally:
         self.items = 0
         self.entities = 0
         self.tiles = 0
+        self.renamed = 0                  # mobs the older game holds under another identifier (villager_v2...)
 
     def __bool__(self) -> bool:
-        return bool(self.items or self.entities or self.tiles)
+        return bool(self.items or self.entities or self.tiles or self.renamed)
 
     def warn(self, progress, label: str) -> None:
-        if self:
+        if self.items or self.entities or self.tiles:
             progress.warn(tr("Content that does not exist in {version}: removed {items} items, {entities} "
                              "entities and {tiles} block entities.", version=label, items=self.items,
                              entities=self.entities, tiles=self.tiles))
+        if self.renamed:
+            progress.warn(tr("{n} entities were renamed to the identifiers of {version} (villagers, trader llamas).",
+                             n=self.renamed, version=label))
 
 
 def tally_of(progress) -> Tally:

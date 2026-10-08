@@ -249,6 +249,10 @@ _SECTIONS = {
             'Sottosuolo (automatico): la superficie di questo mondo sta sopra y 0 (mediana y {y}): quello che sta sotto y 0 viene tagliato (--depth keep lo tiene).',
         'Mountain compression: {n} block entities (chests, spawners…) were inside the removed rock and were lost.':
             'Compressione delle montagne: {n} blocchi-entità (casse, spawner…) erano dentro la roccia tolta e sono andati persi.',
+        '{blocks} blocks, {tiles} block entities (chests, signs, spawners…) and {entities} entities above y {limit} did not fit under the height limit of the target game (the compression could not lower them, or the terrain is cut) and were cut.':
+            '{blocks} blocchi, {tiles} blocchi-entità (casse, cartelli, spawner…) e {entities} entità sopra y {limit} non entravano nel limite di altezza del gioco di destinazione (la compressione non è riuscita ad abbassarli, oppure il terreno è tagliato) e sono stati tagliati.',
+        'Builds up to y {top} (floating islands, towers): they come down whole, with the ground under them, to stay under the y {limit} limit.':
+            'Costruzioni fino a y {top} (isole fluttuanti, torri): scendono intere, con il terreno sotto, per restare sotto il limite y {limit}.',
         'Writing the final files':
             'Scrittura dei file finali',
         'Blending: the chunks are written in the {format} format (pre-Caves & Cliffs); opening the world in {version}, Minecraft blends terrain and biomes with the new terrain and generates the part below y=0.':
@@ -499,6 +503,8 @@ _SECTIONS = {
             '{n} blocchi non esistenti nella versione di destinazione sono stati sostituiti.',
         'Content that does not exist in {version}: removed {items} items, {entities} entities and {tiles} block entities.':
             'Contenuti non esistenti in {version}: rimossi {items} oggetti, {entities} entità e {tiles} blocchi-entità.',
+        '{n} entities were renamed to the identifiers of {version} (villagers, trader llamas).':
+            '{n} entità rinominate con gli identificatori di {version} (abitanti, lama mercante).',
     },
     'worldbridge/bedrock/extra.py': {
         'Height maps not recomputed: {error}':

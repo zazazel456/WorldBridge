@@ -44,10 +44,10 @@ def test_neolegacy_items():
 
 def test_console_profiles_keep_their_items():
     tu31 = compat_for("tu31", "ps4", PROFILES["tu31"].allowed)
-    assert int(nbt.get(tu31.item(_item(425)), "id")) == 425              # consoles: Java's id
+    assert nbt.get(tu31.item(_item(425)), "id") == "minecraft:banner"    # consoles: Java's id, by name
     assert tu31.item(_item(442)) is None
     tu54 = compat_for("tu54", "ps4", PROFILES["tu54"].allowed)
-    assert int(nbt.get(tu54.item(_item(442)), "id")) == 442
+    assert nbt.get(tu54.item(_item(442)), "id") == "minecraft:shield"
     it = tu54.item(_item(276, ench=[22, 61]))
     assert [int(nbt.get(e, "id")) for e in it["tag"]["ench"]] == [22, 61]
 
