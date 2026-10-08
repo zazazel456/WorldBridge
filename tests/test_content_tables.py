@@ -305,7 +305,7 @@ def test_campfires_keep_their_stacks_and_cooking_times():
         old = tiles.to_java_modern(tiles.from_bedrock(b), JAVA_OLD)       # items of the target: Count / tag, not components
         assert int(old["Items"][0]["Count"].py_data) == 1 and "count" not in old["Items"][0]
     soul = tiles.from_java_modern(_jtile("soul_campfire"))
-    assert tiles.to_java_modern(soul, 2500) is None and tiles.to_java_modern(soul, 2566)["id"].py_data == "minecraft:soul_campfire"
+    assert tiles.to_java_modern(soul, 2500) is None and tiles.to_java_modern(soul, 2566)["id"].py_data == "minecraft:campfire"   # the registry has no soul_campfire type
     assert tiles.to_bedrock(soul, (1, 14, 0)) is None and tiles.to_bedrock(soul, (1, 16, 0)) is not None
     camp = tiles.from_java_modern(_jtile("campfire"))
     assert tiles.to_java_modern(camp, 1519) is None and tiles.to_bedrock(camp, (1, 10, 0)) is None
@@ -514,7 +514,7 @@ def test_bedrock_kinds_follow_the_block_of_the_java_chunk():
     assert modern.resolve_kinds(root, canon) == 3
     assert [c["kind"] for c in canon] == ["trapped_chest", "soul_campfire", "bee_nest", "campfire"]
     assert tiles.to_java_modern(canon[0], 3465)["id"].py_data == "minecraft:trapped_chest"
-    assert tiles.to_java_modern(canon[1], 3465)["id"].py_data == "minecraft:soul_campfire"
+    assert tiles.to_java_modern(canon[1], 3465)["id"].py_data == "minecraft:campfire"   # no soul_campfire type in the registry
     other = [{"kind": "mob_spawner", "pos": (35, 70, -11)}, {"kind": "chest", "pos": (40, 70, -11)}]   # not shared / no such block
     assert modern.resolve_kinds(root, other) == 0 and other[1]["kind"] == "chest"
 

@@ -99,6 +99,15 @@ def bedrock_block_version(version: Sequence[int]) -> int:
     return (v[0] << 24) | (v[1] << 16) | (v[2] << 8) | v[3]
 
 
+def java_data_version(version: Sequence[int]) -> Optional[int]:
+    """The DataVersion of Java release ``version`` (None: unknown)."""
+    try:
+        dv = int(_tm().get_version("java", tuple(version)).data_version)
+        return dv if dv > 0 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def java_from_data_version(dv: int) -> Optional[Tuple[int, ...]]:
     """The newest Java release whose DataVersion is ``dv`` or lower (None: older than any known)."""
     try:
