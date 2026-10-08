@@ -605,9 +605,14 @@ MIN_VERSION: Dict[str, Tuple[int, Tuple[int, ...]]] = {
     "beehive": (2225, (1, 14, 0)), "bee_nest": (2225, (1, 14, 0)),
     "soul_campfire": (2566, (1, 16, 0)),
     "sculk_sensor": (2724, (1, 19, 0)), "sculk_shrieker": (3104, (1, 19, 0)), "sculk_catalyst": (3104, (1, 19, 0)),
-    "chiseled_bookshelf": (3218, (1, 19, 60)),
-    "decorated_pot": (3337, (1, 19, 70)), "brushable_block": (3337, (1, 19, 70)),
-    "calibrated_sculk_sensor": (3463, (1, 19, 80)),
+    # hanging signs, chiseled bookshelves, archaeology (brushable blocks) and the calibrated sculk sensor are in the
+    # PyMCTranslate tables of Bedrock 1.19.50 - 1.19.80, but there only as the "Next Major Update" experiment (BDS
+    # 1.19.83: behavior_packs/experimental_next_major_update): without the toggle the game drops the blocks and their
+    # block entities, so the release (1.20.0) is the first version.  The decorated pot is not in that pack.
+    "hanging_sign": (3463, (1, 20, 0)),
+    "chiseled_bookshelf": (3218, (1, 20, 0)),
+    "decorated_pot": (3337, (1, 19, 70)), "brushable_block": (3337, (1, 20, 0)),
+    "calibrated_sculk_sensor": (3463, (1, 20, 0)),
     "crafter": (3953, (1, 21, 0)), "trial_spawner": (3953, (1, 21, 0)), "vault": (3953, (1, 21, 0)),
     "creaking_heart": (4080, (1, 21, 50)),
     "shelf": (4553, (1, 21, 110)), "copper_golem_statue": (4553, (1, 21, 110)),
