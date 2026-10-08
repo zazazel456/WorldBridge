@@ -421,6 +421,8 @@ _SECTIONS = {
             '{n} incantesimi',
         'the entities {names}':
             'le entità {names}',
+        'the block entities {names}':
+            'i blocchi-entità {names}',
         ' and ':
             ' e ',
         '{version} does not have {what} of the source world: removed (the game does not know them); new arrows, boats and potions become their classic versions.':
@@ -503,6 +505,10 @@ _SECTIONS = {
             '{n} blocchi non esistenti nella versione di destinazione sono stati sostituiti.',
         'Content that does not exist in {version}: removed {items} items, {entities} entities and {tiles} block entities.':
             'Contenuti non esistenti in {version}: rimossi {items} oggetti, {entities} entità e {tiles} blocchi-entità.',
+        'Block entities left out of {version}: {names}.':
+            'Blocchi-entità lasciati fuori da {version}: {names}.',
+        ' and {n} more kinds':
+            ' e altri {n} tipi',
         '{n} entities were renamed to the identifiers of {version} (villagers, trader llamas).':
             '{n} entità rinominate con gli identificatori di {version} (abitanti, lama mercante).',
     },

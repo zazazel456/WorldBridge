@@ -57,6 +57,10 @@ def _chunk_parts(root: nbt.CompoundTag):
 SPANNING_DV = 2527  # before 20w17a (1.16) palette entries may span two longs
 
 
+_CAULDRONS = frozenset({"cauldron", "water_cauldron", "lava_cauldron", "powder_snow_cauldron"})
+_STATE_BLOCKS = frozenset({"piston", "sticky_piston", "lodestone"}) | _CAULDRONS
+
+
 def _state_tile(name: str, props) -> Optional[dict]:
     name = name.split(":", 1)[-1]
     if name.startswith("potted_"):
@@ -67,6 +71,15 @@ def _state_tile(name: str, props) -> Optional[dict]:
             return {"kind": "noteblock", "note": int(str(nbt.get(props, "note", 0)))}
         except ValueError:
             return None
+    # blocks Bedrock keeps a block entity for although Java has none (je2be does the same): the piston arm of every piston,
+    # the cauldron, the lodestone's handle
+    if name in ("piston", "sticky_piston"):
+        return {"kind": "piston_arm", "sticky": name == "sticky_piston",
+                "extended": str(nbt.get(props, "extended", "false")) == "true"}
+    if name in _CAULDRONS:
+        return {"kind": "cauldron"}
+    if name == "lodestone":
+        return {"kind": "lodestone"}
     # block entities whose data is partly in the block state: merged into the block entity of the chunk
     if name in ("suspicious_sand", "suspicious_gravel"):
         try:
@@ -154,7 +167,8 @@ def state_tiles(root: nbt.CompoundTag, cx: int, cz: int) -> List[dict]:
         wanted = {}
         for i, st in enumerate(palette):
             name = nbt.state_name(st, "")
-            if "potted_" in name or name.endswith(("note_block", "copper_golem_statue")) or "suspicious_" in name:
+            if ("potted_" in name or name.endswith(("note_block", "copper_golem_statue")) or "suspicious_" in name
+                    or name.split(":", 1)[-1] in _STATE_BLOCKS):
                 t = _state_tile(name, nbt.state_props(st))
                 if t is not None:
                     wanted[i] = t
@@ -359,7 +373,10 @@ def iter_modern_extras(world: str, progress: Optional[Progress] = None,
 class JavaModernExtras:
     """Java 1.13+ block entities / entities, converted to the legacy hub format per chunk."""
 
+    progress: Optional[Progress] = None
+
     def __init__(self, path: str, progress: Progress):
+        self.progress = progress
         self.data: Dict[Tuple[int, int, int], Tuple[list, list]] = {}
         for dim, cx, cz, te, en in iter_modern_extras(path, progress, with_states=True):
             self.data[(dim, cx, cz)] = (te, en)
@@ -369,12 +386,11 @@ class JavaModernExtras:
         and drops those that end out of 0 - 255."""
         te, en = self.data.get((dim, cx, cz), ([], []))
         canon, seen = [], set()
-        for t in te:
-            c = t if isinstance(t, dict) else tiles.from_java_modern(t)
-            if c is not None and tuple(c["pos"]) not in seen:
+        for c in tiles.read_canon(te, "java"):
+            if tuple(c["pos"]) not in seen:
                 seen.add(tuple(c["pos"]))
                 canon.append(c)
-        tl = tiles.write_list(canon, "legacy")
+        tl = tiles.write_list(canon, "legacy", newcontent.tally_of(self.progress) if self.progress is not None else None)
         el = []
         for c in ent.read_list(en, "java"):
             e = ent.to_legacy(c)
@@ -437,7 +453,7 @@ def _moved_key(move, dim: int, cx: int, cz: int, tl: list, el: list):
 def inject_from_bedrock(src: str, out_dir: str, info: WorldInfo, progress: Progress, move=None, depth=None):
     canon = {}
     for (dim, cx, cz), (te, en) in _bedrock_chunks(src).items():
-        tl = [c for c in (tiles.from_bedrock(t) for t in te) if c is not None]
+        tl = tiles.read_canon(te, "bedrock")
         el = [e for e in en if isinstance(e, dict)] + ent.read_list([e for e in en if not isinstance(e, dict)], "bedrock")
         if depth is not None and dim == OVERWORLD:
             tl, el = depth.move_canon(cx, cz, tl, el)           # with their blocks (worldbridge.depthfit)
@@ -449,7 +465,7 @@ def inject_from_bedrock(src: str, out_dir: str, info: WorldInfo, progress: Progr
 def inject_from_java(src: str, out_dir: str, info: WorldInfo, progress: Progress, move=None, depth=None):
     canon = {}
     for dim, cx, cz, te, en in iter_modern_extras(src, progress):
-        tl = [c for c in (tiles.from_java_modern(t) for t in te) if c is not None]
+        tl = tiles.read_canon(te, "java")
         el = ent.read_list(en, "java")
         if depth is not None and dim == OVERWORLD:
             tl, el = depth.move_canon(cx, cz, tl, el)
@@ -468,7 +484,7 @@ def inject_from_hub(hub_dir: str, out_dir: str, info: WorldInfo, progress: Progr
             c = hub.read_chunk(dim, cx, cz)
             if c is None:
                 continue
-            tl = [x for x in (tiles.from_legacy(t) for t in c.tile_entities) if x is not None]
+            tl = tiles.read_canon(c.tile_entities, "legacy")
             el = ent.read_list(c.entities, "legacy")
             if tl or el:
                 canon[(dim, cx, cz)] = (tl, el)
@@ -526,15 +542,16 @@ def inject_canon(out_dir: str, canon, progress: Progress):
                 tl, el = newcontent.clean_extras(tl, el, jver[1], tally)
             resolve_kinds(root, tl)
             apply_state_tiles(root, tl)
-            new_tiles = tiles.write_list(tl, "java", data_version=dv)
             lvl = nbt.get_tag(root, "Level")
             holder, key = (lvl, "TileEntities") if lvl is not None else (root, "block_entities")
             existing = {(int(nbt.get(t, "x", 0)), int(nbt.get(t, "y", 0)), int(nbt.get(t, "z", 0))): t
                         for t in (nbt.get_tag(holder, key) or [])}
+            # an id nothing here knows stays as Amulet copied it when it did; else it is lost (and counted below)
+            tl = [c for c in tl if not (c["kind"] == tiles.UNKNOWN and tuple(c["pos"]) in existing)]
+            new_tiles = tiles.write_list(tl, "java", tally, data_version=dv)
             for c in tl:  # a block entity the target version does not have: Amulet's copy of the other game's one goes too
-                if not tiles.exists_in_java(c["kind"], dv):
+                if c["kind"] != tiles.UNKNOWN and (tiles.KINDS[c["kind"]][1] is None or not tiles.exists_in_java(c["kind"], dv)):
                     existing.pop(tuple(c["pos"]), None)
-                    tally.tiles += 1
             for t in new_tiles:
                 existing[(int(t["x"].py_data), int(t["y"].py_data), int(t["z"].py_data))] = t
                 n_t += 1

@@ -370,8 +370,8 @@ class BedrockExtras:
             frames = []
             if raw:
                 raw_tiles = read_nbt_list(raw)
-                canon = [c for c in (tiles.from_bedrock(t) for t in raw_tiles) if c is not None]
-                tl = tiles.write_list(canon, "legacy")
+                canon = tiles.read_canon(raw_tiles, "bedrock")
+                tl = tiles.write_list(canon, "legacy", newcontent.tally_of(self.progress) if getattr(self, "progress", None) is not None else None)
                 frames = [t for t in raw_tiles if is_frame_tile(t)]
             el = [e for e in (self._frame(prefix, t) for t in frames) if e is not None]
             for e in self._actors(prefix):
@@ -459,9 +459,10 @@ class BedrockInjector:
             existing = read_nbt_list(_get(self.db, key) or b"")
             by_pos = {(int(nbt.get(t, "x", 0)), int(nbt.get(t, "y", 0)), int(nbt.get(t, "z", 0))): t for t in existing}
             for c in tile_canon:  # a block entity this version does not have: Amulet's copy of Java's goes too
-                if not tiles.exists_in_bedrock(c["kind"], self.version):
+                if c["kind"] == tiles.UNKNOWN or not tiles.exists_in_bedrock(c["kind"], self.version):
                     by_pos.pop(tuple(c["pos"]), None)
-            for t in tiles.write_list(tile_canon, "bedrock", version=self.version):
+            tally = newcontent.tally_of(self.progress)
+            for t in tiles.write_list(tile_canon, "bedrock", tally, version=self.version):
                 by_pos[(int(t["x"].py_data), int(t["y"].py_data), int(t["z"].py_data))] = t
                 self.n_tiles += 1
             self.db.put(key, write_nbt_list(list(by_pos.values())))
@@ -628,7 +629,7 @@ def inject_from_hub(hub_dir: str, out_dir: str, version, info: WorldInfo, progre
                 done += 1
                 if c is None:
                     continue
-                tl = [x for x in (tiles.from_legacy(t) for t in c.tile_entities) if x is not None]
+                tl = tiles.read_canon(c.tile_entities, "legacy")
                 el = ent.read_list(c.entities, "legacy")
                 if tl or el:
                     inj.put_chunk(dim, cx, cz, tl, el)
@@ -649,7 +650,7 @@ def inject_from_java_modern(src: str, out_dir: str, version, info: WorldInfo, pr
     inj = BedrockInjector(out_dir, version, progress)
     try:
         for dim, cx, cz, tiles_raw, ents_raw in iter_modern_extras(src, progress, with_states=True):
-            tl = [x for x in (t if isinstance(t, dict) else tiles.from_java_modern(t) for t in tiles_raw) if x is not None]
+            tl = tiles.read_canon(tiles_raw, "java")
             el = ent.read_list(ents_raw, "java")
             if depth is not None and dim == OVERWORLD:
                 tl, el = depth.move_canon(cx, cz, tl, el)       # with their blocks (worldbridge.depthfit)
@@ -819,6 +820,9 @@ def _shift_tile(t: nbt.CompoundTag, dx: int, dz: int) -> None:
             t[k] = nbt.IntTag(int(t[k].py_data) + d)
 
 
+_RAW_KINDS = frozenset({"piston_arm", "lodestone", "cauldron"})   # Bedrock only: no change to make going to Bedrock
+
+
 class _Downgrade:
     """The block entities and actors of a Bedrock world written for an older version of Bedrock than the source's:
     each in the form and the place that version has.  The block entities that have a canonical form (tiles) go through
@@ -837,9 +841,11 @@ class _Downgrade:
         canon, raw = [], []
         for t in tiles_raw:
             c = tiles.from_bedrock(t)
+            if c is not None and c["kind"] in _RAW_KINDS:          # only Bedrock has them: kept as they are
+                c = None
             if c is not None:
                 if not tiles.exists_in_bedrock(c["kind"], self.version):
-                    self.tally.tiles += 1
+                    self.tally.lose_tile(str(nbt.get(t, "id", "")))
                     continue
                 if dx or dz:
                     c["pos"] = (c["pos"][0] + dx * 16, c["pos"][1], c["pos"][2] + dz * 16)
@@ -848,7 +854,7 @@ class _Downgrade:
                 canon.append(c)
                 continue
             if str(nbt.get(t, "id", "")) == "GlowItemFrame" and self.version < (1, 17, 0):
-                self.tally.tiles += 1
+                self.tally.lose_tile("GlowItemFrame")
                 continue
             retarget_items(t, self.version)
             _shift_tile(t, dx, dz)
