@@ -11,7 +11,7 @@ from typing import Dict, Iterator, List, Optional, Tuple
 
 from .. import entities as ent
 from .. import gameversion as gv
-from .. import nbt, newcontent, placement, tiles
+from .. import items, nbt, newcontent, placement, tiles
 from ..model import NETHER, OVERWORLD, THE_END, Progress, WorldInfo
 from .region import JavaRegion, RegionWriter
 from ..i18n import tr
@@ -87,6 +87,10 @@ def _state_tile(name: str, props) -> Optional[dict]:
         except ValueError:
             dusted = 0
         return {"kind": "brushable_block", "block": name, "dusted": dusted, "merge": True}
+    if name.endswith("_bed") and name[:-4] in items.WOOL:
+        # the colour of a bed is its block; Java 26.x has no bed block entity any more (tiles.REMOVED_IN), the older games
+        # (and Bedrock) keep the colour in theirs
+        return {"kind": "bed", "color": items.WOOL.index(name[:-4]), "merge": True}
     if name.endswith("copper_golem_statue"):
         return {"kind": "copper_golem_statue", "pose": str(nbt.get(props, "copper_golem_pose", "standing")), "merge": True}
     return None
@@ -167,7 +171,7 @@ def state_tiles(root: nbt.CompoundTag, cx: int, cz: int) -> List[dict]:
         wanted = {}
         for i, st in enumerate(palette):
             name = nbt.state_name(st, "")
-            if ("potted_" in name or name.endswith(("note_block", "copper_golem_statue")) or "suspicious_" in name
+            if ("potted_" in name or name.endswith(("note_block", "copper_golem_statue", "_bed")) or "suspicious_" in name
                     or name.split(":", 1)[-1] in _STATE_BLOCKS):
                 t = _state_tile(name, nbt.state_props(st))
                 if t is not None:
@@ -450,7 +454,7 @@ def _moved_key(move, dim: int, cx: int, cz: int, tl: list, el: list):
     return (dim,) + tuple(move.canon_chunk(dim, cx, cz, tl, el))
 
 
-def inject_from_bedrock(src: str, out_dir: str, info: WorldInfo, progress: Progress, move=None, depth=None):
+def inject_from_bedrock(src: str, out_dir: str, info: WorldInfo, progress: Progress, move=None, depth=None, target_dv=None):
     canon = {}
     for (dim, cx, cz), (te, en) in _bedrock_chunks(src).items():
         tl = tiles.read_canon(te, "bedrock")
@@ -459,10 +463,10 @@ def inject_from_bedrock(src: str, out_dir: str, info: WorldInfo, progress: Progr
             tl, el = depth.move_canon(cx, cz, tl, el)           # with their blocks (worldbridge.depthfit)
         if tl or el:
             canon[_moved_key(move, dim, cx, cz, tl, el)] = (tl, el)
-    inject_canon(out_dir, canon, progress)
+    inject_canon(out_dir, canon, progress, target_dv)
 
 
-def inject_from_java(src: str, out_dir: str, info: WorldInfo, progress: Progress, move=None, depth=None):
+def inject_from_java(src: str, out_dir: str, info: WorldInfo, progress: Progress, move=None, depth=None, target_dv=None):
     canon = {}
     for dim, cx, cz, te, en in iter_modern_extras(src, progress):
         tl = tiles.read_canon(te, "java")
@@ -471,10 +475,10 @@ def inject_from_java(src: str, out_dir: str, info: WorldInfo, progress: Progress
             tl, el = depth.move_canon(cx, cz, tl, el)
         if tl or el:
             canon[_moved_key(move, dim, cx, cz, tl, el)] = (tl, el)
-    inject_canon(out_dir, canon, progress)
+    inject_canon(out_dir, canon, progress, target_dv)
 
 
-def inject_from_hub(hub_dir: str, out_dir: str, info: WorldInfo, progress: Progress):
+def inject_from_hub(hub_dir: str, out_dir: str, info: WorldInfo, progress: Progress, target_dv=None):
     from .numeric import JavaNumericWorld
 
     hub = JavaNumericWorld(hub_dir)
@@ -488,7 +492,7 @@ def inject_from_hub(hub_dir: str, out_dir: str, info: WorldInfo, progress: Progr
             el = ent.read_list(c.entities, "legacy")
             if tl or el:
                 canon[(dim, cx, cz)] = (tl, el)
-    inject_canon(out_dir, canon, progress)
+    inject_canon(out_dir, canon, progress, target_dv)
 
 
 def _drop_bedrock_entities(root: nbt.CompoundTag) -> None:
@@ -520,7 +524,13 @@ def _chunk_exists(out_dir: str):
     return exists
 
 
-def inject_canon(out_dir: str, canon, progress: Progress):
+def _removed_id(bid: str, dv: int, target_dv: Optional[int]) -> bool:
+    """Whether the block entity id ``bid`` is one the game of ``max(dv, target_dv)`` no longer has (tiles.REMOVED_IN)."""
+    kind = tiles.JAVA_TO_KIND.get(bid.split(":", 1)[-1])
+    return kind is not None and tiles.removed_in_java(kind, dv, target_dv)
+
+
+def inject_canon(out_dir: str, canon, progress: Progress, target_dv: Optional[int] = None):
     # every entity goes into the chunk of its (final) position: the game refuses it anywhere else
     canon, rehomed = placement.rehome_canon(canon, _chunk_exists(out_dir))
     if rehomed:
@@ -570,10 +580,13 @@ def inject_canon(out_dir: str, canon, progress: Progress):
                         for t in (nbt.get_tag(holder, key) or [])}
             # an id nothing here knows stays as Amulet copied it when it did; else it is lost (and counted below)
             tl = [c for c in tl if not (c["kind"] == tiles.UNKNOWN and tuple(c["pos"]) in existing)]
-            new_tiles = tiles.write_list(tl, "java", tally, data_version=dv)
+            new_tiles = tiles.write_list(tl, "java", tally, data_version=dv, target_dv=target_dv)
             for c in tl:  # a block entity the target version does not have: Amulet's copy of the other game's one goes too
-                if c["kind"] != tiles.UNKNOWN and (tiles.KINDS[c["kind"]][1] is None or not tiles.exists_in_java(c["kind"], dv)):
+                if c["kind"] != tiles.UNKNOWN and (tiles.KINDS[c["kind"]][1] is None or not tiles.exists_in_java(c["kind"], dv, target_dv)):
                     existing.pop(tuple(c["pos"]), None)
+            # what the target's game dropped (the bed): Amulet's own copies of it go too, canonical or not
+            for pos in [p for p, t in existing.items() if _removed_id(str(nbt.get(t, "id", "")), dv, target_dv)]:
+                del existing[pos]
             for t in new_tiles:
                 existing[(int(t["x"].py_data), int(t["y"].py_data), int(t["z"].py_data))] = t
                 n_t += 1

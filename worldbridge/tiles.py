@@ -82,6 +82,8 @@ JAVA_TO_KIND.update({"spawner": "mob_spawner", "enchantment_table": "enchanting_
 # Java 1.21.9+ copper chests: the older games have only the wooden chest (the block becomes one too)
 JAVA_TO_KIND.update({f"{w}{a}copper_chest": "chest" for w in ("", "waxed_")
                      for a in ("", "exposed_", "weathered_", "oxidized_")})
+# the kinds whose Java block entity id is not their kind's name (the registry has no minecraft:soul_campfire / bee_nest)
+JAVA_ID_OF_KIND = {"soul_campfire": "campfire", "bee_nest": "beehive"}
 BEDROCK_TO_KIND = {}
 for _k, (_l, _j, _b) in KINDS.items():
     if _b and _b not in BEDROCK_TO_KIND:
@@ -505,15 +507,16 @@ def to_bedrock(c: dict, version) -> Optional[nbt.CompoundTag]:
     return t
 
 
-def to_java_modern(c: dict, data_version: int) -> Optional[nbt.CompoundTag]:
+def to_java_modern(c: dict, data_version: int, target_dv: Optional[int] = None) -> Optional[nbt.CompoundTag]:
     kind = c["kind"]
     jid = KINDS[kind][1]
-    if jid is None or not exists_in_java(kind, data_version):
+    if jid is None or not exists_in_java(kind, data_version, target_dv):
         return None
     if kind == "chest" and c.get("java_id"):             # a copper chest block (java.modern.resolve_kinds)
         jid = c["java_id"]
-    if kind == "mob_spawner" and data_version >= 3818:
-        jid = "spawner"
+    # the block entity registry of 1.21.5 and 26.3 (``--reports``) has mob_spawner (the block is "spawner"), and the
+    # campfire / beehive types serve the soul campfire / bee nest too: those two have no id of their own
+    jid = JAVA_ID_OF_KIND.get(kind, jid)
     x, y, z = c["pos"]
     t = nbt.CompoundTag({"id": nbt.StringTag("minecraft:" + jid), "x": nbt.IntTag(x), "y": nbt.IntTag(y), "z": nbt.IntTag(z)})
     if "items" in c:
@@ -635,15 +638,33 @@ MIN_VERSION_LEGACY: Dict[str, Tuple[int, Tuple[int, ...]]] = {
 }
 
 
-def exists_in_java(kind: str, data_version: int) -> bool:
-    """Whether Java data of ``data_version`` has the block entity ``kind``."""
+# block entities a newer game dropped: kind -> (first Java DataVersion without it, first Bedrock version without it
+# or None).  The bed went with the 26.x data format (schema 4885: ``minecraft:bed`` is no longer in the block entity
+# registry, a 26.3 server's ``--reports`` lists 49 types and no bed): the colour was always in the block (red_bed...),
+# the block entity held nothing else, and the game's data fixer deletes the old ones without a word.  Bedrock keeps
+# its Bed (that is where its colour is).
+REMOVED_IN: Dict[str, Tuple[int, Optional[Tuple[int, ...]]]] = {
+    "bed": (4885, None),
+}
+
+
+def removed_in_java(kind: str, data_version: int, target_dv: Optional[int] = None) -> bool:
+    """Whether the Java game of ``max(data_version, target_dv)`` no longer has the block entity ``kind``.  ``target_dv``:
+    the version of the target when the chunks are written older and the game upgrades them (blending)."""
+    m = REMOVED_IN.get(kind)
+    return m is not None and max(data_version, target_dv or 0) >= m[0]
+
+
+def exists_in_java(kind: str, data_version: int, target_dv: Optional[int] = None) -> bool:
+    """Whether Java data of ``data_version`` (upgraded to ``target_dv`` by the game) has the block entity ``kind``."""
     m = MIN_VERSION.get(kind) or MIN_VERSION_LEGACY.get(kind)
-    return m is None or data_version >= m[0]
+    return (m is None or data_version >= m[0]) and not removed_in_java(kind, data_version, target_dv)
 
 
 def exists_in_bedrock(kind: str, version) -> bool:
     m = MIN_VERSION.get(kind) or MIN_VERSION_LEGACY.get(kind)
-    return m is None or tuple(version) >= m[1]
+    r = REMOVED_IN.get(kind)
+    return (m is None or tuple(version) >= m[1]) and not (r is not None and r[1] is not None and tuple(version) >= r[1])
 
 
 # loot tables: Java "minecraft:chests/simple_dungeon" <-> Bedrock "loot_tables/chests/simple_dungeon.json"
@@ -1660,11 +1681,13 @@ def write_list(canon: List[dict], dst: str, tally=None, **kw) -> List[nbt.Compou
             if dst == "legacy":
                 t = to_legacy(c, kw.get("lce", False))
             elif dst == "java":
-                t = to_java_modern(c, kw.get("data_version", 3465))
+                t = to_java_modern(c, kw.get("data_version", 3465), kw.get("target_dv"))
             else:
                 t = to_bedrock(c, kw.get("version", (1, 21, 0)))
         if t is not None:
             out.append(t)
+        elif dst == "java" and removed_in_java(c["kind"], kw.get("data_version", 3465), kw.get("target_dv")):
+            continue                      # the game dropped this block entity: its data is in the block, nothing is lost
         elif tally is not None:
             name = loss_name(c, dst)
             if name:

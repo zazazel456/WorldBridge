@@ -6,6 +6,12 @@ A full review of the code with 110 real worlds downloaded from the web (Java Cla
 1.1 → 1.26.40, PE 0.x, LCE on PS3 / PS4 / Vita / Wii U / Xbox 360). Fixed so far:
 
 **Java, by version**
+- **Java 26.2+ has no bed block entity** (a 26.3 server's registry lists 49 block entity types and no
+  `minecraft:bed`; the colour is in the block): beds are no longer written for such a target (chunks written in
+  the older blending format included, and Amulet's own copies go too), they are not counted as lost, and the
+  colour is read from the block when the source has none. The soul campfire and the bee nest are written
+  under the registry's `campfire` / `beehive` ids, and spawners as `mob_spawner` on every version (the
+  1.20.5+ files had an unknown `minecraft:spawner`).
 - **`--to java --version X` with the default Java mode ignored the version** (a 1.20.4 request wrote the latest,
   26.3): an explicit version now picks the route that writes exactly it (Amulet from 1.13, the numeric Anvil
   format up to 1.12) and the log says so. Hanging signs, barrels, smokers and blast furnaces no longer leave
