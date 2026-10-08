@@ -31,6 +31,12 @@ A full review of the code with 110 real worlds downloaded from the web (Java Cla
   unknown versions are refused with a clear message.
 
 **Legacy Console Edition**
+- **TU54+ targets wrote the old ids** (`Cow`, `EntityHorse` + `Type`, `Chest`): as in every real save from
+  Xbox 360 TU54 on (and PS3 / PS4 / Vita / Wii U), entities and block entities are now named the Java 1.11 way
+  (`minecraft:zombie_pigman`, `minecraft:donkey`, `minecraft:chest`, `minecraft:ender_Chest`), spawners carry
+  `SpawnData` / `SpawnPotentials`; TU31 / TU46 keep the old names.
+- **Console items are written by name** (`minecraft:egg`), as every console save from TU31 / Wii U v112 on
+  has them; Windows64 (neoLegacy) keeps the numbers.
 - **Real Xbox 360 saves were not recognised** (`savegame.dat` starts with `[BE u32 size][BE u64
   decompressed size]`, not with a zero): they are read, loose, in a CON package, in a `Save<date>.bin`
   folder or as `savegame-*.dat`; saves of version 1 (`players_<XUID>.dat`) show their player. New
@@ -67,6 +73,12 @@ A full review of the code with 110 real worlds downloaded from the web (Java Cla
 the count is now reported.
 
 **Caves & Cliffs worlds into games that start at y 0 (Java ≤ 1.17, LCE, Bedrock ≤ 1.17, older)**
+- **128-high targets cut floating islands and sky builds silently** (a bedwars map lost 10 of its 19 signs and
+  900 blocks): the mountain compression only lowered columns with natural ground. Floating pieces now come down
+  whole with the ground near them, air (caves, the void under an island) is removed before rock, and what still
+  cannot fit is counted in one warning instead of disappearing.
+- **The Nether lost the top layer of its bedrock roof** on Alpha / Beta targets: the one-block sea-level raise
+  (Java 62 → 63) applied to every dimension; it is now for the Overworld only (`--y-offset` still moves all).
 - **Block entities and entities followed the old height, not their blocks**: with `--depth keep`
   (or a compressed mountain) chests, signs, mobs and item frames under y 0 were dropped and the
   others stayed 64 blocks too low; they now end exactly where their blocks went, on every route
@@ -156,6 +168,8 @@ the count is now reported.
   before the world is read, with a message instead of a traceback; negative coordinates work
   without `=` (`--spawn -20,-59,-20`). An empty or invalid `--chunks` file is an error, not an
   empty world.
+- A Java Alpha / Beta / McRegion world with only its `level.dat` (a source with no blocks) could not be
+  reopened ("World format not recognised").
 - An output folder inside the source world (or the other way round) is refused; it used to copy
   the world into itself until the path was too long.
 - Progress reaches 100%, the copy routes show progress and can be cancelled; Ctrl+C and SIGTERM
