@@ -313,6 +313,7 @@ class _Done:
     emptied: int = 0                          # nothing left of the chunk in the target's height (depthfit)
     cut_tiles: int = 0                        # block entities / entities cut with their blocks (depthfit)
     cut_entities: int = 0
+    above: Tuple[int, int, int] = (0, 0, 0)   # blocks / block entities / entities above the 128 ceiling, cut (heightfit)
     empty_chests: int = 0
     rows: int = 0
     top: object = None                        # Relocation.top, when this chunk has the destination
@@ -334,6 +335,7 @@ class _Pipeline:
         # reads them back from the writer when it needs them), the others go to it as they are
         self.filler = filler
         self.rows, self.fit, self.shift_here, self.biomes, self.move = rows, fit, shift_here, biomes, move
+        self.cut_ceiling: Optional[int] = None      # no heightfit: what is above this y is cut (and counted)
         self.writer = writer if hasattr(writer, "encode") else None
         self.observe = observe
         self.drawn_tiles = drawn_tiles
@@ -366,6 +368,11 @@ class _Pipeline:
         out.cut_tiles, out.cut_entities = c.cut_extras
         if self.fit is not None and dim == OVERWORLD:
             c = self.fit.apply(c)
+            out.above = c.cut_above
+        elif self.cut_ceiling is not None:
+            from .heightfit import cut_above
+
+            out.above = cut_above(c, self.cut_ceiling)
         if self.shift_here:
             from .java.numeric import _shift_chunk_y
 
@@ -867,10 +874,13 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
                     fit.observe(c)
                 if i % 64 == 0:
                     progress.update(i / len(ow), tr("Terrain heights {i}/{n}", i=i, n=len(ow)))
-            if fit.needed:
+            if fit.ground_needed:
                 progress.log(tr("Mountains up to y {top}: the part above y {knee} is compressed (to {ratio} %) to stay "
                                 "under the y {limit} limit; surface, trees and buildings come down whole.",
                                 top=fit.max_ground, knee=fit.knee, ratio=f"{fit.ratio * 100:.0f}", limit=ceiling - 1))
+            elif fit.needed:
+                progress.log(tr("Builds up to y {top} (floating islands, towers): they come down whole, with the ground "
+                                "under them, to stay under the y {limit} limit.", top=fit.max_top, limit=ceiling - 1))
             else:
                 fit = None
             progress.stage(tr("Converting {n} chunks", n=total), mid, end)
@@ -885,6 +895,9 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
             observe.setdefault(OVERWORLD, set()).update(ring.edge_chunks)
         pipe = _Pipeline(src, progress, rows, fit, shift_here, sel.biomes if not amulet_target else None,
                          move, writer, observe, not amulet_target, filler is not None, depth)
+        if ceiling and fit is None and getattr(src, "max_height", 256) > ceiling:
+            pipe.cut_ceiling = ceiling - target.y_offset          # --tall-terrain cut (or nothing to compress)
+        above = [0, 0, 0]
         written_ow = set()
         track_ow = ring is not None and plan.kind == "fill"      # only the fill needs them (finite maps)
         cur_dim = None
@@ -901,6 +914,7 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
             emptied += res.emptied
             cut_tiles += res.cut_tiles
             cut_entities += res.cut_entities
+            above = [a + b for a, b in zip(above, res.above)]
             empty_chests += res.empty_chests
             if res.obs is not None:
                 if ring is not None:
@@ -982,6 +996,8 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
             if fit.lost_tiles:
                 progress.warn(tr("Mountain compression: {n} block entities (chests, spawners…) were inside the removed "
                                  "rock and were lost.", n=fit.lost_tiles))
+        if ceiling and any(above):
+            _warn_above_ceiling(progress, above, ceiling - target.y_offset)
         _regen_players(src.info, target.regen, progress)
         move.apply_info(src.info, progress)
         progress.stage(tr("Writing the final files"), end, end + 0.02)
@@ -1177,6 +1193,15 @@ def _warn_emptied(progress: Progress, n: int) -> None:
                          "game's world (y 0 to 255), mostly below y 0. To keep what lies below y 0 use --depth keep "
                          "(the world rises by 64 blocks) or a lower Y, e.g. --depth -32 (in the app: Underground of "
                          "1.18+ worlds).", n=n))
+
+
+def _warn_above_ceiling(progress: Progress, above, ceiling: int) -> None:
+    """Blocks, block entities and entities above the ceiling of a 128 high target that the compression
+    could not lower (or that --tall-terrain cut cut) went with the rest of the height: never silently."""
+    blocks, tiles, ents = above
+    progress.warn(tr("{blocks} blocks, {tiles} block entities (chests, signs, spawners…) and {entities} entities above "
+                     "y {limit} did not fit under the height limit of the target game (the compression could not "
+                     "lower them, or the terrain is cut) and were cut.", blocks=blocks, tiles=tiles, entities=ents, limit=ceiling - 1))
 
 
 def _warn_cut_extras(progress: Progress, n_tiles: int, n_ents: int) -> None:

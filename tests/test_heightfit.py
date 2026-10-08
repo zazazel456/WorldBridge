@@ -239,3 +239,151 @@ def test_the_underground_can_be_cut_at_a_chosen_depth():
     fit.apply(ch)
     col = np.concatenate([ch.blocks.get_sub_chunk(cy) for cy in range(16)], axis=1)
     assert int(np.nonzero(col[0, :, 0] == grass)[0].max()) == 120
+
+
+# ---------------------------------------------------------------- floating builds, towers, air, safety net
+def _void(cells):
+    return {(cx, cz): NumericChunk(cx, cz, 256) for cx in range(cells) for cz in range(cells)}
+
+
+def _sign(c, x, y, z):
+    c.blocks[y, z, x] = 63
+    c.tile_entities.append(nbt.CompoundTag({"id": nbt.StringTag("minecraft:sign"), "x": nbt.IntTag(c.cx * 16 + x),
+                                            "y": nbt.IntTag(y), "z": nbt.IntTag(c.cz * 16 + z)}))
+
+
+def _island_world(with_ground):
+    """Void grid, an island at y 180-185 (grass over dirt, or planks with no natural ground at all), a hollow
+    wool house with a sign on it, and a wool edge going on across the chunk border."""
+    chunks = _void(3)
+    c = chunks[(1, 1)]
+    if with_ground:
+        c.blocks[180:185, 3:13, 3:13] = 3
+        c.blocks[185, 3:13, 3:13] = 2
+    else:
+        c.blocks[180:186, 3:13, 3:13] = 5
+    c.blocks[186:190, 5:10, 5:10] = 35                      # wool house, hollow
+    c.blocks[187:189, 6:9, 6:9] = 0
+    _sign(c, 5, 187, 7)                                    # on the outside wall (replaces a wool block)
+    c.blocks[183:186, 3:13, 13:16] = 35
+    chunks[(2, 1)].blocks[183:186, 3:13, 0:4] = 35
+    return chunks
+
+
+def _count(chunks):
+    return sum(int((np.asarray(c.blocks) != 0).sum()) for c in chunks.values())
+
+
+def test_floating_island_with_a_house_and_a_sign_comes_down_whole():
+    for with_ground in (True, False):
+        chunks = _island_world(with_ground)
+        before = _count(chunks)
+        fit = _fit(chunks)
+        assert fit.needed
+        out = {k: fit.apply(c) for k, c in chunks.items()}
+        assert _count(out) == before                                      # nothing lost: the band was air
+        for c in out.values():
+            assert not (np.asarray(c.blocks)[128:] != 0).any()
+        (t,) = out[(1, 1)].tile_entities
+        ty = int(nbt.get(t, "y"))
+        assert ty < 128 and out[(1, 1)].blocks[ty, 7, 5] == 63
+        wool = np.nonzero(np.asarray(out[(1, 1)].blocks)[:, 7, 8] == 35)[0]
+        assert len(wool) and wool.max() < 128
+        assert (fit.lost_blocks, fit.lost_tiles, fit.lost_tiles_above, fit.lost_entities) == (0, 0, 0, 0)
+        assert all(c.cut_above == (0, 0, 0) for c in out.values())
+
+
+def test_the_house_and_the_island_under_it_keep_their_shape():
+    chunks = _island_world(False)
+    ref = np.asarray(chunks[(1, 1)].blocks[:, 7, 8]).copy()
+    fit = _fit(chunks)
+    col = np.asarray(fit.apply(chunks[(1, 1)]).blocks[:, 7, 8])
+    assert (np.trim_zeros(col) == np.trim_zeros(ref)).all()                # the same column of blocks...
+    assert np.nonzero(col)[0].min() < np.nonzero(ref)[0].min()             # ...lower
+
+
+def test_mobs_on_a_floating_build_come_down_with_it():
+    chunks = _island_world(False)
+    c = chunks[(1, 1)]
+    c.entities.append(nbt.CompoundTag({"id": nbt.StringTag("minecraft:cow"),
+                                       "Pos": nbt.ListTag([nbt.DoubleTag(23.5), nbt.DoubleTag(188.0), nbt.DoubleTag(23.5)], 6)}))
+    fit = _fit(chunks)
+    assert 0 < fit.shift_at(23.5, 188.0, 23.5) < 128                       # before the chunk is rewritten: a guess
+    c = fit.apply(c)
+    (e,) = c.entities
+    y = float(nbt.get_tag(e, "Pos")[1].py_data)
+    assert y < 128 and fit.lost_entities == 0
+    assert fit.shift_at(23.5, 188.0, 23.5) == y                            # after: the exact one
+
+
+def test_a_tall_tower_on_low_ground_fits_under_the_ceiling():
+    chunks = _column_world({(x, z): 90 for x in range(3) for z in range(3)})
+    chunks[(1, 1)].blocks[91:151, 7:9, 7:9] = 5                            # planks tower, 60 high
+    fit = _fit(chunks)
+    assert fit.needed and not fit.ground_needed
+    out = {k: fit.apply(v) for k, v in chunks.items()}
+    t = out[(1, 1)]
+    assert int(np.nonzero(np.asarray(t.blocks[:, 7, 7]))[0].max()) < 128
+    assert int((np.asarray(t.blocks) == 5).sum()) == 4 * 60                # the tower is whole
+    assert (fit.lost_blocks, fit.lost_tiles_above, fit.lost_entities) == (0, 0, 0)
+
+
+def test_air_is_removed_in_preference_to_rock():
+    chunks = _column_world({(x, z): 140 for x in range(3) for z in range(3)})
+    for c in chunks.values():
+        c.blocks[100:130] = 0                                               # a cave, 30 high
+    solid = int((np.asarray(chunks[(1, 1)].blocks[:, 8, 8]) != 0).sum())
+    fit = _fit(chunks)
+    s = int(fit.shifts(1, 1)[8, 8])
+    assert 0 < s < 30
+    col = np.asarray(fit.apply(chunks[(1, 1)]).blocks[:, 8, 8])
+    assert int((col != 0).sum()) == solid                                   # no block lost: the cave got lower
+    assert int(np.nonzero(col)[0].max()) == 140 - s                         # the surface came down by exactly s
+    assert (col[100:130 - s] == 0).all() and col[130 - s] != 0
+
+
+def test_what_cannot_be_lowered_is_cut_and_counted():
+    fit = HeightFit(128)
+    c = NumericChunk(0, 0, 256)
+    c.blocks[200, 3, 3] = 35
+    c.blocks[201, 3, 3] = 35
+    c.blocks[10, 3, 3] = 1
+    _sign(c, 4, 190, 4)
+    c.entities.append(nbt.CompoundTag({"id": nbt.StringTag("minecraft:bat"),
+                                       "Pos": nbt.ListTag([nbt.DoubleTag(1.5), nbt.DoubleTag(210.0), nbt.DoubleTag(1.5)], 6)}))
+    c.entities.append(nbt.CompoundTag({"id": nbt.StringTag("minecraft:cow"),
+                                       "Pos": nbt.ListTag([nbt.DoubleTag(1.5), nbt.DoubleTag(11.0), nbt.DoubleTag(1.5)], 6)}))
+    fit.apply(c)
+    assert (fit.lost_blocks, fit.lost_tiles_above, fit.lost_entities) == (3, 1, 1)      # 2 wool + the sign block
+    assert c.cut_above == (3, 1, 1)
+    assert not np.asarray(c.blocks[128:]).any() and not c.tile_entities and len(c.entities) == 1
+    assert c.blocks[10, 3, 3] == 1
+
+
+def test_the_cut_is_reported_with_one_message():
+    from worldbridge import i18n_it
+    from worldbridge.convert import _warn_above_ceiling
+
+    class P:
+        def __init__(self):
+            self.warns = []
+
+        def warn(self, m):
+            self.warns.append(m)
+
+    p = P()
+    _warn_above_ceiling(p, [907, 23, 4], 128)
+    (m,) = p.warns
+    assert "907 blocks, 23 block entities" in m and "4 entities above y 127" in m
+    it = {k: v for sec in i18n_it._SECTIONS.values() for k, v in sec.items() if k.startswith("{blocks} blocks, {tiles}")}
+    assert len(it) == 1
+    (k, v), = it.items()
+    assert all(f"{{{n}}}" in v for n in ("blocks", "tiles", "entities", "limit"))
+
+
+def test_tall_terrain_cut_reports_what_it_cuts(tmp_path):
+    hub = _hub(tmp_path, {(x, z): 200 for x in range(2) for z in range(2)})
+    msgs = []
+    convert(hub, str(tmp_path / "cut"), TargetSpec(family="java", java_mode="mcregion", java_version_limit="1.1",
+                                                    tall_terrain="cut"), progress=Progress(on_log=msgs.append))
+    assert any("did not fit under the height limit" in m for m in msgs)

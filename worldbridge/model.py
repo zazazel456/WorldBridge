@@ -118,6 +118,9 @@ class NumericChunk:
     lce_heightmap: Optional[np.ndarray] = None
     # block entities and entities of the source dropped with their blocks (worldbridge.depthfit)
     cut_extras: Tuple[int, int] = (0, 0)
+    # blocks, block entities and entities above the ceiling of a 128 high target that were cut
+    # (worldbridge.heightfit)
+    cut_above: Tuple[int, int, int] = (0, 0, 0)
 
     def __post_init__(self):
         if self.blocks is None:
