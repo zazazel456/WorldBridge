@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QButtonGroup, QCheckBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QRadioButton, QTableWidget, QVBoxLayout, QWidget,
+    QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QRadioButton, QTableWidget, QVBoxLayout, QWidget,
 )
 
 from ..selection import PlayerLink, offline_uuid
@@ -27,6 +27,14 @@ HINTS = {
               "player, who starts again at the spawn without an inventory."),
     "pe_old": N_("Pocket Edition 0.x: only the main player is transferred."),
 }
+
+
+PET_HINT = N_("<b>Tamed animals</b> (wolves, cats, parrots, horses…) must know their owner's UUID. <i>Java account "
+              "name</i>: the main player's nickname above (with “Premium” for an original account, without it for an "
+              "offline one) gives the animals the account's UUID: exact, but the name has to be right. <i>First player "
+              "who opens the world</i>: no name needed, a small data pack (Java 1.16+) hands each animal to the nearest "
+              "player when its chunk loads; on a multiplayer server that may not be the main player. "
+              "<i>Automatic</i> uses the nickname when there is one, else the first player.")
 
 
 class PlayersTab(QWidget):
@@ -63,6 +71,21 @@ class PlayersTab(QWidget):
         v.addWidget(self.empty)
         foot = HintLabel(tr("Double-click a player to see them on the map."))
         v.addWidget(foot)
+        self.pet_row = QWidget()
+        pr = QHBoxLayout(self.pet_row)
+        pr.setContentsMargins(0, 0, 0, 0)
+        pr.addWidget(QLabel(tr("Tamed animals belong to:")))
+        self.pet_owner_box = QComboBox()
+        for label, key in ((tr("Automatic"), "auto"), (tr("The Java account of the nickname"), "account"),
+                           (tr("The first player who opens the world"), "first-player")):
+            self.pet_owner_box.addItem(label, key)
+        self.pet_owner_box.currentIndexChanged.connect(lambda _i: self.changed.emit())
+        pr.addWidget(self.pet_owner_box, 1)
+        v.addWidget(self.pet_row)
+        self.pet_hint = HintLabel()
+        self.pet_hint.setTextFormat(Qt.RichText)
+        self.pet_hint.setText(tr(PET_HINT))
+        v.addWidget(self.pet_hint)
         self.host_group = QButtonGroup(self)
         self.host_group.setExclusive(True)
         self._rows = []
@@ -117,7 +140,7 @@ class PlayersTab(QWidget):
         """The choices, by player (the window is rebuilt when the language changes)."""
         rows = {e.key: (inc.isChecked(), host.isChecked(), nick.text(), prem.isChecked())
                 for e, (inc, host, nick, prem) in zip(self.entries, self._rows)}
-        return {"enable": self.enable.isChecked(), "rows": rows}
+        return {"enable": self.enable.isChecked(), "rows": rows, "pet_owner": self.pet_owner()}
 
     def import_state(self, st: dict) -> None:
         """export_state()'s choices; kept until the same players are loaded."""
@@ -135,6 +158,8 @@ class PlayersTab(QWidget):
                 prem.setChecked(premium)
         self.enable.setChecked(st["enable"])
         self._on_enable(st["enable"])
+        i = self.pet_owner_box.findData(st.get("pet_owner", "auto"))
+        self.pet_owner_box.setCurrentIndex(max(0, i))
 
     def set_family(self, family: str):
         self._family = family
@@ -143,6 +168,8 @@ class PlayersTab(QWidget):
             nick.setEnabled(self.enable.isChecked() and family in ("java", "lce"))
             prem.setEnabled(self.enable.isChecked() and family == "java")
         self.table.setColumnHidden(5, family != "java")
+        for w in (self.pet_row, self.pet_hint):
+            w.setVisible(family == "java")
 
     def _on_enable(self, on: bool):
         self.table.setEnabled(on)
@@ -171,6 +198,10 @@ class PlayersTab(QWidget):
         n = sum(1 for i, (inc, *_r) in enumerate(self._rows) if inc.isChecked() or i == host)
         main = self.entries[host].label if 0 <= host < len(self.entries) else "?"
         return tr("{n} of {total} transferred · main: {main}", n=n, total=len(self.entries), main=main)
+
+    def pet_owner(self) -> str:
+        """Who the tamed animals of a Java target belong to: auto | account | first-player (worldbridge.pets)."""
+        return self.pet_owner_box.currentData() or "auto"
 
     def links(self) -> Optional[List[PlayerLink]]:
         if not self.enable.isChecked() or not self.entries:

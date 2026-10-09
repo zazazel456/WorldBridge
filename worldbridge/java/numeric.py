@@ -652,6 +652,10 @@ class JavaNumericWriter:
         with open(os.path.join(self.out, "level.dat"), "wb") as f:
             f.write(nbt.dump(nbt.CompoundTag({"Data": data}), "", compressed=True))
         n_players = write_java_players(self.out, info, self.opt)
+        if not (self.opt.legacy_layout() and blk.version_rank(self.opt.old_version()) < blk.version_rank("1.8")):
+            from ..selection import write_host_playerdata
+
+            n_players += 1 if write_host_playerdata(self.out, data) else 0   # see its docstring (Java 26.1 upgrade)
         if n_players:
             self.progress.log(tr("Players: {n} playerdata files written.", n=n_players))
         icon = java_icon(info.thumbnail_png)    # the game wants a 64 x 64 PNG (a Bedrock world_icon.jpeg is not)

@@ -224,6 +224,30 @@ which **nickname** to link them to:
   (empty inventory, start at spawn).
 - **Bedrock / Pocket Edition 0.x:** the main player is transferred.
 
+**The main player of a Java world** is written like a real single player world: in `level.dat` *and* in
+`playerdata/<UUID>.dat` (the same data: inventory, ender chest, armour, off hand, position, dimension, experience,
+health, hunger, effects, game mode, bed / respawn point). Minecraft 26.1+ moves the file itself into
+`players/data/` when it opens the world, and the player of the world loads it whatever account they play with, so
+no UUID has to be given for the inventory to arrive. Without a link the UUID is a stable one made from the player id
+of the source world. Other players of the source world that are not linked to a nickname are **not** carried
+(their inventories, positions and animals): the conversion says how many.
+
+**Tamed animals** (wolves, cats, parrots, horses, llamas…) belong to a UUID, and the game gives the player the UUID of
+the account that logs in, not the one in the player file. *Tamed animals belong to* (Players tab; `--pet-owner`):
+
+- **The Java account of the nickname** (`account`): the main player is linked to a nickname (above) and the animals get
+  that account's UUID directly. Exact, but the name has to be the right one (premium or offline, see **Premium**).
+- **The first player who opens the world** (`first-player`): no name needed. The animals get a tag and the converted
+  world a small data pack (`datapacks/worldbridge_owner`, Java 1.16+) that hands each one to the nearest player once,
+  when its chunk loads. In single player that is you; **on a multiplayer server it may be another player standing
+  near**. Remove the data pack when all the animals have been claimed.
+- **Automatic** (default): the nickname when the main player has one, else the first player. Java targets older than
+  1.16 cannot run the data pack: link the main player to a nickname there.
+
+**Villagers** keep their profession, level, experience and trades (`Offers`), and a Bedrock village's beds, bell and
+job sites are written as their memories, so the game does not take their job away on the first tick. Experience is
+never made up: a villager that had no job site in Bedrock may still lose its profession.
+
 ## World management tab
 
 Opens the world chosen at the top (or another one; **Use the world opened at the top** goes back to
@@ -343,6 +367,7 @@ worldbridge convert saveData.ms <output> --to java --trim        # convert only 
 | `--move-to center\|X,Z` | move the selected chunks: their centre goes to 0, 0 (`center`) or to X, Z |
 | `--player KEY[=NICKNAME]` | players to transfer (the first is the main one) and their nicknames; KEY as shown by `players`; repeatable |
 | `--offline` | Java: offline UUIDs (non-premium servers) |
+| `--pet-owner account\|first-player` | Java: who the tamed animals belong to: the Java account the main player is linked to (`--player host=NAME`), or the player who opens the world first (data pack). Default: the account when there is a link, else the first player (Bedrock worlds) |
 | `--bta-palette FILE`, `--bta-y-offset N` | Better than Adventure: wood palette, and how far to lower the Overworld (automatic by default) |
 | `--trim`, `--trim-min-time`, `--trim-ring`, `--trim-spawn-radius`, `--trim-drop-forced`, `--trim-drop-unknown` | convert only used chunks, with the trim settings below |
 

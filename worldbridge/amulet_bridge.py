@@ -920,6 +920,13 @@ def write_java_level_dat(path: str, info: WorldInfo, target_version, progress: O
         f.write(nbt.dump(nbt.CompoundTag({"Data": data}), "", compressed=True))
     # playerdata files are upgraded from their own DataVersion
     write_java_players(path, info, JavaWriteOptions(kind="anvil", player_dv=target_dv, target=target, tally=tally), players)
+    # the host of level.dat as a file too: Java 26.1 drops a level.dat player that has a UUID and no file of that name
+    from .selection import write_host_playerdata
+
+    uid = write_host_playerdata(path, data, players)
+    if uid and progress is not None:
+        progress.log(tr("Host player: level.dat and playerdata/{uuid}.dat (Minecraft 26.1+ keeps it when it upgrades "
+                        "the world).", uuid=uid))
 
 
 PLAYERS_26 = os.path.join("players", "data")

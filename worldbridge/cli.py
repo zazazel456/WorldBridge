@@ -303,6 +303,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help=tr("players to transfer (the first becomes the main player) and the nicknames to link them "
                            "to; KEY as shown by 'worldbridge players'. Repeatable"))
     c.add_argument("--offline", action="store_true", help=tr("Java: use offline UUIDs (non-premium servers)"))
+    c.add_argument("--pet-owner", choices=("auto", "account", "first-player"), default="auto",
+                   help=tr("Java: who the tamed animals belong to. account = the Java account the host is linked to "
+                           "(--player host=NAME; exact, but the name has to be right: premium or offline); first-player "
+                           "= no input, a data pack hands them to the player who opens the world first (on a multiplayer "
+                           "server: the nearest player when their chunk loads). Default: account when the host is "
+                           "linked, else first-player (Bedrock worlds)"))
     c.add_argument("--bta-palette", default=None, metavar="FILE", type=_existing_file,
                    help=tr("Better than Adventure: .properties file choosing the vanilla woods of BTA's painted wood "
                            "(see worldbridge/bta/data/palette.example.properties)"))
@@ -477,7 +483,7 @@ def _run(args) -> int:
                        y_offset=args.y_offset, blend=not args.no_blend, ring=not args.no_ring, bta_palette=args.bta_palette,
                        bta_y_offset=args.bta_y_offset, tall_terrain=args.tall_terrain,
                        regen=tuple({"nether": -1, "end": 1}[d] for d in dict.fromkeys(args.regen)),
-                       depth=args.depth)
+                       depth=args.depth, pet_owner=args.pet_owner)
         validate_target(t)                       # before anything is read
         t.selection = _selection(args)
         if args.trim:

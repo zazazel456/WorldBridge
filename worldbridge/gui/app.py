@@ -1023,6 +1023,7 @@ class MainWindow(QMainWindow):
                        regen=self.map_tab.regen_dims(),
                        depth=self.depth_y.value() if self.depth.currentData() == "custom" else self.depth.currentData())
         if fam == "java":
+            t.pet_owner = self.players_tab.pet_owner()
             mode, ver, lim = self.java_ver.currentData()
             t.java_mode, t.version, t.java_version_limit = mode, ver, lim
         elif fam == "bedrock":
