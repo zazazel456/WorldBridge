@@ -39,6 +39,16 @@ start (about 20 s and 430 MB) `run.sh` prepares everything in `.runtime/`, next 
 - if needed, the few X11 libraries (xcb, xkbcommon) that Qt uses and some distributions do not
   install, in `.runtime/syslibs/` (Ubuntu packages checked by SHA-256).
 
+While this happens a **"WorldBridge – first start" window** shows what is being downloaded (package *n of N*),
+the progress bar with percentage, MB done / total, speed and time left, and a **Cancel** button (the next
+start continues where it stopped; nothing half-installed is used). The window follows the interface's
+language and the desktop's light / dark colours. Started from a launcher without a terminal, the Python
+download (the first 30 MB) is shown by a small `kdialog` or `zenity` dialog when one is installed. In a
+terminal, with `./run.sh convert …`, or without a display, plain progress lines are printed instead. If
+something fails the window shows the error; the full log is `.runtime/logs/bootstrap.log`.
+`HTTPS_PROXY`, `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` are honoured. `WORLDBRIDGE_RUNTIME=/other/folder`
+puts the runtime somewhere other than `.runtime/`.
+
 Caches, settings and logs (pip, Amulet, Qt, fontconfig) stay in `.runtime/`, never in `~/.cache`,
 `~/.config`, `~/.local` or the system. To uninstall, delete the program's folder.
 
@@ -355,6 +365,7 @@ MCA Selector selection), `--min-time` (for example 30s, 1m, 5m, 2h or ticks; def
 | Variable | Effect |
 |---|---|
 | `WORLDBRIDGE_LANG=en\|it` | language of the messages, instead of the system's |
+| `WORLDBRIDGE_RUNTIME=DIR` | folder of the local runtime (Python, packages, caches, settings), instead of `.runtime/` next to `run.sh` |
 | `WORLDBRIDGE_WORKERS=N` | number of processes used (`1` = a single core) |
 | `WORLDBRIDGE_NATIVE_STYLE=0` | do not load the desktop's widget style; use Fusion with the desktop's colours |
 | `WORLDBRIDGE_QT_PLUGIN_DIRS` | extra folders where the desktop's Qt style plugins are looked for |

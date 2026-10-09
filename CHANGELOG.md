@@ -7,6 +7,9 @@
   conversion writes the changes into the converted world (any format) from an edited working copy, removed
   when it ends. Opening a Bedrock world in the editor no longer touches its database either (the players
   are read from a private copy).
+- **First-start progress window**: `run.sh` shows a "Downloading dependencies" window (package n of N, percentage,
+  MB, speed, time left, Cancel; Italian / English, light / dark) instead of installing silently; plain progress
+  lines in a terminal. New `tools/bootstrap_ui.py`; `WORLDBRIDGE_RUNTIME` moves the runtime folder.
 
 ## 0.2.2 – review against real worlds (alpha)
 
