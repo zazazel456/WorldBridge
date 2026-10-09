@@ -125,3 +125,69 @@ def test_written_save_has_only_what_the_game_knows(tmp_path):
     assert "RandomSeed" in lvl
     pl = nbt.load(cont.files["players/16141134514358595374.dat"], compressed=None).tag
     assert isinstance(pl["Health"], nbt.ShortTag) and "HealF" in pl
+
+
+# ------------------------------------------------------------------ attributes (neoLegacy: "Ignoring unknown attribute '4'")
+def _mob(eid, ids):
+    return nbt.CompoundTag({"id": nbt.StringTag(eid), "Attributes": nbt.ListTag(
+        [nbt.CompoundTag({"ID": nbt.IntTag(i), "Base": nbt.DoubleTag(1.0)}) for i in ids], 10)})
+
+
+def _ids(e):
+    return [int(nbt.get(a, "ID")) for a in nbt.get_tag(e, "Attributes")]
+
+
+def test_neolegacy_drops_the_attributes_an_entity_class_does_not_register():
+    """The game keeps what each class registers (read off the executable and the world it re-saved): the console
+    wolf has the attack damage (4), neoLegacy's does not and logs "Ignoring unknown attribute '4'"."""
+    neo = _neo()
+    assert _ids(neo.entity(_mob("Wolf", [0, 1, 2, 3, 4]))) == [0, 1, 2, 3]
+    assert _ids(neo.entity(_mob("Zombie", [0, 1, 2, 3, 4, 6]))) == [0, 1, 2, 3, 4, 6]
+    assert _ids(neo.entity(_mob("PigZombie", [0, 1, 2, 3, 4, 6]))) == [0, 1, 2, 3, 4, 6]
+    assert _ids(neo.entity(_mob("EntityHorse", [0, 1, 2, 3, 5]))) == [0, 1, 2, 3, 5]
+    assert _ids(neo.entity(_mob("Creeper", [0, 1, 2, 3, 4]))) == [0, 1, 2, 3, 4]
+    assert _ids(neo.entity(_mob("Cow", [0, 1, 2, 3, 4, 5, 6]))) == [0, 1, 2, 3]       # nothing but the base ones
+    assert _ids(neo.entity(_mob("VillagerGolem", [0, 1, 2, 3, 4]))) == [0, 1, 2, 3]
+    assert _ids(neo.entity(_mob("EnderDragon", [0, 1, 2, 3, 4]))) == [0, 1, 2, 3]
+    assert _ids(neo.entity(_mob("ArmorStand", [0, 1, 2, 3]))) == [0, 2, 3]
+
+
+def test_the_console_targets_keep_the_attributes_as_the_games_wrote_them():
+    for plat in ("ps3", "ps4", "xbox360", "wiiu", "vita"):
+        c = compat_for("tu31", plat, PROFILES["tu31"].allowed)
+        assert _ids(c.entity(_mob("Wolf", [0, 1, 2, 3, 4]))) == [0, 1, 2, 3, 4]
+
+
+def test_an_entity_without_attributes_or_with_named_ones_is_left_alone():
+    neo = _neo()
+    e = nbt.CompoundTag({"id": nbt.StringTag("Wolf")})
+    assert "Attributes" not in neo.entity(e)
+    named = nbt.CompoundTag({"id": nbt.StringTag("Wolf"), "Attributes": nbt.ListTag(
+        [nbt.CompoundTag({"Name": nbt.StringTag("generic.maxHealth"), "Base": nbt.DoubleTag(8.0)})], 10)})
+    assert len(nbt.get_tag(neo.entity(named), "Attributes")) == 1
+
+
+# ------------------------------------------------------------------ block entities (neoLegacy's TileEntity registry)
+def test_neolegacy_only_gets_the_block_entities_it_registers():
+    """TileEntity::staticCtor of neoLegacy has no Bed (nor ShulkerBox / EndGateway / Structure): the game skips the
+    ones it does not know, so the converter says so instead of writing them."""
+    import numpy as np
+    from collections import Counter
+    from worldbridge.lce.compat import NEOLEGACY_TILES
+    from worldbridge.lce.world import sanitize_tiles
+
+    blocks = np.zeros((128, 16, 16), np.uint16)
+    blocks[64, 2, 3] = 26
+    blocks[64, 4, 5] = 54
+
+    def te(tid, x, z):
+        return nbt.CompoundTag({"id": nbt.StringTag(tid), "x": nbt.IntTag(x), "y": nbt.IntTag(64), "z": nbt.IntTag(z)})
+
+    tiles = [te("minecraft:bed", 3, 2), te("minecraft:chest", 5, 4)]
+    lost = Counter()
+    kept = sanitize_tiles(tiles, blocks, 0, 0, NEOLEGACY_TILES, lce=True, lost=lost)
+    assert [nbt.get(t, "id") for t in kept] == ["Chest"] and lost == {"Bed": 1}
+    kept = sanitize_tiles(tiles, blocks, 0, 0, None, lce=True)                  # the consoles keep the bed
+    assert [nbt.get(t, "id") for t in kept] == ["Bed", "Chest"]
+    assert compat_for("tu31", "win64", PROFILES["tu31"].allowed).tiles == NEOLEGACY_TILES
+    assert compat_for("tu54", "ps4", PROFILES["tu54"].allowed).tiles is None

@@ -18,6 +18,8 @@ from .. import entities as _ent
 from .. import ids, nbt
 from ..model import DIM_LABEL, NETHER, OVERWORLD, THE_END, NumericChunk, Progress, WorldInfo, WorldSource, dimension_of
 from . import chunk as lch
+from . import auxfiles as _aux
+from . import thumbmeta as _thumb
 from . import compat as _compat
 from . import region as lreg
 from .container import PLATFORMS, SaveContainer
@@ -267,6 +269,7 @@ class LCEWorld(WorldSource):
             elif name.startswith("data/") or name in ("requiredGameRules.dat",):
                 info.extra_files[name] = blob
         info.thumbnail_png = c.thumbnail
+        info.source_platform = c.platform.key
         info.source_description = f"Legacy Console Edition – {c.platform.label} (save v{c.version}, orig v{c.original_version})"
         return info
 
@@ -504,7 +507,7 @@ class LCEWriter:
             c.entities = None
         lost_tiles: Counter = Counter()
         c.tile_entities = [self.compat.holder(t) for t in
-                           sanitize_tiles(chunk.tile_entities, c.blocks, dx, dz, self.profile.tiles, lce=True,
+                           sanitize_tiles(chunk.tile_entities, c.blocks, dx, dz, self.compat.tiles or self.profile.tiles, lce=True,
                                           lost=lost_tiles)]
         for k, n in lost_tiles.items():
             self.compat.dropped[f"tile {k}"] = self.compat.dropped.get(f"tile {k}", 0) + n
@@ -576,6 +579,7 @@ class LCEWriter:
         sony = self.platform.key in SONY
         same_place = self.opt.offset_x == 0 and self.opt.offset_z == 0 and "XZSize" in info.level
         raw_players = {k.split(":", 1)[1]: v for k, v in info.extra_files.items() if k.startswith("raw_player:")}
+        written: List[Tuple[str, str]] = []   # (player of the source, file written for the target), the host first
         for i, (name, player) in enumerate(info.players.items()):
             raw = next((v for k, v in raw_players.items() if k.rsplit("/", 1)[-1][:-4] == name), None)
             nick = getattr(info.player_links.get(name), "nickname", None)
@@ -589,6 +593,7 @@ class LCEWriter:
                         orig = f"players/{chosen}.dat"  # player id chosen in the "Giocatori" tab / --player-id
                         self._check_player_id(i, chosen, chosen)
                 cont.files[orig] = raw  # unchanged world position: keep the player file byte for byte
+                written.append((name, orig))
                 continue
             p = legacy_player(player, self.opt, self.target_coords)
             # the fields and types the game writes; the game's own player files keep their name in "UUID"
@@ -599,6 +604,7 @@ class LCEWriter:
                 # the first "P_" file is loaded for the primary (local) user
                 fname = name if is_sony_name else f"P_000000000000_{i:08d}_Player{i}"
                 cont.files[f"{fname}.dat"] = nbt.dump(p, "")
+                written.append((name, fname))
             else:
                 fname = name if re.fullmatch(r"[0-9A-Za-z_\-]{1,40}", name) and not is_sony_name else f"player{i}"
                 chosen = None
@@ -608,6 +614,7 @@ class LCEWriter:
                     fname = chosen = nick  # player id chosen in the "Giocatori" tab
                 self._check_player_id(i, fname, chosen)
                 cont.files[f"players/{fname}.dat"] = nbt.dump(p, "")
+                written.append((name, fname))
         for name, blob in info.extra_files.items():
             if name.startswith("data/map_") and not same_place:
                 try:  # LCE knows the 36 map colours of Java 1.6
@@ -617,20 +624,39 @@ class LCEWriter:
                     blob = java_map_file(legacy_map_data(data, 36))
                 except Exception:  # noqa: BLE001
                     pass
+            if name == _aux.MAPPINGS_FILE:
+                # not NBT: the size of the player ids in it depends on the platform (see lce/auxfiles.py)
+                if same_place and info.source_platform:
+                    cont.files[name], kept, lost = _aux.convert_mappings(
+                        blob, info.source_platform, self.platform.key, written)
+                    if lost:
+                        self.progress.warn(tr(
+                            "{n} large-map entries of players that {platform} does not know were left out of {file}.",
+                            n=lost, platform=self.platform.label.split(" (")[0], file=name))
+                continue
             if name.startswith("data/map_") or name == "data/idcounts.dat" or (same_place and name.startswith("data/")):
                 cont.files[name] = blob
         folder = self.out_dir
+        # the host options (difficulty, PvP, TNT...) of the world live in a text chunk of the thumbnail
+        try:
+            seed = int(nbt.get(level, "RandomSeed", 0) or 0)
+        except (TypeError, ValueError):
+            seed = 0
+        thumb = _thumb.with_metadata(info.thumbnail_png or _default_thumbnail(), level,
+                                     0 if self.platform.key in OLD_GEN else self.opt.world_size, seed)
         if self.platform.key == "win64":
             path = cont.save(folder, "saveData.ms")
-            thumb = info.thumbnail_png or _default_thumbnail()
             os.makedirs(os.path.join(folder, "thumbnails"), exist_ok=True)
             with open(os.path.join(folder, "thumbnails", "thumbData.png"), "wb") as f:
                 f.write(thumb)
         else:
             path = cont.save(folder)
-            if info.thumbnail_png and self.platform.key in ("ps4", "xboxone", "switch", "ps3"):
-                with open(os.path.join(folder, "THUMB" if self.platform.key != "ps3" else "ICON0.PNG"), "wb") as f:
-                    f.write(info.thumbnail_png)
+            if self.platform.key in ("ps4", "xboxone", "switch", "ps3"):
+                with open(os.path.join(folder, "THUMB"), "wb") as f:
+                    f.write(thumb)
+                if self.platform.key == "ps3" and info.thumbnail_png:
+                    with open(os.path.join(folder, "ICON0.PNG"), "wb") as f:
+                        f.write(info.thumbnail_png)
         if self.replaced_blocks:
             self.progress.warn(
                 tr("{n} blocks that do not exist in {version} were replaced with equivalents.", n=self.replaced_blocks,

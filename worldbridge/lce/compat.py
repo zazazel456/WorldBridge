@@ -51,6 +51,40 @@ NEOLEGACY_ENTITIES = frozenset((
     "VillagerGolem", "Witch", "WitherBoss", "WitherSkull", "Wolf", "XPOrb", "Zombie",
 ))
 
+# neoLegacy's attribute ids (SharedMonsterAttributes): 0 max health, 1 follow range, 2 knockback resistance,
+# 3 movement speed, 4 attack damage, 5 horse jump strength, 6 zombie reinforcements.  An entity only has the
+# attributes its registerAttributes() registers (LivingEntity 0, 2, 3; Mob adds 1; Monster adds 4; the horse 5;
+# the zombie 6; read off the game's executable, checked against the save the game writes): a saved one the
+# class lacks makes the game log "Ignoring unknown attribute '4'".  The wolf lacks the attack damage.
+_ATTR_MONSTERS = frozenset((
+    "Blaze", "CaveSpider", "Creeper", "ElderGuardian", "Enderman", "Endermite", "Giant", "Guardian", "Monster",
+    "PigZombie", "PolarBear", "Silverfish", "Skeleton", "Spider", "Witch", "WitherBoss", "Zombie",
+))
+_ATTR_BASE = frozenset((0, 1, 2, 3))
+
+
+def neolegacy_attribute_ids(eid: str) -> FrozenSet[int]:
+    """The attribute ids neoLegacy's entity ``eid`` registers."""
+    if eid == "ArmorStand":
+        return frozenset((0, 2, 3))
+    ids = set(_ATTR_BASE)
+    if eid in _ATTR_MONSTERS:
+        ids.add(4)
+    if eid in ("PigZombie", "Zombie"):
+        ids.add(6)
+    if eid == "EntityHorse":
+        ids.add(5)
+    return frozenset(ids)
+
+
+# neoLegacy's TileEntity::staticCtor registrations (read off the executable): no Bed (the colour is not kept by that
+# game), ShulkerBox, EndGateway or Structure; whatever else is saved is skipped by the game when it loads the chunk
+NEOLEGACY_TILES = frozenset((
+    "Airportal", "Banner", "Beacon", "Cauldron", "Chest", "Comparator", "Control", "DLDetector", "Dropper",
+    "EnchantTable", "EnderChest", "FlowerPot", "Furnace", "Hopper", "MobSpawner", "Music", "Piston", "RecordPlayer",
+    "Sign", "Skull", "Trap",
+))
+
 _SPLASH = 0x4000
 
 
@@ -75,6 +109,9 @@ class Compat:
     items: Optional[FrozenSet[int]]
     enchantments: Optional[FrozenSet[int]]
     entities: Optional[FrozenSet[str]] = None
+    # the attribute ids an entity of the game has (None: the saved lists are kept as they are)
+    attribute_ids: Optional[Callable[[str], FrozenSet[int]]] = None
+    tiles: Optional[FrozenSet[str]] = None          # the block entity ids the game registers (None: no limit)
     item_map: Dict[int, int] = field(default_factory=dict)
     ench_map: Dict[int, int] = field(default_factory=dict)
     string_items: bool = False          # item ids as registry names ("minecraft:egg"), as the console saves have them
@@ -195,6 +232,16 @@ class Compat:
             offers["Recipes"] = recipes
         return t
 
+    def attributes(self, e: nbt.CompoundTag) -> None:
+        """Takes out of the entity's saved ``Attributes`` the ones its class in the game does not have."""
+        lst = nbt.get_tag(e, "Attributes")
+        if self.attribute_ids is None or not isinstance(lst, nbt.ListTag):
+            return
+        known = self.attribute_ids(nbt.get(e, "id", ""))
+        kept = nbt.ListTag([a for a in lst if not isinstance(nbt.get(a, "ID"), int) or nbt.get(a, "ID") in known], 10)
+        if len(kept) != len(lst):
+            e["Attributes"] = kept
+
     def entity(self, e: nbt.CompoundTag) -> Optional[nbt.CompoundTag]:
         """The entity for the game (None when it has no such entity, or it is an item it lacks)."""
         eid = nbt.get(e, "id", "")
@@ -203,6 +250,7 @@ class Compat:
             return None
         had_item = isinstance(nbt.get_tag(e, "Item"), nbt.CompoundTag)
         self.holder(e)
+        self.attributes(e)
         if had_item and eid == "Item" and "Item" not in e:
             return None                                   # a dropped item the game does not have
         riding = nbt.get_tag(e, "Riding")
@@ -217,8 +265,8 @@ class Compat:
 
 def compat_for(profile_key: str, platform: str, blocks: Optional[FrozenSet[int]]) -> Compat:
     if platform == "win64":            # neoLegacy, checked against its source
-        return Compat(blocks, NEOLEGACY_ITEMS, NEOLEGACY_ENCH, NEOLEGACY_ENTITIES,
-                      item_map={425: 176}, ench_map={61: 65, 62: 64})
+        return Compat(blocks, NEOLEGACY_ITEMS, NEOLEGACY_ENCH, NEOLEGACY_ENTITIES, neolegacy_attribute_ids,
+                      NEOLEGACY_TILES, item_map={425: 176}, ench_map={61: 65, 62: 64})
     allowed = {"tu31": _ITEMS_18, "tu46": _ITEMS_19}.get(profile_key, _ITEMS_112)
     ench = {"tu31": _ENCH_18, "tu46": _ENCH_19}.get(profile_key, _ENCH_112)
     # the console saves (X360 TU31+, Wii U v112+, PS3 / PS4 / Vita) name their items; only the oldest ones
