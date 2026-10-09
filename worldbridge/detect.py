@@ -339,14 +339,29 @@ def snapshot(path: str, parent: str, link: bool = False) -> str:
       that world would lose it) -> ``link=True``: hard links (instant, no extra space) for the files,
       which are only read, and no session.lock.
     Plain copies where links are not possible (another disk: see ``snapshot_parent``)."""
-    import shutil
     import tempfile
 
     os.makedirs(parent, exist_ok=True)
     dest = os.path.join(tempfile.mkdtemp(prefix="snap_", dir=parent), os.path.basename(os.path.normpath(path)) or "world")
 
+    linked_copy(path, dest, lambda src: link or src.endswith((".ldb", ".sst")))
+    return dest
+
+
+def linked_copy(path: str, dest: str, link_it=lambda src: True, ignore=("LOCK", "session.lock"),
+                progress=None) -> None:
+    """Copy the folder ``path`` into ``dest`` (which must not exist yet): a file for which ``link_it(source
+    path)`` is true becomes a hard link to the original, the others real copies; a hard link that cannot be
+    made (another disk, a file system without links) falls back to a copy.  Folders named ``.worldbridge_*``
+    (working folders of ours) are left out.  ``progress`` (a model.Progress) makes the copy cancellable
+    between two files.  The caller must never write a linked file in place: that would change the original
+    (write a new file and ``os.replace`` it)."""
+    import shutil
+
     def link_or_copy(src, dst):
-        if link or src.endswith((".ldb", ".sst")):
+        if progress is not None:
+            progress.check()
+        if link_it(src):
             try:
                 os.link(src, dst)
                 return
@@ -354,8 +369,7 @@ def snapshot(path: str, parent: str, link: bool = False) -> str:
                 pass
         shutil.copy2(src, dst)
 
-    shutil.copytree(path, dest, ignore=shutil.ignore_patterns("LOCK", "session.lock"), copy_function=link_or_copy)
-    return dest
+    shutil.copytree(path, dest, ignore=shutil.ignore_patterns(*ignore, ".worldbridge_*"), copy_function=link_or_copy)
 
 
 def snapshot_parent(path: str, tmp: str) -> Optional[str]:
