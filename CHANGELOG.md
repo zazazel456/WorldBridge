@@ -5,6 +5,19 @@
 A full review of the code with 110 real worlds downloaded from the web (Java Classic → 26.3, Bedrock
 1.1 → 1.26.40, PE 0.x, LCE on PS3 / PS4 / Vita / Wii U / Xbox 360). Fixed so far:
 
+**Found by loading converted LCE worlds in the real neoLegacy (Windows64) under Wine**
+- **A PS3 save made neoLegacy loop forever while loading** (an 8 GB log of `-- -1 (0xffffffffffffffff) = -1`):
+  `data/largeMapDataMappings.dat` was copied unchanged, and its player ids are `sizeof(PlayerUID)` raw bytes (8 on
+  Xbox 360 / Windows64, 28 on PS3 / Vita / PS4, 20 on Wii U). It is now rewritten for every LCE -> LCE pair (ids rebuilt
+  from the player files of the target, entries of unknown players dropped, empty table where the id size was never seen).
+- **A converted world started Peaceful** (every hostile mob of the save vanished, no PvP / TNT / fire spread): the game
+  reads the world's host options from a text chunk (`4J_HOSTOPTIONS`) of the thumbnail PNG, not from `level.dat`. The
+  thumbnail of every PNG target (Windows64, PS3, PS4, Xbox One, Switch) now carries seed, difficulty, game type, world
+  size, structures, bonus chest... of the world, the switches of a new world on.
+- neoLegacy block entities: only the ones its `TileEntity::staticCtor` registers are written (no `Bed`), and the
+  `Attributes` of an entity are cut to the ids its class registers (the wolf has no attack damage: "Ignoring unknown
+  attribute '4'").
+
 **Found by opening converted worlds in real Bedrock Dedicated Servers (1.14 - 26.52)**
 - **Signs of Java ≤ 1.19 and Console worlds were lost on Bedrock 1.18+** (the block stayed an unknown
   `universal_minecraft:wall_sign`): their lines are translated before the block. Old numeric Nether portals

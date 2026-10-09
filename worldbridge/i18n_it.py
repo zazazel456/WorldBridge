@@ -427,6 +427,8 @@ _SECTIONS = {
             "Nessun id giocatore indicato: il giocatore host è scritto come players/{file}.dat, un file che {platform} non carica, quindi il giocatore partirà dallo spawn con l'inventario vuoto. Indica il tuo id con --player-id (il nome del tuo file in players/ di un mondo già giocato su quella console, o usa «Dal mio mondo…» nella GUI).",
         '“{name}” is not an XUID: the game loads the player from players/<number>.dat, so it will start at the spawn with an empty inventory. Give the number (the name of your file in players/ of a world already played, or use “From my world…” in the GUI).':
             "«{name}» non è un XUID: il gioco carica il giocatore da players/<numero>.dat, quindi partirà dallo spawn con l'inventario vuoto. Indica il numero (il nome del tuo file in players/ di un mondo già giocato, o usa «Dal mio mondo…» nella GUI).",
+        '{n} large-map entries of players that {platform} does not know were left out of {file}.':
+            '{n} voci di mappe grandi di giocatori che {platform} non conosce sono state escluse da {file}.',
         '{n} blocks that do not exist in {version} were replaced with equivalents.':
             '{n} blocchi non esistenti in {version} sono stati sostituiti con equivalenti.',
         '{n} items':

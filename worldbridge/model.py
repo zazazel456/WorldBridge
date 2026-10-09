@@ -221,6 +221,8 @@ class WorldInfo:
     # (e.g. LCE map_*.dat) path -> bytes
     extra_files: Dict[str, bytes] = field(default_factory=dict)
     source_description: str = ""
+    # LCE sources: platform key of the save (the layout of some auxiliary files depends on it)
+    source_platform: str = ""
     thumbnail_png: Optional[bytes] = None
     # key -> selection.PlayerLink chosen in the "Giocatori" tab (nickname / UUID in the target)
     player_links: Dict[str, object] = field(default_factory=dict)
