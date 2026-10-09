@@ -13,11 +13,26 @@ A full review of the code with 110 real worlds downloaded from the web (Java Cla
   no errors left in the game's log.
 - 720 automated tests.
 
+The cause and the fix of each problem: [fixes 82–173](docs/FIX_HISTORY.md#022).
+
 **Not yet checked in game**: worlds written for the consoles (Xbox 360, PS3, Wii U, PS Vita, PS4, Xbox One, Switch).
 Their saves are read from real files (Xbox One and Switch excepted, none was found), but no converted world has
 been opened on those consoles or their emulators yet. Wii U, PS Vita and Xbox 360 targets do not carry the world's
 host options yet (difficulty, PvP, TNT, fire spread: see the neoLegacy thumbnail fix below), and the Xbox One /
 Switch map-ownership table is written empty. Reports from these consoles are the most wanted.
+
+**Crashes and worlds that could not be read**
+- **Indev levels with mobs crashed the conversion** (float positions mixed with doubles); fitting a tall world into
+  a lower game crashed on columns whose surface was at the very bottom.
+- **Chunks written by MCEdit 2** (compressed twice: zlib around gzip) are read.
+- **Bedrock item frames in a chunk without that sub chunk** stopped the transfer of entities and containers with a
+  `KeyError` printed as raw bytes: they are skipped.
+- **Bedrock actors of chunks with a negative x were removed as orphans** and not moved by `--depth`.
+- Worlds that are not worlds get a clear message instead of a traceback: a Git LFS pointer in place of `level.dat`,
+  New Nintendo 3DS worlds, Bedrock folders without a database or without terrain. Folders holding a single-file
+  world (Classic, Indev, `.mcworld`), one world among several subfolders and console saves named `savegame.wii`,
+  `GAMEDATA-N.bin` or by timestamp (Wii U) are recognised.
+- PE 0.8: the Nether reactor of PE sources keeps its block entity.
 
 **Found by loading converted LCE worlds in the real neoLegacy (Windows64) under Wine**
 - **A PS3 save made neoLegacy loop forever while loading** (an 8 GB log of `-- -1 (0xffffffffffffffff) = -1`):
