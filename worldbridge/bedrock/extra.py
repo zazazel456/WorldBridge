@@ -124,13 +124,83 @@ def bedrock_player_to_legacy(p: nbt.CompoundTag) -> nbt.CompoundTag:
     out["Inventory"], out["EnderItems"] = _player_items(p, items.to_legacy)
     for a in nbt.get_tag(p, "Attributes") or []:
         name = nbt.get(a, "Name")
+        cur = float(nbt.get(a, "Current", 0.0) or 0.0)
         if name == "minecraft:health":
             out["Health"] = nbt.FloatTag(float(nbt.get(a, "Current", 20.0)))
         elif name == "minecraft:player.hunger":
             out["foodLevel"] = nbt.IntTag(int(float(nbt.get(a, "Current", 20.0))))
+        elif name == "minecraft:player.saturation":
+            out["foodSaturationLevel"] = nbt.FloatTag(cur)
+        elif name == "minecraft:player.exhaustion":
+            out["foodExhaustionLevel"] = nbt.FloatTag(cur)
         elif name == "minecraft:player.level":
             out["XpLevel"] = nbt.IntTag(int(float(nbt.get(a, "Current", 0.0))))
+        elif name == "minecraft:player.experience":
+            out["XpP"] = nbt.FloatTag(max(0.0, min(cur, 1.0)))
+    if "XpLevel" not in out and nbt.get(p, "PlayerLevel") is not None:
+        out["XpLevel"] = nbt.IntTag(int(nbt.get(p, "PlayerLevel")))
+    if "XpP" not in out and nbt.get(p, "PlayerLevelProgress") is not None:
+        out["XpP"] = nbt.FloatTag(max(0.0, min(float(nbt.get(p, "PlayerLevelProgress")), 1.0)))
+    if "XpLevel" in out:
+        out["XpTotal"] = nbt.IntTag(_xp_total(int(out["XpLevel"].py_data),
+                                              float(out["XpP"].py_data) if "XpP" in out else 0.0))
+    effects = _java_effects(nbt.get_tag(p, "ActiveEffects"))
+    if len(effects):
+        out["ActiveEffects"] = effects
+    slot = nbt.get(p, "SelectedInventorySlot")
+    if slot is not None and 0 <= int(slot) <= 8:
+        out["SelectedItemSlot"] = nbt.IntTag(int(slot))
+    _java_spawn_point(p, out)
     return out
+
+
+def _xp_total(level: int, progress: float) -> int:
+    """Experience points of a level plus the fraction of the next one (the XpTotal of a Java player)."""
+    if level <= 16:
+        base, nxt = level * level + 6 * level, 2 * level + 7
+    elif level <= 31:
+        base, nxt = int(2.5 * level * level - 40.5 * level + 360), 5 * level - 38
+    else:
+        base, nxt = int(4.5 * level * level - 162.5 * level + 2220), 9 * level - 158
+    return base + int(round(progress * nxt))
+
+
+# Bedrock effect id -> Java's numeric id (Bedrock numbers levitation .. darkness differently; the effects Java has no
+# equivalent for are left out)
+_BEDROCK_EFFECTS = {**{i: i for i in range(1, 24)}, 24: 25, 26: 29, 27: 28, 28: 31, 29: 32, 30: 33}
+
+
+def _java_effects(src) -> nbt.ListTag:
+    out = nbt.ListTag([], 10)
+    for t in src or []:
+        jid = _BEDROCK_EFFECTS.get(int(nbt.get(t, "Id", 0) or 0))
+        if jid is None:
+            continue
+        out.append(nbt.CompoundTag({
+            "Id": nbt.ByteTag(jid), "Amplifier": nbt.ByteTag(int(nbt.get(t, "Amplifier", 0) or 0) & 0x7F),
+            "Duration": nbt.IntTag(int(nbt.get(t, "Duration", 0) or 0)),
+            "Ambient": nbt.ByteTag(1 if nbt.get(t, "Ambient") else 0),
+            "ShowParticles": nbt.ByteTag(1 if nbt.get(t, "ShowParticles", 1) else 0)}))
+    return out
+
+
+_JAVA_DIM_NAMES = {OVERWORLD: "minecraft:overworld", NETHER: "minecraft:the_nether", THE_END: "minecraft:the_end"}
+
+
+def _java_spawn_point(p: nbt.CompoundTag, out: nbt.CompoundTag) -> None:
+    """The bed / respawn anchor of a Bedrock player (SpawnBlockPosition, else SpawnX/Y/Z) as Java's SpawnX/Y/Z and
+    SpawnDimension; nothing when the player never set one."""
+    for keys in (("SpawnBlockPositionX", "SpawnBlockPositionY", "SpawnBlockPositionZ"), ("SpawnX", "SpawnY", "SpawnZ")):
+        try:
+            x, y, z = (int(nbt.get(p, k)) for k in keys)
+        except (TypeError, ValueError):
+            continue
+        if all(abs(v) < 30_000_000 for v in (x, y, z)):
+            out["SpawnX"], out["SpawnY"], out["SpawnZ"] = nbt.IntTag(x), nbt.IntTag(y), nbt.IntTag(z)
+            out["SpawnForced"] = nbt.ByteTag(0)
+            dim = DIM_FROM_BEDROCK.get(int(nbt.get(p, "SpawnDimension", 0) or 0), OVERWORLD)
+            out["SpawnDimension"] = nbt.StringTag(_JAVA_DIM_NAMES[dim])
+            return
 
 
 def bedrock_player_to_java(p: nbt.CompoundTag) -> nbt.CompoundTag:
@@ -294,6 +364,45 @@ def read_bedrock_players(path: str) -> Dict[str, nbt.CompoundTag]:
         return {}
     finally:
         db.close()
+
+
+# ------------------------------------------------------------------ villages
+
+_POI_TYPES = {0: "home", 1: "meeting_point", 2: "job_site"}
+
+
+def read_village_pois(path: str) -> Dict[int, Dict[str, Tuple[int, int, int]]]:
+    """{villager UniqueID: {home, meeting_point, job_site: (x, y, z)}} from the ``VILLAGE_Overworld_<uuid>_POI`` records
+    of a Bedrock world.  Each record lists, for every villager of the village, three slots: its bed (Type 0), the
+    meeting point, the bell (Type 1) and its job site (Type 2); an unused slot is ``{Skip: 1}``."""
+    out: Dict[int, Dict[str, Tuple[int, int, int]]] = {}
+    db = _db(path)
+    try:
+        for key, raw in db.iterate(b"VILLAGE_Overworld_", b"VILLAGE_Overworld_\xff"):
+            if not bytes(key).endswith(b"_POI"):
+                continue
+            try:
+                root = nbt.load(bytes(raw), little_endian=True, compressed=False).tag
+            except Exception:  # noqa: BLE001
+                continue
+            for rec in nbt.get_tag(root, "POI") or []:
+                uid = nbt.get(rec, "VillagerID")
+                if uid is None:
+                    continue
+                spots = {}
+                for slot, inst in enumerate(nbt.get_tag(rec, "instances") or []):
+                    if nbt.get(inst, "Skip") or nbt.get(inst, "X") is None:
+                        continue
+                    kind = _POI_TYPES.get(int(nbt.get(inst, "Type", slot)))
+                    if kind is not None:
+                        spots[kind] = (int(nbt.get(inst, "X")), int(nbt.get(inst, "Y")), int(nbt.get(inst, "Z")))
+                if spots:
+                    out[int(uid)] = spots
+    except Exception:  # noqa: BLE001
+        return out
+    finally:
+        db.close()
+    return out
 
 
 # ------------------------------------------------------------------ source side

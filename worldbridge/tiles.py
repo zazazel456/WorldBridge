@@ -624,6 +624,10 @@ MIN_VERSION: Dict[str, Tuple[int, Tuple[int, ...]]] = {
     "test_block": (4325, (999, 0, 0)), "test_instance_block": (4325, (999, 0, 0)),   # 1.21.5, Java only
 }
 DECORATED_POT_SHERDS_DV = 3438   # 1.20: "shards" -> "sherds" (Bedrock 1.20.0)
+# 26.x (DataVersion 4996.1, PotDecorationsBlockEntityUnflatteningFix): the sherds are a map {back, left, right, front} of
+# item stacks; a chunk stamped 4997 or later is read in that form only ("Not a map"), an older one is upgraded by the game
+DECORATED_POT_MAP_DV = 4997
+_POT_SIDES = ("back", "left", "right", "front")
 TRIAL_CONFIG_REF_DV = 4556       # a trial spawner's configuration as the name of a data pack one (a string): seen in 1.21.10 worlds
 BEEHIVE_RENAME_DV = 3818         # 1.20.5: Bees / EntityData / MinOccupationTicks -> bees / entity_data / min_ticks_in_hive
 GOLEM_POSES = ("standing", "sitting", "running", "star")
@@ -799,11 +803,18 @@ def _sherds(names) -> Optional[list]:
     return names if any(n != "brick" for n in names) else None
 
 
+def _pot_sherd_names(sh) -> list:
+    """The four sherd names of a Java pot's ``sherds``: the list (back, left, right, front) or the 26.x map of item stacks."""
+    if isinstance(sh, nbt.CompoundTag):
+        return [str(nbt.get(nbt.get_tag(sh, side) or nbt.CompoundTag(), "id", "brick")) for side in _POT_SIDES]
+    return [s.py_data for s in sh or [] if isinstance(s, nbt.StringTag)]
+
+
 def _decorated_pot_from_java(c, t):
     sh = nbt.get_tag(t, "sherds")
     if sh is None:
         sh = nbt.get_tag(t, "shards")
-    c["sherds"] = _sherds(s.py_data for s in sh or [] if isinstance(s, nbt.StringTag))
+    c["sherds"] = _sherds(_pot_sherd_names(sh))
     _read_loot_java(c, t)
     c["item"] = _item_from(nbt.get_tag(t, "item"), "java")
 
@@ -819,8 +830,12 @@ def _decorated_pot_from_bedrock(c, t):
 
 def _decorated_pot_to_java(c, t, dv):
     if c.get("sherds"):
-        t["sherds" if dv >= DECORATED_POT_SHERDS_DV else "shards"] = nbt.ListTag(
-            [nbt.StringTag("minecraft:" + s) for s in c["sherds"]], 8)
+        if dv >= DECORATED_POT_MAP_DV:
+            t["sherds"] = nbt.CompoundTag({side: nbt.CompoundTag({"id": nbt.StringTag("minecraft:" + s), "count": nbt.IntTag(1)})
+                                           for side, s in zip(_POT_SIDES, c["sherds"])})
+        else:
+            t["sherds" if dv >= DECORATED_POT_SHERDS_DV else "shards"] = nbt.ListTag(
+                [nbt.StringTag("minecraft:" + s) for s in c["sherds"]], 8)
     if not _write_loot_java(c, t) and c.get("item"):
         t["item"] = _item_to(c["item"], "java", data_version=dv)
 

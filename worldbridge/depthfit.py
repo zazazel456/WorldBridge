@@ -303,7 +303,15 @@ class DepthFit:
             if ny is None:
                 lost_e += 1
                 continue
-            ents.append(dict(e, pos=(x, float(ny), z)))
+            moved = dict(e, pos=(x, float(ny), z))
+            if isinstance(e.get("poi"), dict):                   # a villager's bed / bell / job site go with their blocks
+                poi = {}
+                for k, (px, py, pz) in e["poi"].items():
+                    npy = self.block_y(int(px), int(py), int(pz))
+                    if npy is not None:
+                        poi[k] = (px, npy, pz)
+                moved["poi"] = poi
+            ents.append(moved)
         self.count_lost(cx, cz, lost_t, lost_e)
         return tiles, ents
 

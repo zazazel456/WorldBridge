@@ -285,6 +285,42 @@ def blocks_at(root: nbt.CompoundTag, positions) -> Dict[Tuple[int, int, int], st
     return out
 
 
+# the blocks that can hold these block entities; a block entity on air (or on another block than these) has no
+# block: the game logs "Invalid block entity" for it and drops it
+_AIRS = frozenset({"air", "cave_air", "void_air"})
+_HOLDERS = {"mob_spawner": {"spawner"}, "spawner": {"spawner"}, "barrel": {"barrel"}, "hopper": {"hopper"},
+            "dispenser": {"dispenser"}, "dropper": {"dropper"}, "furnace": {"furnace"}, "smoker": {"smoker"},
+            "blast_furnace": {"blast_furnace"}, "brewing_stand": {"brewing_stand"}, "ender_chest": {"ender_chest"},
+            "enchanting_table": {"enchanting_table"}, "jukebox": {"jukebox"}, "beacon": {"beacon"}}
+
+
+def _holds(bid: str, block: Optional[str]) -> bool:
+    """Whether the block ``block`` (no namespace; None: unknown) can have the block entity ``bid``."""
+    if block is None:
+        return True
+    if block in _AIRS:
+        return False
+    bid = bid.split(":", 1)[-1]
+    if bid == "chest" or bid == "trapped_chest":
+        return block.endswith("chest")
+    holders = _HOLDERS.get(bid)
+    return holders is None or block in holders
+
+
+def drop_orphans(root: nbt.CompoundTag, tiles_nbt) -> Tuple[list, int]:
+    """(block entities that have their block, number left out) of a chunk's NBT block entities."""
+    tiles_nbt = list(tiles_nbt)
+    pos = []
+    for t in tiles_nbt:
+        try:
+            pos.append((int(nbt.get(t, "x")), int(nbt.get(t, "y")), int(nbt.get(t, "z"))))
+        except (TypeError, ValueError):
+            pos.append(None)
+    names = blocks_at(root, [p for p in pos if p is not None])
+    kept = [t for t, p in zip(tiles_nbt, pos) if p is None or _holds(str(nbt.get(t, "id", "")), names.get(p))]
+    return kept, len(tiles_nbt) - len(kept)
+
+
 def resolve_kinds(root: nbt.CompoundTag, canon: List[dict]) -> int:
     """Bedrock has one block entity for the chest and the trapped chest, the campfire and the soul campfire, the
     beehive and the bee nest: the canonical ones read from it get the kind of the block that is in the chunk.
@@ -456,11 +492,20 @@ def _moved_key(move, dim: int, cx: int, cz: int, tl: list, el: list):
 
 def inject_from_bedrock(src: str, out_dir: str, info: WorldInfo, progress: Progress, move=None, depth=None, target_dv=None):
     canon = {}
+    from ..bedrock.extra import read_village_pois
+
+    pois = read_village_pois(src)
     for (dim, cx, cz), (te, en) in _bedrock_chunks(src).items():
         tl = tiles.read_canon(te, "bedrock")
         el = [e for e in en if isinstance(e, dict)] + ent.read_list([e for e in en if not isinstance(e, dict)], "bedrock")
+        if dim == OVERWORLD:
+            for c in el:
+                if c.get("uid") in pois and c.get("name") == "villager":
+                    c["poi"] = dict(pois[c["uid"]])             # bed, bell and job site: the memories of its brain
         if depth is not None and dim == OVERWORLD:
             tl, el = depth.move_canon(cx, cz, tl, el)           # with their blocks (worldbridge.depthfit)
+        if getattr(info, "pet_plan", None) is not None:
+            info.pet_plan.apply(el)                             # the owners of the tamed animals (worldbridge.pets)
         if tl or el:
             canon[_moved_key(move, dim, cx, cz, tl, el)] = (tl, el)
     inject_canon(out_dir, canon, progress, target_dv)
@@ -473,6 +518,8 @@ def inject_from_java(src: str, out_dir: str, info: WorldInfo, progress: Progress
         el = ent.read_list(en, "java")
         if depth is not None and dim == OVERWORLD:
             tl, el = depth.move_canon(cx, cz, tl, el)
+        if getattr(info, "pet_plan", None) is not None:
+            info.pet_plan.apply(el)
         if tl or el:
             canon[_moved_key(move, dim, cx, cz, tl, el)] = (tl, el)
     inject_canon(out_dir, canon, progress, target_dv)
@@ -539,7 +586,7 @@ def inject_canon(out_dir: str, canon, progress: Progress, target_dv: Optional[in
     by_region: Dict[Tuple[int, int, int], List[Tuple[int, int, list, list]]] = defaultdict(list)
     for (dim, cx, cz), (tl, el) in canon.items():
         by_region[(dim, cx >> 5, cz >> 5)].append((cx, cz, tl, el))
-    n_t = n_e = 0
+    n_t = n_e = n_orphans = 0
     tally = newcontent.tally_of(progress)
     jver = None                                   # (data version, its Java release) of the last chunk
     for (dim, rx, rz), entries in by_region.items():
@@ -590,7 +637,9 @@ def inject_canon(out_dir: str, canon, progress: Progress, target_dv: Optional[in
             for t in new_tiles:
                 existing[(int(t["x"].py_data), int(t["y"].py_data), int(t["z"].py_data))] = t
                 n_t += 1
-            holder[key] = nbt.compound_list(existing.values())
+            kept_tiles, orphans = drop_orphans(root, existing.values())
+            n_orphans += orphans
+            holder[key] = nbt.compound_list(kept_tiles)
             if el:
                 ents = [e for e in (ent.to_java_modern(c, dv if dv < ENTITY_SPLIT_DV else 2730) for c in el) if e is not None]
                 n_e += len(ents)
@@ -621,6 +670,8 @@ def inject_canon(out_dir: str, canon, progress: Progress, target_dv: Optional[in
                 ew.put(lx, lz, nbt.dump(root, ""))
             ew.write(epath)
         del dv_seen
+    if n_orphans:
+        progress.warn(tr("{n} block entities of the source had no block: left out", n=n_orphans))
     progress.log(tr("Java: {tiles} block entities and {entities} entities written.", tiles=n_t, entities=n_e))
 
 

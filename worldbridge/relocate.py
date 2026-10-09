@@ -117,6 +117,8 @@ class Relocation:
                 p = c.get(key)
                 if p is not None and len(p) == 3:
                     c[key] = type(p)((p[0] + bx, p[1], p[2] + bz)) if isinstance(p, (tuple, list)) else p
+            if isinstance(c.get("poi"), dict):                       # a villager's bed / bell / job site
+                c["poi"] = {k: (p[0] + bx, p[1], p[2] + bz) for k, p in c["poi"].items()}
         return cx + dx, cz + dz
 
     # ------------------------------------------------------------------ spawn and players

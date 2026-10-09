@@ -217,6 +217,58 @@ def write_java_playerdata(out_dir: str, info: WorldInfo, prepare, folder: str = 
     return n
 
 
+def player_uuid_of(p) -> Optional[str]:
+    """The UUID a player compound carries (``UUID`` as four ints or a string, or ``UUIDMost`` / ``UUIDLeast``), as a
+    string; None when it has none."""
+    t = nbt.get_tag(p, "UUID")
+    try:
+        if isinstance(t, nbt.IntArrayTag) and len(t) == 4:
+            vals = [int(v) & 0xFFFFFFFF for v in t]
+            return str(_uuid.UUID(int=(vals[0] << 96) | (vals[1] << 64) | (vals[2] << 32) | vals[3]))
+        if isinstance(t, nbt.StringTag):
+            return str(_uuid.UUID(t.py_data))
+        if "UUIDMost" in p and "UUIDLeast" in p:
+            hi, lo = int(nbt.get(p, "UUIDMost")) & (2 ** 64 - 1), int(nbt.get(p, "UUIDLeast")) & (2 ** 64 - 1)
+            return str(_uuid.UUID(int=(hi << 64) | lo))
+    except (ValueError, TypeError):
+        return None
+    return None
+
+
+def write_host_playerdata(out_dir: str, level_data: nbt.CompoundTag, folder: str = "playerdata") -> Optional[str]:
+    """The single player of a level.dat (``Data.Player``) as ``<folder>/<uuid>.dat`` too, the way a real single
+    player world before Java 26.1 looks.  Java 26.1 moves the player out of level.dat when it upgrades the world:
+    with a UUID in it and no file by that name the game keeps neither (inventory, XP and position are lost); with
+    the file it names it ``singleplayer_uuid`` and the owner of the world loads it, whatever their account.
+    Returns the UUID (None: no player, no UUID, or the file already exists)."""
+    p = nbt.get_tag(level_data, "Player")
+    if not isinstance(p, nbt.CompoundTag):
+        return None
+    u = player_uuid_of(p)
+    if u is None:
+        return None
+    d = os.path.join(out_dir, folder)
+    path = os.path.join(d, f"{u}.dat")
+    if os.path.exists(path):
+        return None
+    os.makedirs(d, exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(nbt.dump(nbt.CompoundTag(nbt.copy(p)), "", compressed=True))
+    return u
+
+
+def owner_map(info: WorldInfo) -> Dict[int, int]:
+    """{the UUID a source player has in ``info.players`` -> the UUID of its link} for the players linked to a Java
+    account: the animals they own follow them to the new UUID."""
+    out: Dict[int, int] = {}
+    for key, p in info.players.items():
+        ln = (getattr(info, "player_links", None) or {}).get(key)
+        old = player_uuid_of(p)
+        if old and ln is not None and getattr(ln, "uuid", None) and old != ln.uuid:
+            out[_uuid.UUID(old).int] = _uuid.UUID(ln.uuid).int
+    return out
+
+
 # ------------------------------------------------------------------ pruning the output
 
 

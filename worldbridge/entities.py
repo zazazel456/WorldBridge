@@ -297,6 +297,7 @@ def from_legacy(e: nbt.CompoundTag) -> Optional[dict]:
     c["name"] = _FROM_OLDNEW.get(c["name"], c["name"])  # 1.11 ids (vindication_illager...) -> 1.13
     _read_java_specific(c, e, "legacy")
     _read_owner(c, e)
+    _read_java_trades(c, e, items.from_legacy)
     return c
 
 
@@ -523,7 +524,47 @@ def from_java_modern(e: nbt.CompoundTag) -> Optional[dict]:
         c["extra"]["Type"] = nbt.StringTag(wood)
     _read_java_specific(c, e, "java")
     _read_owner(c, e)
+    _read_java_trades(c, e, items.from_java_modern)
+    brain = nbt.get_tag(e, "Brain")
+    memories = nbt.get_tag(brain, "memories") if isinstance(brain, nbt.CompoundTag) else None
+    if c["name"] == "villager" and isinstance(memories, nbt.CompoundTag):
+        poi = {}
+        for key in ("home", "job_site", "meeting_point"):
+            m = nbt.get_tag(memories, "minecraft:" + key)
+            v = nbt.get_tag(m, "value") if isinstance(m, nbt.CompoundTag) else None
+            pos = nbt.get_tag(v if isinstance(v, nbt.CompoundTag) else m, "pos") if isinstance(m, nbt.CompoundTag) else None
+            if isinstance(pos, nbt.IntArrayTag) and len(pos) == 3:
+                poi[key] = tuple(int(x) for x in pos)
+        if poi:
+            c["poi"] = poi                 # its bed, bell and job site: kept so the game does not reset its profession
     return c
+
+
+def _read_java_trades(c: dict, e: nbt.CompoundTag, reader) -> None:
+    """Experience and trades (``Offers``) of a Java / LCE villager (``reader``: its item stacks -> canonical)."""
+    if c["name"] not in ("villager", "zombie_villager"):
+        return
+    xp = nbt.get(e, "Xp")
+    if xp is not None and int(xp) > 0 and c["name"] == "villager":
+        c["extra"]["Xp"] = nbt.IntTag(int(xp))
+    recipes = nbt.get_tag(nbt.get_tag(e, "Offers") or nbt.CompoundTag(), "Recipes")
+    offers = []
+    for r in recipes or []:
+        if not isinstance(r, nbt.CompoundTag) or "buy" not in r or "sell" not in r:
+            continue
+        buy, sell = reader(r["buy"]), reader(r["sell"])
+        buy_b = reader(r["buyB"]) if isinstance(nbt.get_tag(r, "buyB"), nbt.CompoundTag) else None
+        if buy is None or sell is None:
+            continue
+        for it in (buy, buy_b, sell):
+            if it is not None:
+                it.pop("slot", None)
+        offers.append({"buy": buy, "buy_b": buy_b, "sell": sell, "uses": int(nbt.get(r, "uses", 0) or 0),
+                       "max_uses": int(nbt.get(r, "maxUses", 7) or 7), "reward_exp": 1 if nbt.get(r, "rewardExp", 1) else 0,
+                       "xp": int(nbt.get(r, "xp", 1) or 1), "price_multiplier": float(nbt.get(r, "priceMultiplier", 0.05) or 0.0),
+                       "special_price": int(nbt.get(r, "specialPrice", 0) or 0), "demand": int(nbt.get(r, "demand", 0) or 0)})
+    if offers:
+        c["offers"] = offers
 
 
 # ------------------------------------------------------------------ variants, saddles, armour
@@ -727,15 +768,99 @@ def read_bedrock_variants(c: dict, e: nbt.CompoundTag, n: str, version=None) -> 
         if saddle or body:
             eq = c.setdefault("equip", {"hand": [None, None], "armor": [None] * 4, "saddle": None, "body": None})
             eq["saddle"], eq["body"] = saddle, body
-    if n == "villager":
-        prof = nbt.get(e, "PreferredProfession")
-        mark = int(nbt.get(e, "MarkVariant", 0) or 0)
-        biome = VILLAGER_BIOMES[mark] if 0 <= mark < len(VILLAGER_BIOMES) else "plains"
-        if prof or biome != "plains":
-            extra["VillagerData"] = nbt.CompoundTag({
-                "profession": nbt.StringTag("minecraft:" + (str(prof).split(":", 1)[-1] if prof else "none")),
-                "level": nbt.IntTag(max(1, min(5, int(nbt.get(e, "TradeTier", 0) or 0) + 1))),
-                "type": nbt.StringTag("minecraft:" + biome)})
+    if n in ("villager", "zombie_villager"):
+        read_bedrock_trader(c, e)
+
+
+def read_bedrock_trader(c: dict, e: nbt.CompoundTag) -> None:
+    """Profession, level, experience, trades and identity of a Bedrock villager / zombie villager."""
+    extra = c["extra"]
+    prof = str(nbt.get(e, "PreferredProfession", "") or "").split(":", 1)[-1]
+    if prof in ("", "unskilled"):
+        prof = "none"
+    mark = int(nbt.get(e, "MarkVariant", 0) or 0)
+    biome = VILLAGER_BIOMES[mark] if 0 <= mark < len(VILLAGER_BIOMES) else "plains"
+    tier = int(nbt.get(e, "TradeTier", 0) or 0)
+    if prof != "none" or biome != "plains" or tier > 0:
+        extra["VillagerData"] = nbt.CompoundTag({
+            "profession": nbt.StringTag("minecraft:" + prof), "level": nbt.IntTag(max(1, min(5, tier + 1))),
+            "type": nbt.StringTag("minecraft:" + biome)})
+    if c["name"] == "villager":
+        xp = nbt.get(e, "TradeExperience")
+        if xp is not None and int(xp) > 0:
+            extra["Xp"] = nbt.IntTag(int(xp))      # never made up: a level 1 villager with 0 xp that has no job site is reset by the game
+        if nbt.get(e, "UniqueID") is not None:
+            c["uid"] = int(nbt.get(e, "UniqueID"))   # the key of its beds / job site in the village records
+    offers = bedrock_offers(nbt.get_tag(e, "Offers"))
+    if offers:
+        c["offers"] = offers
+
+
+def bedrock_offers(offers) -> list:
+    """The trades (``Offers.Recipes``) of a Bedrock villager as canonical dicts: buy, buy_b, sell (items.Item) and the
+    numbers of a Java trade."""
+    out = []
+    recipes = nbt.get_tag(offers, "Recipes") if isinstance(offers, nbt.CompoundTag) else None
+    for r in recipes or []:
+        buy = items.from_bedrock(r["buyA"]) if "buyA" in r else None
+        sell = items.from_bedrock(r["sell"]) if "sell" in r else None
+        if buy is None or sell is None:
+            continue
+        buy_b = items.from_bedrock(r["buyB"]) if "buyB" in r and str(nbt.get(r["buyB"], "Name", "") or "") else None
+        for it, key in ((buy, "buyCountA"), (buy_b, "buyCountB"), (sell, None)):
+            if it is not None:
+                it.pop("slot", None)
+        if nbt.get(r, "buyCountA") is not None and buy is not None:
+            buy["count"] = max(1, int(nbt.get(r, "buyCountA")))
+        if buy_b is not None and nbt.get(r, "buyCountB") is not None and int(nbt.get(r, "buyCountB")) > 0:
+            buy_b["count"] = int(nbt.get(r, "buyCountB"))
+        out.append({"buy": buy, "buy_b": buy_b, "sell": sell,
+                    "uses": int(nbt.get(r, "uses", 0) or 0), "max_uses": int(nbt.get(r, "maxUses", 12) or 12),
+                    "reward_exp": 1 if nbt.get(r, "rewardExp", 1) else 0, "xp": int(nbt.get(r, "traderExp", 1) or 1),
+                    "price_multiplier": float(nbt.get(r, "priceMultiplierA", 0.05) or 0.0),
+                    "special_price": 0, "demand": int(nbt.get(r, "demand", 0) or 0)})
+    return out
+
+
+def offers_to_java(offers: list, data_version: int) -> nbt.CompoundTag:
+    """Canonical trades as a Java ``Offers`` compound."""
+    recipes = nbt.ListTag([], 10)
+    for o in offers:
+        buy = items.to_java_modern(o["buy"], data_version)
+        sell = items.to_java_modern(o["sell"], data_version)
+        buy_b = items.to_java_modern(o["buy_b"], data_version) if o.get("buy_b") else None
+        if buy is None or sell is None or (o.get("buy_b") and buy_b is None):
+            continue
+        r = nbt.CompoundTag({"buy": buy, "sell": sell})
+        if buy_b is not None:
+            r["buyB"] = buy_b
+        r["uses"] = nbt.IntTag(o["uses"])
+        r["maxUses"] = nbt.IntTag(o["max_uses"])
+        r["rewardExp"] = nbt.ByteTag(o["reward_exp"])
+        r["xp"] = nbt.IntTag(o["xp"])
+        r["priceMultiplier"] = nbt.FloatTag(o["price_multiplier"])
+        r["specialPrice"] = nbt.IntTag(o.get("special_price", 0))
+        r["demand"] = nbt.IntTag(o.get("demand", 0))
+        for stack in (buy, sell, buy_b):
+            if stack is not None and "Slot" in stack:
+                del stack["Slot"]
+        recipes.append(r)
+    return nbt.CompoundTag({"Recipes": recipes})
+
+
+def brain_to_java(poi: dict, dimension: str = "minecraft:overworld") -> Optional[nbt.CompoundTag]:
+    """``Brain`` with the beds / job site / meeting point of a villager (``poi``: home, job_site, meeting_point -> x, y,
+    z): the memories the game checks before it resets the profession of a villager that has no experience."""
+    import numpy as np
+
+    memories = nbt.CompoundTag()
+    for key in ("home", "job_site", "meeting_point"):
+        p = poi.get(key)
+        if p is None:
+            continue
+        memories["minecraft:" + key] = nbt.CompoundTag({"value": nbt.CompoundTag({
+            "dimension": nbt.StringTag(dimension), "pos": nbt.IntArrayTag(np.array([int(v) for v in p], np.int32))})})
+    return nbt.CompoundTag({"memories": memories}) if len(memories) else None
 
 
 # The component groups with which the vanilla behaviour packs (BDS 1.6 - 1.26) make a mob an adult / a baby: (adult,
@@ -883,7 +1008,7 @@ def to_legacy(c: dict, allowed: Optional[set] = None) -> Optional[nbt.CompoundTa
         e["CustomName"] = nbt.StringTag(c["custom_name"])
         e["CustomNameVisible"] = nbt.ByteTag(1 if c.get("name_visible") else 0)
     for k, v in (c.get("extra") or {}).items():
-        if k != "VillagerData":
+        if k not in ("VillagerData", "Xp"):
             e[k] = v
     if "VillagerData" in (c.get("extra") or {}) and "Profession" not in e:
         e.update(legacy_profession(c["extra"]["VillagerData"]))
@@ -957,7 +1082,20 @@ def to_java_modern(c: dict, data_version: int) -> Optional[nbt.CompoundTag]:
         vd = villager_data(c.get("extra") or {})
         if vd is not None:
             e["VillagerData"] = vd
+        xp = (c.get("extra") or {}).get("Xp")
+        if xp is not None and name == "villager":
+            e["Xp"] = xp
+        if c.get("offers"):
+            offers = offers_to_java(c["offers"], data_version)
+            if len(offers["Recipes"]):
+                e["Offers"] = offers
+        if c.get("poi") and name == "villager":
+            brain = brain_to_java(c["poi"])
+            if brain is not None:
+                e["Brain"] = brain
     _write_owner_java(e, c, data_version)
+    if c.get("pet_tag"):                   # worldbridge.pets: handed to the first player by a data pack
+        e["Tags"] = nbt.ListTag([nbt.StringTag("worldbridge_host_pet")], 8)
     if c.get("item") is not None:
         e["Item"] = items.to_java_modern(c["item"], data_version)
         if "Slot" in e["Item"]:

@@ -230,6 +230,8 @@ class WorldInfo:
     # kept them (Java 1.21.11+ / 26.x sources: game rules, difficulty, weather, generation
     # settings); a Java target that keeps the source's own level.dat removes them
     derived_level_keys: List[str] = field(default_factory=list)
+    # worldbridge.pets.PetPlan: what happens to the owners of the tamed animals (set by the conversion)
+    pet_plan: object = None
 
     @property
     def name(self) -> str:

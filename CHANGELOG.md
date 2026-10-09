@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- **Bedrock → Java 26.x, found converting a real world (Casca) and playing it in 26.3**:
+  - **The host player arrives.** It was silently deleted by Minecraft 26.1's own upgrade (a `level.dat` player with a
+    UUID and no file of that name is dropped). It is now written like a real single player world, in `level.dat` and
+    `playerdata/<UUID>.dat` (every Java route and Better than Adventure), and carries experience points, saturation,
+    exhaustion, effects, the selected slot and the bed / respawn point as well as the inventory, ender chest, armour,
+    off hand, position, health and hunger. The conversion warns that other, unlinked players do not carry their
+    inventories.
+  - **Tamed animals**: new `--pet-owner account|first-player` and a choice in the Players tab. `account` gives them the
+    UUID of the Java account the main player is linked to; `first-player` (default for Bedrock worlds without a link)
+    tags them and writes a small data pack, `datapacks/worldbridge_owner`, that hands each one to the nearest player
+    when its chunk loads (checked on a 26.3 server; on a multiplayer server that may not be the main player). The
+    game replaces the UUID inside a player file with the account's, so a UUID made up by the converter cannot own
+    anything.
+  - **Villagers keep their jobs**: profession, level, experience (`Xp`, only the real one) and trades (`Offers`) are
+    written, with the beds, bell and job site of the Bedrock village records as `Brain` memories; zombie villagers
+    keep their profession. Before, all 16 professional villagers of Casca lost their job (and their trades) on the
+    first tick; now 15 keep it (the 16th is a cleric that shared a brewing stand with another one). Trades,
+    experience and, from Java 1.13+ worlds, the bed / job site memories also pass from Java and LCE villagers.
+  - **Decorated pots** are written in 26.x's map form (`back`, `left`, `right`, `front`) for chunks stamped 4997 or
+    later (the game rejected the list: "Not a map", 76 pots).
+  - **Block entities without a block** (a spawner on a cobweb, a chest on air: already so in the Bedrock world) are
+    left out and counted in one warning instead of the game logging "Invalid block entity" for each.
+  - **Chunks Bedrock does not save**: the log says how many chunks inside the explored area are missing from the
+    Bedrock database; the target game generates them from the seed, so trees can be cut at their edges.
 - **World management: "Apply only to the converted world"**: the changes made in the NBT / quick settings
   can be kept apart instead of saved into the world; the source stays byte for byte as it is and the next
   conversion writes the changes into the converted world (any format) from an edited working copy, removed

@@ -247,7 +247,7 @@ def write_level(world: BtaWorld, out_dir: str, palette: Palette, level_name: Opt
                                  "NeedsStateScanning": nbt.ByteTag(0)})
         d["DimensionData"] = nbt.CompoundTag({"1": nbt.CompoundTag({"DragonFight": fight})})
     if host is not None:
-        hu = _safe_uuid(last) or _uuid.uuid4()
+        hu = _safe_uuid(last) or (uuids.get(host_key) if host_key else None) or _uuid.uuid4()
         d["Player"] = convert_player(host, hu, palette, overworld_shift)
     os.makedirs(out_dir, exist_ok=True)
     _dump(os.path.join(out_dir, "level.dat"), nbt.CompoundTag({"Data": d}))
@@ -258,6 +258,10 @@ def write_level(world: BtaWorld, out_dir: str, palette: Palette, level_name: Opt
         u = uuids.get(key) or player_uuid(key)
         _dump(os.path.join(pd, f"{u}.dat"), convert_player(p, u, palette, overworld_shift))
         stats.inc("players.converted")
+        n += 1
+    from ..selection import write_host_playerdata
+
+    if write_host_playerdata(out_dir, d):      # level.dat's player with no file of its own: Java 26.1 would drop it
         n += 1
     return n
 

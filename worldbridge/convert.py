@@ -77,6 +77,9 @@ class TargetSpec:
     depth: object = "auto"
     # dimensions not converted: the game generates them anew (NETHER, THE_END)
     regen: Tuple[int, ...] = ()
+    # who the tamed animals of a Java target belong to (worldbridge.pets): "auto" (the linked Java account, else the
+    # first player to open the world), "account" or "first-player"
+    pet_owner: str = "auto"
 
     def dy(self, dim: int) -> int:
         """How far the chunks, players and spawn of a dimension move up (--y-offset, and the sea level for the overworld)."""
@@ -740,6 +743,13 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
                         progress.warn(tr("The {n} chunks Bedrock had not finished hold {tiles} block entities and "
                                          "{entities} entities (villages, dungeons...): they are lost with the chunks.",
                                          n=n, tiles=held_t, entities=held_e))
+        if d.kind == "bedrock":
+            from .holes import log_missing_chunks
+
+            try:
+                log_missing_chunks(d.path, progress)
+            except Exception:  # noqa: BLE001
+                pass                              # only a note in the log
         old_source = _source_is_pre118(d)
         same_edition = (not sel.biomes and sel.move_to is None and target.family in ("java", "bedrock")
                         and d.kind == ("bedrock" if target.family == "bedrock" else "java_modern")
@@ -1194,6 +1204,8 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
     _warn_single_player(info, target, sel, progress)
     if target.world_name:
         info.level["LevelName"] = ab.nbt.StringTag(target.world_name)
+    if platform == "java":
+        _plan_pets(d, target, info, progress)
     from .terrain import policy
 
     plan = policy.decide(target, old_source)
@@ -1224,6 +1236,7 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
     else:
         ab.write_java_level_dat(out_dir, info, target.version, progress)
     direct_extras(d, out_dir, target, info, progress, wver, move if move.active else None, depth, sel.keep_unfinished)
+    _write_pet_pack(out_dir, target, info, progress)
     _warn_missing_content(progress, platform, wver)
     if depth is not None:
         _warn_cut_extras(progress, depth.lost_tiles, depth.lost_entities)
@@ -1241,6 +1254,35 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
         _rings3d_after_amulet(out_dir, target, info, wver, tmp, progress)
     progress.done()
     return ConversionResult(out_dir, n or 0)
+
+
+def _plan_pets(d: det.Detected, target: TargetSpec, info, progress: Progress) -> None:
+    """Who the tamed animals of a Java target belong to (worldbridge.pets): the linked Java account or the first
+    player to open the world.  A Bedrock world has no Java account of its own, so it binds them by default; the other
+    sources keep the accounts they have unless a link or ``--pet-owner`` says otherwise."""
+    from . import pets
+
+    if not info.players:
+        return
+    info.pet_plan = pets.plan_for(target.pet_owner, info, _target_dv_of(target), progress,
+                                  first_by_default=d.kind == "bedrock")
+
+
+def _target_dv_of(target: TargetSpec) -> Optional[int]:
+    from . import gameversion as gv
+
+    return gv.java_data_version(target.version) if target.version else None
+
+
+def _write_pet_pack(out_dir: str, target: TargetSpec, info, progress: Progress) -> None:
+    plan = getattr(info, "pet_plan", None)
+    if plan is None or plan.mode != "first-player" or not plan.tagged:
+        return
+    from . import pets
+
+    pets.write_datapack(out_dir, _target_dv_of(target) or 99999, progress)
+    progress.log(tr("{n} tamed animals will be bound to the first player: data pack “{pack}” written.",
+                    n=plan.tagged, pack=pets.PACK))
 
 
 def _warn_missing_content(progress: Progress, platform: str, version) -> None:
@@ -1560,8 +1602,9 @@ def _warn_single_player(info, target: TargetSpec, sel: Selection, progress: Prog
         kept = {k for k in info.players if getattr(links.get(k), "uuid", None) or getattr(links.get(k), "nickname", None)}
         lost = len(set(info.players) - kept - {next(iter(info.players))})
         if lost:
-            progress.warn(tr("{n} players were not written: a Java world keeps one player in level.dat and a file "
-                             "for each player linked to a Java account (--player KEY=NICKNAME, “Players” tab).", n=lost))
+            progress.warn(tr("{n} players were not written, so their inventories, positions and animals are not carried: a Java "
+                             "world keeps one player in level.dat and a file for each player linked to a Java account "
+                             "(--player KEY=NICKNAME, “Players” tab).", n=lost))
 
 
 def _edit_copy(d: det.Detected, out_dir: str, target: TargetSpec, sel: Selection, progress: Progress) -> None:

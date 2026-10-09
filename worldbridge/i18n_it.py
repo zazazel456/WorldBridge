@@ -325,8 +325,8 @@ _SECTIONS = {
             'Raccordo: {n} chunk di terreno del gioco (seed {seed}) intorno al mondo convertito, alzato o abbassato dolcemente fino al suo bordo, larghi da 3 a {width} chunk secondo il dislivello; grotte, alberi, minerali e laghi li aggiunge il gioco.',
         '{target}: only the main player ({player}) is transferred; the other selected players are ignored.':
             '{target}: viene trasferito solo il giocatore principale ({player}); gli altri giocatori selezionati sono ignorati.',
-        '{n} players were not written: a Java world keeps one player in level.dat and a file for each player linked to a Java account (--player KEY=NICKNAME, “Players” tab).':
-            "{n} giocatori non sono stati scritti: un mondo Java tiene un giocatore in level.dat e un file per ogni giocatore collegato a un account Java (--player CHIAVE=NICKNAME, scheda «Giocatori»).",
+        '{n} players were not written, so their inventories, positions and animals are not carried: a Java world keeps one player in level.dat and a file for each player linked to a Java account (--player KEY=NICKNAME, “Players” tab).':
+            "{n} giocatori non sono stati scritti, quindi inventari, posizioni e animali non vengono trasferiti: un mondo Java tiene un giocatore in level.dat e un file per ogni giocatore collegato a un account Java (--player CHIAVE=NICKNAME, scheda «Giocatori»).",
         'Left out of Pocket Edition 0.8: {names}':
             'Lasciato fuori da Pocket Edition 0.8: {names}',
         'Selection: {n} unselected chunks removed.':
@@ -1547,6 +1547,34 @@ _SECTIONS = {
             "I documenti modificati ({n}) vengono scritti nel mondo convertito; l'origine non cambia.",
         'The changes kept for the converted world were discarded: the world to convert has changed.':
             'Le modifiche tenute per il mondo convertito sono state scartate: il mondo da convertire è cambiato.',
+    },
+    'worldbridge/pets.py': {
+        'Java: who the tamed animals belong to. account = the Java account the host is linked to (--player host=NAME; exact, but the name has to be right: premium or offline); first-player = no input, a data pack hands them to the player who opens the world first (on a multiplayer server: the nearest player when their chunk loads). Default: account when the host is linked, else first-player (Bedrock worlds)':
+            "Java: a chi appartengono gli animali addomesticati. account = l'account Java a cui è collegato l'host (--player host=NOME; esatto, ma il nome deve essere giusto: premium oppure offline); first-player = nessun dato, un data pack li affida al giocatore che apre per primo il mondo (su un server multigiocatore: il giocatore più vicino quando si carica il loro chunk). Predefinito: account se l'host è collegato, altrimenti first-player (mondi Bedrock)",
+        'Host player: level.dat and playerdata/{uuid}.dat (Minecraft 26.1+ keeps it when it upgrades the world).':
+            'Giocatore principale: level.dat e playerdata/{uuid}.dat (Minecraft 26.1+ lo conserva quando aggiorna il mondo).',
+        'Tamed animals will be bound to the player who opens the world first (data pack “{pack}”; on a multiplayer server they go to the nearest player when their chunk loads).':
+            'Gli animali addomesticati saranno legati al giocatore che apre per primo il mondo (data pack «{pack}»; su un server multigiocatore vanno al giocatore più vicino quando si carica il loro chunk).',
+        'Pet owner “account” needs the host linked to a Java account (--player host=NAME, “Players” tab): using “first player” instead.':
+            "Il proprietario «account» richiede l'host collegato a un account Java (--player host=NOME, scheda «Giocatori»): uso invece «primo giocatore».",
+        'Tamed animals are given to the Java account of the linked player (UUID of the account name; the name has to be the right one, premium or offline).':
+            "Gli animali addomesticati vengono dati all'account Java del giocatore collegato (UUID del nome account; il nome deve essere quello giusto, premium oppure offline).",
+        'The tamed animals will not recognise the player: this Java version cannot run the data pack that binds them to the first player, and no Java account is linked (--player host=NAME).':
+            'Gli animali addomesticati non riconosceranno il giocatore: questa versione di Java non può eseguire il data pack che li lega al primo giocatore e nessun account Java è collegato (--player host=NOME).',
+        '{n} chunks inside the explored area are not saved in the Bedrock world (Bedrock does not store every chunk it shows): the target game generates them from the seed when the world is opened, so trees and structures can be cut at their edges.':
+            "{n} chunk dentro l'area esplorata non sono salvati nel mondo Bedrock (Bedrock non salva tutti i chunk che mostra): il gioco di destinazione li genera dal seed all'apertura del mondo, quindi alberi e strutture possono essere tagliati ai bordi.",
+        '{n} tamed animals will be bound to the first player: data pack “{pack}” written.':
+            '{n} animali addomesticati saranno legati al primo giocatore: scritto il data pack «{pack}».',
+        '{n} block entities of the source had no block: left out':
+            "{n} block entity dell'origine non avevano il blocco: lasciate fuori",
+        "<b>Tamed animals</b> (wolves, cats, parrots, horses…) must know their owner's UUID. <i>Java account name</i>: the main player's nickname above (with “Premium” for an original account, without it for an offline one) gives the animals the account's UUID: exact, but the name has to be right. <i>First player who opens the world</i>: no name needed, a small data pack (Java 1.16+) hands each animal to the nearest player when its chunk loads; on a multiplayer server that may not be the main player. <i>Automatic</i> uses the nickname when there is one, else the first player.":
+            "<b>Animali addomesticati</b> (lupi, gatti, pappagalli, cavalli…) devono conoscere l'UUID del proprietario. <i>Nome account Java</i>: il nickname del giocatore principale qui sopra (con «Premium» per un account originale, senza per uno offline) dà agli animali l'UUID dell'account: esatto, ma il nome deve essere giusto. <i>Primo giocatore che apre il mondo</i>: non serve nessun nome, un piccolo data pack (Java 1.16+) affida ogni animale al giocatore più vicino quando si carica il suo chunk; su un server multigiocatore potrebbe non essere il giocatore principale. <i>Automatico</i> usa il nickname se c'è, altrimenti il primo giocatore.",
+        'Tamed animals belong to:':
+            'Gli animali addomesticati appartengono a:',
+        'The Java account of the nickname':
+            "All'account Java del nickname",
+        'The first player who opens the world':
+            'Al primo giocatore che apre il mondo',
     },
 }
 
