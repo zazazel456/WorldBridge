@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **First-start progress window**: `run.sh` shows a "Downloading dependencies" window (package n of N, percentage,
+  MB, speed, time left, Cancel; Italian / English, light / dark) instead of installing silently; plain progress
+  lines in a terminal. New `tools/bootstrap_ui.py`; `WORLDBRIDGE_RUNTIME` moves the runtime folder.
+
 ## 0.2.2 – review against real worlds (alpha)
 
 A full review of the code with 110 real worlds downloaded from the web (Java Classic → 26.3, Bedrock

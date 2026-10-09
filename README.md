@@ -188,8 +188,9 @@ git clone https://github.com/zazazel456/WorldBridge.git && cd WorldBridge
 ./run.sh convert <source> <output folder> --to java    # the command line
 ```
 
-The first start takes about 20 seconds and 430 MB, all inside `.runtime/`. To uninstall, delete the
-folder.
+The first start takes about 20 seconds and 430 MB, all inside `.runtime/`, and shows a "Downloading
+dependencies" window with progress, speed and time left (plain progress lines in a terminal). To uninstall,
+delete the folder.
 
 **Requirements:** Linux x86_64 with glibc ≥ 2.34 (Ubuntu 22.04, Debian 12, Fedora 35 or later),
 `curl` or `wget`, and for the interface the OpenGL / EGL and fontconfig libraries every desktop has.
