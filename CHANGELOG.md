@@ -1,9 +1,23 @@
 # Changelog
 
-## Unreleased – review against real worlds (alpha)
+## 0.2.2 – review against real worlds (alpha)
 
 A full review of the code with 110 real worlds downloaded from the web (Java Classic → 26.3, Bedrock
-1.1 → 1.26.40, PE 0.x, LCE on PS3 / PS4 / Vita / Wii U / Xbox 360). Fixed so far:
+1.1 → 1.26.40, PE 0.x, LCE on PS3 / PS4 / Vita / Wii U / Xbox 360), then checked in the games themselves:
+
+- **Real servers**: 4 real worlds converted to 23 targets (Java 1.2.5, 1.8.9, 1.12.2, 1.16.5 – 1.21.5, 26.3, Beta
+  1.7.3, Beta 1.2_02, Alpha 1.2.6, Bedrock Dedicated Server 1.12 – 26.52), each loaded and saved by the game and
+  compared with the original: 92 / 92 loaded, no chunk lost.
+- **neoLegacy (LCE Windows64) under Wine**: saves of PS3, PS4, PS Vita, Wii U and Xbox 360 TU31, a Java 1.21.1 world
+  and an Indev level converted to Windows64, loaded, saved and closed by the game: 7 / 7, every block entity kept,
+  no errors left in the game's log.
+- 720 automated tests.
+
+**Not yet checked in game**: worlds written for the consoles (Xbox 360, PS3, Wii U, PS Vita, PS4, Xbox One, Switch).
+Their saves are read from real files (Xbox One and Switch excepted, none was found), but no converted world has
+been opened on those consoles or their emulators yet. Wii U, PS Vita and Xbox 360 targets do not carry the world's
+host options yet (difficulty, PvP, TNT, fire spread: see the neoLegacy thumbnail fix below), and the Xbox One /
+Switch map-ownership table is written empty. Reports from these consoles are the most wanted.
 
 **Found by loading converted LCE worlds in the real neoLegacy (Windows64) under Wine**
 - **A PS3 save made neoLegacy loop forever while loading** (an 8 GB log of `-- -1 (0xffffffffffffffff) = -1`):
@@ -18,7 +32,7 @@ A full review of the code with 110 real worlds downloaded from the web (Java Cla
   `Attributes` of an entity are cut to the ids its class registers (the wolf has no attack damage: "Ignoring unknown
   attribute '4'").
 
-**Found by opening converted worlds in real Bedrock Dedicated Servers (1.14 - 26.52)**
+**Found by opening converted worlds in real Bedrock Dedicated Servers (1.12 – 26.52)**
 - **Signs of Java ≤ 1.19 and Console worlds were lost on Bedrock 1.18+** (the block stayed an unknown
   `universal_minecraft:wall_sign`): their lines are translated before the block. Old numeric Nether portals
   (data 0 / 3) get their axis.

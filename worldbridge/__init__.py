@@ -9,7 +9,7 @@ the LCE source such as MinecraftConsoles / LCEMP / neoLegacy).
 import os as _os
 import tempfile as _tempfile
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 APP_NAME = "WorldBridge"
 
 
