@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "worldbridge"
-version = "0.2.1"
+version = "0.2.2"
 description = "Minecraft world toolkit: converts between Java, Bedrock, Legacy Console Edition, Pocket Edition, Classic / Indev and Better than Adventure"
 readme = "README.md"
 license = {text = "PolyForm-Noncommercial-1.0.0"}

@@ -21,9 +21,10 @@ after converting a world and opening it in the target game. Useful details:
 - what you checked in the game: the border, chests and signs, mobs, your inventory, the Nether / End;
 - the report WorldBridge shows at the end of the conversion (or the command line output).
 
-**Console saves** (Xbox 360, PS3, Wii U, PS4, Xbox One, Switch) are implemented from the formats but
-have not been tested on real files yet. A report on any of them, in either direction, is the most
-valuable test there is.
+**Console saves**: worlds converted to Xbox 360, PS3, Wii U, PS Vita, PS4, Xbox One or Switch have not
+been opened on a console or an emulator yet (only Windows64 / neoLegacy has been checked in game), and
+no real Xbox One or Switch save has been tested. A report on any of them, in either direction, is the
+most valuable test there is.
 
 ## Bug reports
 

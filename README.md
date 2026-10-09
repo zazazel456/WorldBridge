@@ -1,6 +1,6 @@
 # WorldBridge
 
-![version](https://img.shields.io/badge/version-0.2.1-blue)
+![version](https://img.shields.io/badge/version-0.2.2-blue)
 ![status](https://img.shields.io/badge/status-alpha-orange)
 ![platform](https://img.shields.io/badge/platform-Linux%20x86__64-lightgrey)
 ![license](https://img.shields.io/badge/license-PolyForm%20Noncommercial%20(source--available)-green)
@@ -20,11 +20,12 @@ system.
 > right of the window, or `--lang` on the command line.
 
 > [!IMPORTANT]
-> **WorldBridge 0.2.1 is an alpha: the first public release plus bug fixes.** Every figure below
-> was measured, but there are more games, versions and saves than one person can test. **Always
-> convert a copy of your world**, and please [report what you find](#help-test-it), whether it
-> worked or not. Testers with real console saves (Xbox 360, PS3, Wii U, PS4, Xbox One, Switch) are
-> especially wanted.
+> **WorldBridge 0.2.2 is an alpha.** Every figure below was measured, and 0.2.2 was checked against
+> 110 real worlds, real Java and Bedrock servers and the real neoLegacy, but there are more games,
+> versions and saves than one person can test. **Always convert a copy of your world**, and please
+> [report what you find](#help-test-it), whether it worked or not. **Worlds written for the consoles
+> (Xbox 360, PS3, Wii U, PS Vita, PS4, Xbox One, Switch) have not been opened on a console or an
+> emulator yet**: testers who can do that are especially wanted.
 
 **The border, before and after.** A Java 26.3 world converted to Java 1.2.5. Without the ring, the
 old game generates its own terrain right next to the converted world, leaving walls and cut caves.
@@ -113,12 +114,19 @@ meet it.
 | **Better than Adventure** 8.0.1 (a Beta 1.7.3 mod) | ✅ | – (converts to Java 26.3) |
 | **Bedrock** 1.1 → 26.50 (LevelDB, `.mcworld`) | ✅ | ✅ |
 | **Pocket Edition** 0.1 – 0.8 (`chunks.dat`) | ✅ | ✅ |
-| **LCE** Windows64 (neoLegacy and the other PC ports, `saveData.ms`) | ✅ | ✅ (neoLegacy TU31) |
-| **LCE** Xbox 360 (`savegame.dat`, CON packages; Xenia) | ✅ | ✅ (`savegame.dat`) |
-| **LCE** PlayStation 3 (`GAMEDATA`; RPCS3) | ✅ | ✅ |
-| **LCE** Wii U (Cemu), PS Vita (Vita3K), Switch | ✅ | ✅ |
-| **LCE** PS4 / Xbox One (split saves `GAMEDATA_xxxxxxxx`) | ✅ | ✅ |
+| **LCE** Windows64 (neoLegacy and the other PC ports, `saveData.ms`) | ✅ | ✅ (neoLegacy TU31, checked in game) |
+| **LCE** Xbox 360 (`savegame.dat`, CON packages; Xenia) | ✅ | ✅ (`savegame.dat`) ¹ ² |
+| **LCE** PlayStation 3 (`GAMEDATA`; RPCS3) | ✅ | ✅ ¹ |
+| **LCE** Wii U (Cemu), PS Vita (Vita3K) | ✅ | ✅ ¹ ² |
+| **LCE** PS4 (split saves `GAMEDATA_xxxxxxxx`) | ✅ | ✅ ¹ |
+| **LCE** Xbox One, Switch | ✅ ³ | ✅ ¹ ³ |
 | **LCE** chunk formats: NBT (TU0–TU13), 4J compressed storage (TU14+), Aquatic V12 / V13 (TU69+) | ✅ | NBT and compressed |
+
+¹ Not yet checked in game: no world converted to this console has been opened on the console or an
+emulator. Saves of Xbox 360, PS3, Wii U, PS Vita and PS4 are read from real files.  
+² The world's host options (difficulty, PvP, TNT, fire spread) are not written yet: the game may start
+the world with its own defaults.  
+³ Implemented from the 4J source: no real save of these consoles has been tested.
 
 ## What is converted
 
@@ -152,6 +160,9 @@ Full tables: [VERIFICATION.md](docs/VERIFICATION.md).
 
 | Check | Result |
 |---|---|
+| Real worlds read (Java Classic → 26.3, Bedrock 1.1 → 1.26.40, PE 0.x, LCE on PS3 / PS4 / PS Vita / Wii U / Xbox 360) | 110 worlds |
+| 4 real worlds × 23 targets, loaded and saved by real servers: Java 1.2.5 – 26.3, Beta, Alpha, Bedrock Dedicated Server 1.12 – 26.52 | 92 / 92 loaded, no chunk lost |
+| PS3, PS4, PS Vita, Wii U, Xbox 360, Java 1.21.1 and Indev worlds → LCE Windows64, loaded, saved and closed by neoLegacy | 7 / 7, every block entity kept, no errors in the game's log |
 | Conversion matrix: 18 source formats × 17 targets | 289 / 289 conversions succeed (17 pairs not applicable) |
 | Java outputs through Minecraft 26.3's DataFixer | 0 chunks rejected |
 | Real LCE Windows64 TU19 save (5,678 chunks) → LCE | identical to the original: blocks, light, biomes, height maps, entities, ticks, `level.dat`, players |
@@ -167,7 +178,7 @@ Full tables: [VERIFICATION.md](docs/VERIFICATION.md).
 | Chest pairing, 2,000 random groups | every chest visible, every content kept |
 | Multi-core against single-core output | bit-identical |
 | World of 998,784 chunks → Java 26.3 | 7 min, 0.63 GB of memory |
-| Automated tests | 252 |
+| Automated tests | 720 |
 
 ## Quick start
 
@@ -236,9 +247,15 @@ More figures are in [VERIFICATION.md](docs/VERIFICATION.md#speed-and-large-world
 
 ## Known limitations
 
-- **Untested consoles.** Xbox 360, PS3, Wii U, PS4, Xbox One and Switch saves are implemented from
-  the 4J source but have not been tested with files from those consoles yet. Windows64 and PS Vita
-  were tested on real saves.
+- **Console targets not yet checked in game.** Worlds written for Xbox 360, PS3, Wii U, PS Vita, PS4,
+  Xbox One and Switch have not been opened on a console or an emulator yet; only Windows64
+  (neoLegacy) has. Reading is tested on real saves of Windows64, Xbox 360, PS3, Wii U, PS Vita and
+  PS4; Xbox One and Switch saves are implemented from the 4J source, with no real file tested.
+- **Host options on Wii U, PS Vita and Xbox 360.** The game keeps the world's difficulty, PvP, TNT
+  and fire spread in the save's thumbnail, which these targets do not have: WorldBridge does not
+  write them there yet, so the world may start with the game's defaults (neoLegacy started such
+  worlds on Peaceful). On Xbox One and Switch the map-ownership table is written empty, because
+  their player-id size is not known.
 - **Aquatic chunks are read only.** LCE is written in the NBT and compressed chunk formats, which
   every version of the game loads.
 - **Newer content is replaced or removed** on the way to older games; the report at the end lists
@@ -263,9 +280,10 @@ useful contribution right now, including the ones where everything worked.
   saw: [open a test report](https://github.com/zazazel456/WorldBridge/issues/new?template=test_report.yml).
 - **Bugs.** Something lost, wrong or crashing:
   [open a bug report](https://github.com/zazazel456/WorldBridge/issues/new?template=bug_report.yml).
-- **Console saves.** Xbox 360, PS3, Wii U, PS4, Xbox One and Switch saves are implemented from the
-  formats but untested on real files. A save from one of these (or a report of converting into one)
-  is worth more than any other test.
+- **Console saves.** No world converted *to* a console (Xbox 360, PS3, Wii U, PS Vita, PS4, Xbox One,
+  Switch) has been opened on the console or an emulator (Xenia, RPCS3, Cemu, Vita3K) yet, and no
+  real Xbox One or Switch save has been tested at all. A report of converting into one of these, or
+  a save from Xbox One or Switch, is worth more than any other test.
 - **Distributions and desktops.** Did `./run.sh` start on yours? Tell which one, even if it did.
 - **Code and translations.** Pull requests are welcome; read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 

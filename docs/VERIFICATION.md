@@ -40,7 +40,7 @@ WorldBridge.
 ## Automated tests
 
 ```bash
-.runtime/python/bin/python3 -m pytest -q tests      # 252 tests, about 5 minutes
+.runtime/python/bin/python3 -m pytest -q tests      # 720 tests
 ```
 
 | Area | Test files |
@@ -61,6 +61,10 @@ WorldBridge.
 | Interface and desktop theme; language switch keeping every choice | `test_gui` |
 | Every text translated, with the same placeholders; command line in both languages | `test_i18n` |
 | Portable wheels | `test_build_wheels` |
+| LCE auxiliary files per platform (map ownership, thumbnail host options), TU54+ ids, Xbox 360 saves | `test_lce_auxfiles`, `test_lce_thumbmeta`, `test_lce_modern_ids`, `test_lce_x360` |
+| Content each target version has (Bedrock items and mobs by release, Java block entities, 1.20 blocks) | `test_newer_content`, `test_bedrock_item_existence`, `test_bedrock_downgrade`, `test_bedrock_experimental_1_20`, `test_bed_block_entity_removed`, `test_content_tables` |
+| Fixes found in game (servers, neoLegacy) | `test_bedrock_ingame_fixes`, `test_ingame_fixes_h2`, `test_old_signs_to_bedrock`, `test_old_portals_to_bedrock`, `test_bedrock_frames` |
+| Depth, sea level, explicit versions, chested horses, loot tables | `test_depth`, `test_sea_offset`, `test_explicit_version`, `test_version_quirks`, `test_chested_equids`, `test_container_loot` |
 
 ## Conversion matrix
 
@@ -96,8 +100,11 @@ result.
 | Java 1.12 world (5,678 chunks) | Biome ids preserved 1:1: 100 % |
 | LCE → Java 26.3, Vita → Java 26.3, Bedrock → Java 26.3, museum world → Java 26.3 | DataFixer: 0 errors |
 
-Xbox 360, PS3, Wii U, PS4, Xbox One and Switch saves are implemented from the 4J source and
-documentation but not yet tested with files from those consoles.
+For 0.2.2, 110 real worlds downloaded from the web were read and converted: Java Classic → 26.3,
+Bedrock 1.1 → 1.26.40, PE 0.x, and LCE saves of PS3, PS4, PS Vita, Wii U (v1 – v688) and Xbox 360
+(pre-TU0 – TU75, loose, in CON packages and in `Save<date>.bin` folders). Xbox One and Switch saves
+are implemented from the 4J source; no real file of theirs has been tested. Worlds written for the
+consoles have not been opened on a console or an emulator yet (see [In-game tests](#in-game-tests)).
 
 ## Terrain generators against the games
 
@@ -234,6 +241,42 @@ Worlds converted with WorldBridge and opened in the target game.
 | Java 1.16.5 → Java 1.12.2, badlands | ring biomes, border jumps | ✅ |
 | Java 26.3 → neoLegacy TU31 with the ring | ring terrain | ✅ |
 | Java 26.3 server world → neoLegacy TU31 | world loads, player, chests | ✅ after fix 56; the ring's sea biomes (fix 57) await a new check |
+
+### 0.2.2: real servers
+
+Four real worlds (bscholer, offroaders, villagersystem and an Xbox 360 TU75 save) were converted to 23
+targets, loaded and saved by the real server of each, and the saved world was compared with the
+converted one (blocks, block entities and entities per id, the server's log).
+
+| Targets | Result |
+|---|---|
+| Java 1.2.5, 1.8.9, 1.12.2 (numeric Anvil), 1.16.5, 1.17.1, 1.18.2, 1.20.4, 1.21.1, 1.21.4, 1.21.5, 26.3 | every world loads; no chunk lost |
+| Beta 1.7.3 (McRegion), Beta 1.2_02 and Alpha 1.2.6 | every world loads; no chunk lost |
+| Bedrock Dedicated Server 1.12, 1.14, 1.16, 1.17, 1.18, 1.19, 1.20, 1.21, 26.52 | every world loads; no chunk lost |
+
+92 / 92 conversions loaded. The bugs found this way (signs and portals lost on Bedrock, attributes,
+beds of Java 26.2+, entities stored in the wrong chunk...) are listed in the [changelog](../CHANGELOG.md).
+
+### 0.2.2: neoLegacy (LCE Windows64)
+
+Each world was converted to Windows64, loaded in neoLegacy under Wine, saved and closed, and the save
+written by the game was read back and compared.
+
+| Source | Block entities | Entities | Notes |
+|---|---|---|---|
+| PS3 save | 160 → 160 | 209 → 301 | far mobs despawned (squid, bat, slime) |
+| PS4 save | 64 → 64 | 150 → 211 | far mobs despawned |
+| PS Vita save (2,162 entities) | 315 → 315 | 2,162 → 1,866 | far hostile mobs despawned |
+| Wii U v688 save | 47 → 47 | 40 → 156 | – |
+| Xbox 360 TU31 save | 7 → 7 | 161 → 232 | a Wither and primed TNT next to the spawn kill the iron golem and a horse |
+| Java 1.21.1 world | 177 → 177 | 11 → 19 | – |
+| Indev level | 8 → 13 | 104 → 184 | – |
+
+7 / 7 load, save and close cleanly, with no errors left in the game's log. The first runs found a PS3
+save that made the game loop forever (the map-ownership file), worlds starting on Peaceful (the host
+options in the thumbnail), beds and unknown attributes: all fixed in 0.2.2.
+
+Not yet checked in game: worlds written for Xbox 360, PS3, Wii U, PS Vita, PS4, Xbox One and Switch.
 
 Still to be checked in game: the museum world to Java 26.3, Bedrock 26.50 and LCE; LCE and PS Vita
 to Java 26.3; Java 1.12 to LCE and Bedrock; LCE to Beta 1.7.3; PE 0.8 to Java 26.3 after fix 24;
