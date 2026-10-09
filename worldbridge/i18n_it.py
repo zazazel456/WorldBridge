@@ -1515,6 +1515,38 @@ _SECTIONS = {
             'Il mondo è in modifica: si può cambiare quando la modifica finisce.',
         'A change to the source world (edit, trim or copy) is running: convert when it ends.':
             'Una modifica del mondo di origine (modifica, trim o copia) è in corso: converti quando finisce.',
+        'Apply only to the converted world':
+            'Applica solo al mondo convertito',
+        'The source world is not changed: the next conversion writes these changes into the converted world.':
+            'Il mondo di origine non cambia: la prossima conversione scrive queste modifiche nel mondo convertito.',
+        'Available when the world opened here is the one chosen at the top of the window and has changes.':
+            'Disponibile quando il mondo aperto qui è quello scelto in alto nella finestra e ha delle modifiche.',
+        'Discard':
+            'Scarta',
+        'Forget these changes: the next conversion will not carry them':
+            'Dimentica queste modifiche: la prossima conversione non le porterà',
+        'Changed documents: {n}. They will be written into the converted world; the source world is not changed.':
+            'Documenti modificati: {n}. Verranno scritti nel mondo convertito; il mondo di origine non cambia.',
+        'Changes for the converted world':
+            'Modifiche per il mondo convertito',
+        'The changes kept for the converted world ({n} changed documents) are lost when the window closes. Close anyway?':
+            'Le modifiche tenute per il mondo convertito ({n} documenti modificati) si perdono quando la finestra si chiude. Chiudere comunque?',
+        'The changes kept for the converted world ({n} changed documents) are in no world yet. Keep them for the next conversion?':
+            'Le modifiche tenute per il mondo convertito ({n} documenti modificati) non sono ancora in nessun mondo. Tenerle per la prossima conversione?',
+        'Keep them':
+            'Tienile',
+        'Discard them':
+            'Scartale',
+        'Preparing the edited copy of the world…':
+            'Preparazione della copia modificata del mondo…',
+        '{doc}: not found in the world, its changes were not applied.':
+            '{doc}: non trovato nel mondo, le sue modifiche non sono state applicate.',
+        '{n} changed documents of the world will be written into the converted world (the source is not changed).':
+            "{n} documenti modificati del mondo verranno scritti nel mondo convertito (l'origine non cambia).",
+        'The changed documents ({n}) are written into the converted world; the source is not changed.':
+            "I documenti modificati ({n}) vengono scritti nel mondo convertito; l'origine non cambia.",
+        'The changes kept for the converted world were discarded: the world to convert has changed.':
+            'Le modifiche tenute per il mondo convertito sono state scartate: il mondo da convertire è cambiato.',
     },
 }
 

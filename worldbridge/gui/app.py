@@ -30,6 +30,7 @@ from ..model import ConversionCancelled, ConversionError, Progress
 from ..selection import Selection
 from ..i18n import N_, tr
 from . import theme
+from .manageui import same_world
 from .mapwidget import MapTab
 from .players import PlayersTab
 from .widgets import Disclosure, GuiThread, HelpButton, HintLabel, InlineMessage, heading, row, spacing, with_help
@@ -140,20 +141,39 @@ class ConvertWorker(QObject):
     log = Signal(str)
     finished = Signal(bool, str, list)
 
-    def __init__(self, src: str, out: str, target: TargetSpec):
+    def __init__(self, src: str, out: str, target: TargetSpec, staged=None):
         super().__init__()
         self.src, self.out, self.target = src, out, target
+        self.staged = staged                # manage.StagedEdits: written into a working copy that is converted instead
         self.prog = Progress(lambda f, m: self.progress.emit(f, m), lambda m: self.log.emit(m))
 
     def run(self):
+        copy = None
+        answer = (False, "", [])
         try:
-            res = convert(self.src, self.out, self.target, self.prog)
-            self.finished.emit(True, res.output, res.warnings)
+            src = self.src
+            if self.staged is not None:
+                from ..convert import check_output_folder
+                from ..manage import build_staged_copy
+
+                check_output_folder(src, self.out)            # against the real world, not its copy
+                self.progress.emit(0.0, tr("Preparing the edited copy of the world…"))
+                self.log.emit(tr("Preparing the edited copy of the world…"))
+                copy = build_staged_copy(self.staged, self.prog)
+                for doc in copy.missing:
+                    self.prog.warn(tr("{doc}: not found in the world, its changes were not applied.", doc=doc))
+                src = copy.path
+            res = convert(src, self.out, self.target, self.prog)
+            answer = (True, res.output, res.warnings)
         except ConversionCancelled:
-            self.finished.emit(False, tr("Conversion cancelled."), [])
+            answer = (False, tr("Conversion cancelled."), [])
         except Exception as ex:  # noqa: BLE001
             self.log.emit(traceback.format_exc())
-            self.finished.emit(False, _failure_text(ex), [])
+            answer = (False, _failure_text(ex), [])
+        finally:
+            if copy is not None:
+                copy.cleanup()                                # also on error and cancel, before the window is told
+        self.finished.emit(*answer)
 
     def cancel(self):
         self.prog.cancel()
@@ -269,6 +289,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.manage_tab, theme.icon("document-edit", "document-properties"), tr("World management"))
         self.tabs.currentChanged.connect(self._on_tab)
         self.manage_tab.source_requested.connect(lambda: self.manage_tab.open(self.src_edit.text().strip()))
+        self.manage_tab.source_getter = lambda: self.src_edit.text().strip()
+        self.manage_tab.staged_changed.connect(self._update_staged_hint)
         self.map_tab.players_loaded.connect(self.players_tab.set_players)
         self.map_tab.summary_changed.connect(self._update_scope)
         self.players_tab.changed.connect(self._update_scope)
@@ -388,7 +410,8 @@ class MainWindow(QMainWindow):
         st = {"src": self.src_edit.text(), "tab": self.tabs.currentIndex(), "log": self.logview.toPlainText(),
               "log_open": self.log_box.button.isChecked(),
               "map": self.map_tab.export_state(), "players": self.players_tab.export_state(),
-              "manage": self.manage_tab.path_edit.text() if getattr(self.manage_tab, "_manual", False) else None}
+              "manage": self.manage_tab.path_edit.text() if getattr(self.manage_tab, "_manual", False) else None,
+              "staged": self.manage_tab.staged_edits()}
         for name in _STATE_WIDGETS:
             w = getattr(self, name)
             if isinstance(w, QComboBox):
@@ -424,6 +447,10 @@ class MainWindow(QMainWindow):
             self.manage_tab.path_edit.setText(st["manage"])
             self.manage_tab._manual = True
             self.manage_tab._open_path()
+        if st.get("staged") is not None:              # the changes kept for the converted world survive the rebuild
+            self.manage_tab._staged = st["staged"]
+            self.manage_tab._refresh_staged()
+            self._update_staged_hint()
         self.tabs.setCurrentIndex(st["tab"])
 
     def _about(self):
@@ -866,6 +893,9 @@ class MainWindow(QMainWindow):
             self._keep_world(tr("The world is being edited: it can be changed when the edit ends."),
                              self.map_tab.path)
             return
+        if self.manage_tab.source_changed(path):          # the edits kept for the old world do not belong to this one
+            self.message.show_message("neutral", tr("The changes kept for the converted world were discarded: the "
+                                                    "world to convert has changed."))
         self._analysed = path
         self._detect_seq += 1
         seq = self._detect_seq
@@ -949,6 +979,9 @@ class MainWindow(QMainWindow):
         h.addWidget(self.bar, 1)
         self.run_hint = HintLabel(tr("Every tab except “World management” prepares this conversion."), wrap=False)
         h.addWidget(self.run_hint, 1)
+        self.staged_hint = HintLabel("", wrap=False)
+        self.staged_hint.hide()
+        h.addWidget(self.staged_hint, 1)
         self.btn_open = QPushButton(theme.icon("folder-open", fallback=QStyle.SP_DirOpenIcon), tr("Open the result folder"))
         self.btn_open.setEnabled(False)
         self.btn_open.hide()
@@ -967,6 +1000,16 @@ class MainWindow(QMainWindow):
         self.btn_convert.clicked.connect(self._start)
         h.addWidget(self.btn_convert)
         return self.run_box
+
+    def _update_staged_hint(self):
+        """The run bar says when the changes of “World management” will be written into the converted world."""
+        st = self.manage_tab.staged_edits()
+        if st is None or self._worker is not None:
+            self.staged_hint.hide()
+            return
+        self.staged_hint.setText(theme.span(tr("{n} changed documents of the world will be written into the converted "
+                                               "world (the source is not changed).", n=st.count), "positive"))
+        self.staged_hint.show()
 
     def _on_tab(self, i: int):
         """The conversion's buttons belong to the conversion tabs, not to the world's management."""
@@ -1057,11 +1100,18 @@ class MainWindow(QMainWindow):
         self.btn_open.setEnabled(False)
         self.btn_open.hide()
         self.run_hint.hide()
+        self.staged_hint.hide()
         self.bar.show()
         self.bar.setValue(0)
         self.bar.setFormat(tr("Starting…"))
         self.map_tab.set_conversion_running(True)  # the conversion reads the world at full speed
-        self._worker = ConvertWorker(src, out, target)
+        staged = self.manage_tab.staged_edits()
+        if staged is not None and not same_world(staged.source, src):
+            staged = None
+        if staged is not None:
+            self._log(tr("The changed documents ({n}) are written into the converted world; the source is not changed.",
+                         n=staged.count))
+        self._worker = ConvertWorker(src, out, target, staged)
         self._worker.progress.connect(self._on_progress)
         self._worker.log.connect(self._log)
         self._run_thread(self._worker, "finished", self._on_finished)
@@ -1094,6 +1144,7 @@ class MainWindow(QMainWindow):
         self.btn_cancel.setEnabled(False)
         self.btn_cancel.hide()
         self._worker = None
+        self._update_staged_hint()
         if ok:
             self._result_path = msg if os.path.isdir(msg) else os.path.dirname(msg)
             self.btn_open.setEnabled(True)
@@ -1154,7 +1205,7 @@ class MainWindow(QMainWindow):
         self.map_tab.save_state(s)
 
     def closeEvent(self, e):  # noqa: N802
-        if not self.manage_tab.maybe_discard():
+        if not self.manage_tab.maybe_discard() or not self.manage_tab.maybe_drop_staged(True):
             e.ignore()
             return
         if self._worker is not None:

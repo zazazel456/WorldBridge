@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **World management: "Apply only to the converted world"**: the changes made in the NBT / quick settings
+  can be kept apart instead of saved into the world; the source stays byte for byte as it is and the next
+  conversion writes the changes into the converted world (any format) from an edited working copy, removed
+  when it ends. Opening a Bedrock world in the editor no longer touches its database either (the players
+  are read from a private copy).
+
 ## 0.2.2 – review against real worlds (alpha)
 
 A full review of the code with 110 real worlds downloaded from the web (Java Classic → 26.3, Bedrock

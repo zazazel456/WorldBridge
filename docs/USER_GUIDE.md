@@ -235,6 +235,15 @@ Features:
 - **Save changes** rewrites the files in their own format (compression, endianness, headers) and
   leaves a `*.wb-backup` copy of the original next to them. Xbox 360 saves still inside an STFS
   package open read-only.
+- **Apply only to the converted world** (enabled when the world opened here is the one chosen at the
+  top and has changes) keeps the changes apart instead of writing them: the source world is not
+  changed at all (no `*.wb-backup` either). A line under the tree says how many documents will be
+  written into the converted world, with **Discard** to forget them, and the Convert bar repeats it.
+  The next conversion reads an edited working copy of the world (a `.worldbridge_edit_*` folder next
+  to it, big files shared by hard links, removed when the conversion ends, also on error or cancel)
+  and writes the converted world, in whatever format, from it; the changes stay kept for further
+  conversions until discarded. Opening another world or reloading asks whether to keep them;
+  choosing another world at the top drops them. They are lost when the window closes.
 
 ## Desktop theme
 

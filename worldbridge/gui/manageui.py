@@ -5,7 +5,8 @@ the seed, the game rules and the weather) and, above them, the quick settings of
 (name, seed, game mode, difficulty, spawn, time, weather, game rules).  Right: the tree of every tag
 of the chosen document, editable (double click on a value; right click to add, rename or remove a
 tag).  "Salva" writes the changed documents back in the world's own format, after copying the files
-it replaces (*.wb-backup)."""
+it replaces (*.wb-backup).  "Applica solo al mondo convertito" keeps the changes apart (``StagedEdits``)
+instead: the world stays as it is and the next conversion writes them into the converted world."""
 
 from __future__ import annotations
 
@@ -57,14 +58,25 @@ def _parse(tag_type, text: str):
     raise ValueError(tr("this tag has no value to write"))
 
 
+def same_world(a: str, b: str) -> bool:
+    """Both paths name the same world (a ``level.dat`` file stands for its folder)."""
+    def norm(p: str) -> str:
+        p = os.path.realpath(os.path.expanduser(p.strip())) if p.strip() else ""
+        return os.path.dirname(p) if os.path.basename(p).lower() == "level.dat" and os.path.isfile(p) else p
+    return bool(a.strip()) and norm(a) == norm(b)
+
+
 class ManageTab(QWidget):
     source_requested = Signal()          # "Usa il mondo sorgente"
+    staged_changed = Signal()            # the edits kept for the converted world changed
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.world = None
         self._doc = None
         self._filling = False
+        self._staged = None              # manage.StagedEdits: edits for the converted world, not in any world
+        self.source_getter = lambda: getattr(self, "_source", "")     # the world chosen at the top of the window
         v = QVBoxLayout(self)
         top = QHBoxLayout()
         top.addWidget(QLabel(tr("World to edit:")))
@@ -120,6 +132,19 @@ class ManageTab(QWidget):
         split.setSizes([380, 620])
         v.addWidget(split, 1)
 
+        self.staged_box = QWidget()
+        sb = QHBoxLayout(self.staged_box)
+        sb.setContentsMargins(0, 0, 0, 0)
+        self.staged_label = QLabel("")
+        self.staged_label.setWordWrap(True)
+        sb.addWidget(self.staged_label, 1)
+        self.btn_discard_staged = QPushButton(theme.icon("edit-delete", fallback=QStyle.SP_TrashIcon), tr("Discard"))
+        self.btn_discard_staged.setToolTip(tr("Forget these changes: the next conversion will not carry them"))
+        self.btn_discard_staged.clicked.connect(self.discard_staged)
+        sb.addWidget(self.btn_discard_staged)
+        self.staged_box.hide()
+        v.addWidget(self.staged_box)
+
         bottom = QHBoxLayout()
         self.state = QLabel("")
         bottom.addWidget(self.state, 1)
@@ -129,15 +154,19 @@ class ManageTab(QWidget):
         self.btn_save = QPushButton(theme.icon("document-save", fallback=QStyle.SP_DialogSaveButton), tr("&Save changes"))
         self.btn_save.setToolTip(tr("Write the changes into the world (a *.wb-backup copy first)"))
         self.btn_save.clicked.connect(self._save)
-        for b in (self.btn_reload, self.btn_save):
+        self.btn_stage = QPushButton(theme.icon("document-export", "go-next", fallback=QStyle.SP_ArrowRight),
+                                     tr("Apply only to the converted world"))
+        self.btn_stage.clicked.connect(self._stage)
+        for b in (self.btn_reload, self.btn_stage, self.btn_save):
             b.setEnabled(False)
             bottom.addWidget(b)
         v.addLayout(bottom)
+        self._update_buttons()
 
     # ------------------------------------------------------------------ opening
     def open(self, path: str, manual=None) -> bool:
         """Opens ``path``, after asking what to do with unsaved changes (False: the user cancelled)."""
-        if not self.maybe_discard():
+        if not self.maybe_discard() or not self.maybe_drop_staged():
             return False
         if manual is not None:
             self._manual = manual
@@ -146,7 +175,7 @@ class ManageTab(QWidget):
         return True
 
     def _reload(self):
-        if self.maybe_discard():
+        if self.maybe_discard() and self.maybe_drop_staged():
             self._open_path()
 
     def maybe_discard(self) -> bool:
@@ -167,6 +196,7 @@ class ManageTab(QWidget):
         """The world of the conversion tab is the one managed here, unless another one was opened by
         hand or has unsaved changes; it is read when the tab is first shown."""
         self._source = path
+        self._update_buttons()
         if getattr(self, "_manual", False) or self.has_changes():
             return
         self._pending = path
@@ -200,7 +230,7 @@ class ManageTab(QWidget):
 
     def _typed_path(self):
         typed = self.path_edit.text().strip()
-        if not self.maybe_discard():
+        if not self.maybe_discard() or not self.maybe_drop_staged():
             self.path_edit.setText(self.world.path)            # stays on the world with the changes
             return
         self._manual = typed != getattr(self, "_source", "")
@@ -222,6 +252,7 @@ class ManageTab(QWidget):
             self._clear_quick()
             self.btn_save.setEnabled(False)
             self.btn_reload.setEnabled(False)
+            self._update_buttons()
             return
         w = self.world
         ro = "  ·  " + tr("<b>read-only</b> (Xbox 360 STFS package)") if w.read_only else ""
@@ -237,6 +268,7 @@ class ManageTab(QWidget):
         self.btn_reload.setEnabled(True)
         self.btn_save.setEnabled(not w.read_only)
         self._set_dirty(False)
+        self._refresh_staged()
 
     # ------------------------------------------------------------------ quick settings
     def _clear_quick(self):
@@ -477,6 +509,7 @@ class ManageTab(QWidget):
     def _set_dirty(self, dirty: bool):
         self.state.setText(theme.span(tr("Unsaved changes"), "neutral") if dirty else "")
         self.btn_save.setDefault(dirty)
+        self._update_buttons()
 
     def _save(self):
         if self.world is None:
@@ -491,3 +524,95 @@ class ManageTab(QWidget):
 
     def has_changes(self) -> bool:
         return self.world is not None and any(d.dirty for d in self.world.docs)
+
+    # ------------------------------------------------------------------ edits for the converted world only
+    def is_source_world(self) -> bool:
+        """The world opened here is the one the conversion reads (the path at the top of the window)."""
+        return self.world is not None and (same_world(self.world.path, self.source_getter())
+                                           or same_world(self.path_edit.text(), self.source_getter()))
+
+    def _update_buttons(self) -> None:
+        w = self.world
+        ok = w is not None and not w.read_only and self.has_changes() and self.is_source_world()
+        self.btn_stage.setEnabled(ok)
+        tip = tr("The source world is not changed: the next conversion writes these changes into the converted world.")
+        if not ok:
+            tip += "\n" + tr("Available when the world opened here is the one chosen at the top of the window and "
+                              "has changes.")
+        self.btn_stage.setToolTip(tip)
+
+    def staged_edits(self):
+        """The edits kept for the converted world (``manage.StagedEdits``), None when there are none."""
+        return self._staged
+
+    def _stage(self) -> None:
+        from ..manage import capture_edits
+
+        if self.world is None or not self.has_changes() or not self.is_source_world():
+            return
+        previous = self._staged if self._staged is not None and same_world(self._staged.source, self.source_getter()) \
+            else None
+        try:
+            self._staged = capture_edits(self.world, self.source_getter().strip(), previous)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.critical(self, tr("Saving failed"), str(e))
+            return
+        for d in self.world.docs:               # kept apart from the world: nothing is left unsaved
+            d.dirty = False
+        self._set_dirty(False)
+        self._refresh_staged()
+        self.staged_changed.emit()
+
+    def _refresh_staged(self) -> None:
+        st = self._staged
+        self.staged_box.setVisible(st is not None)
+        if st is not None:
+            where = "" if self.is_source_world() else "  (" + os.path.basename(os.path.normpath(st.source)) + ")"
+            self.staged_label.setText(theme.span(
+                tr("Changed documents: {n}. They will be written into the converted world; the source world is not "
+                   "changed.", n=st.count) + where, "positive"))
+        self._update_buttons()
+
+    def discard_staged(self) -> None:
+        if self._staged is None:
+            return
+        self._staged = None
+        self._refresh_staged()
+        self.staged_changed.emit()
+
+    def maybe_drop_staged(self, closing: bool = False) -> bool:
+        """Before the editor leaves the edits kept for the converted world (another world, a reload, closing):
+        keep them or discard them (False: the user cancelled)."""
+        st = self._staged
+        if st is None:
+            return True
+        if closing:
+            r = QMessageBox.question(self, tr("Changes for the converted world"),
+                                     tr("The changes kept for the converted world ({n} changed documents) are lost "
+                                        "when the window closes. Close anyway?", n=st.count))
+            if r != QMessageBox.Yes:
+                return False
+            self.discard_staged()
+            return True
+        box = QMessageBox(QMessageBox.Question, tr("Changes for the converted world"),
+                          tr("The changes kept for the converted world ({n} changed documents) are in no world yet. "
+                             "Keep them for the next conversion?", n=st.count), QMessageBox.NoButton, self)
+        keep = box.addButton(tr("Keep them"), QMessageBox.AcceptRole)
+        drop = box.addButton(tr("Discard them"), QMessageBox.DestructiveRole)
+        box.addButton(QMessageBox.Cancel)
+        box.setDefaultButton(keep)
+        box.exec()
+        if box.clickedButton() is drop:
+            self.discard_staged()
+            return True
+        return box.clickedButton() is keep
+
+    def source_changed(self, path: str) -> bool:
+        """The conversion's world is now ``path``: edits kept for another world are dropped (True: they were)."""
+        if self._staged is None or same_world(self._staged.source, path):
+            self._update_buttons()
+            self._refresh_staged()
+            return False
+        self.discard_staged()
+        self._update_buttons()
+        return True
