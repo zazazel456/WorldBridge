@@ -20,9 +20,12 @@ editor shows them as a form above the tree of every tag.  Saving first copies th
 
 from __future__ import annotations
 
+import copy
 import glob
 import os
+import re
 import shutil
+import tempfile
 import struct
 import time
 from dataclasses import dataclass, field
@@ -79,6 +82,9 @@ class WorldDocs:
     docs: List[Doc] = field(default_factory=list)
     read_only: bool = False
     warning: str = ""              # what could not be read (shown by the editor)
+    # a working copy being filled (see ``build_staged_copy``): no *.wb-backup, and every file written is a
+    # new one put in place (``os.replace``), so a hard link to a file of the original is never written through
+    staged: bool = False
     game_modes: Dict[int, str] = field(default_factory=lambda: dict(JAVA_MODES))
     _save: Optional[Callable[["WorldDocs"], None]] = None
 
@@ -185,10 +191,25 @@ def _like(old, value, kind: str):
     return t(int(value))
 
 
-def _backup(path: str) -> None:
-    """The first save keeps the original as ``.wb-backup``; the next saves never replace it."""
+def _backup(path: str, w: Optional[WorldDocs] = None) -> None:
+    """The first save keeps the original as ``.wb-backup``; the next saves never replace it (no backup
+    in a working copy)."""
+    if w is not None and w.staged:
+        return
     if os.path.isfile(path) and not os.path.exists(path + ".wb-backup"):
         shutil.copy2(path, path + ".wb-backup")
+
+
+def _write_file(path: str, data: bytes, w: Optional[WorldDocs] = None) -> None:
+    """Writes ``path``; in a working copy as a new file put in place of the old one, never in place."""
+    if w is None or not w.staged:
+        with open(path, "wb") as f:
+            f.write(data)
+        return
+    tmp = path + ".wb-new"
+    with open(tmp, "wb") as f:
+        f.write(data)
+    os.replace(tmp, path)
 
 
 # ============================================================ Java
@@ -259,9 +280,8 @@ def _save_java(w: WorldDocs) -> None:
         if not d.dirty or d.parent is not None:
             continue
         p = os.path.join(w.path, d.key)
-        _backup(p)
-        with open(p, "wb") as f:
-            f.write(nbt.dump(d.root, "", compressed=True))
+        _backup(p, w)
+        _write_file(p, nbt.dump(d.root, "", compressed=True), w)
 
 
 def _java_era(data: nbt.CompoundTag) -> str:
@@ -351,12 +371,11 @@ def _read_bedrock_level(path: str) -> Tuple[int, nbt.CompoundTag]:
     return version, nbt.load(raw[8:], little_endian=True, compressed=False).tag
 
 
-def _write_bedrock_level(path: str, version: int, root: nbt.CompoundTag) -> None:
+def _write_bedrock_level(path: str, version: int, root: nbt.CompoundTag, w: Optional[WorldDocs] = None) -> None:
     body = nbt.dump(root, "", little_endian=True)
     p = os.path.join(path, "level.dat")
-    _backup(p)
-    with open(p, "wb") as f:
-        f.write(struct.pack("<ii", version, len(body)) + body)
+    _backup(p, w)
+    _write_file(p, struct.pack("<ii", version, len(body)) + body, w)
 
 
 def _open_bedrock(path: str) -> WorldDocs:
@@ -375,14 +394,20 @@ def _open_bedrock(path: str) -> WorldDocs:
             w.docs.append(Doc("level.dat:Player", tr("Single player (in level.dat)"), root["Player"], "player",
                               parent=level))
     else:
+        # the players are read from a private copy of the database: opening a LevelDB replays its log and
+        # writes new files, which would change the world just by looking at it (and fail while the game
+        # has the world open)
+        tmp = tempfile.mkdtemp(prefix="worldbridge_players_")
+        near = db = None
         try:
+            from . import detect as det
             from leveldb import LevelDB
 
-            db = LevelDB(os.path.join(path, "db"))
+            near = det.snapshot_parent(path, tmp)
+            copy_of = det.snapshot(os.path.join(path, "db"), near or tmp)
+            db = LevelDB(copy_of)
         except Exception as e:  # noqa: BLE001
-            # LevelDB is locked while the game has the world open
             w.warning = tr("The players cannot be read ({error}): close Minecraft if the world is open in it.", error=e)
-            db = None
         if db is not None:
             try:
                 keys = [b"~local_player"] + sorted(k for k, _v in db.iterate(b"player_server_", b"player_server_\xff")
@@ -401,6 +426,9 @@ def _open_bedrock(path: str) -> WorldDocs:
                         w.warning = tr("{player}: unreadable ({error})", player=label, error=e)
             finally:
                 db.close()
+        for folder in (tmp, near):
+            if folder:
+                shutil.rmtree(folder, ignore_errors=True)
     w._save = _save_bedrock
     return w
 
@@ -408,7 +436,7 @@ def _open_bedrock(path: str) -> WorldDocs:
 def _save_bedrock(w: WorldDocs) -> None:
     lvl = w.doc("level.dat")
     if lvl is not None and lvl.dirty:
-        _write_bedrock_level(w.path, getattr(w, "_storage", 10), lvl.root)
+        _write_bedrock_level(w.path, getattr(w, "_storage", 10), lvl.root, w)
     players = [d for d in w.docs if d.kind == "player" and d.dirty and d.parent is None]
     if players:
         from leveldb import LevelDB
@@ -488,7 +516,15 @@ def _save_lce(w: WorldDocs) -> None:
         if d.dirty:
             c.files[d.key] = nbt.dump(d.root, "", compressed=w._gzip.get(d.key, False))  # type: ignore[attr-defined]
     folder, name = os.path.split(c.source_path)
-    _backup(c.source_path)
+    _backup(c.source_path, w)
+    if w.staged:
+        # the container and its split region files may be hard links to the original's: removed first, so
+        # they are written as new files (the original keeps its own)
+        from .lce.container import _SPLIT_RE
+
+        for fn in os.listdir(folder):
+            if fn == name or _SPLIT_RE.match(fn):
+                os.unlink(os.path.join(folder, fn))
     stamp = time.time()
     c.save(folder, name)
     os.utime(c.source_path, (stamp, stamp))
@@ -523,6 +559,137 @@ def open_world(path: str) -> WorldDocs:
     if d.kind in ("java_modern", "java_numeric", "bta") or os.path.isfile(os.path.join(d.path, "level.dat")):
         return _open_java(d.path)
     raise ValueError(tr("This kind of world has no editable documents: {world}", world=d.description))
+
+
+# ============================================================ edits applied to the converted world only
+
+@dataclass
+class StagedEdits:
+    """Edits of a world's documents kept apart from the world: the conversion that reads ``source`` reads a
+    working copy with these edits written into it (``build_staged_copy``), so the converted world carries
+    them, whatever its format, and the source is never changed."""
+    source: str                                       # the path the conversion reads (what the window has at the top)
+    kind: str                                         # the world's kind ("java", "bedrock", "pe_old", "lce")
+    roots: Dict[str, nbt.CompoundTag] = field(default_factory=dict)       # Doc.key -> the document as edited
+    labels: Dict[str, str] = field(default_factory=dict)                  # Doc.key -> what the editor calls it
+
+    @property
+    def count(self) -> int:
+        return len(self.roots)
+
+
+def capture_edits(w: WorldDocs, source: str, previous: Optional[StagedEdits] = None) -> StagedEdits:
+    """The changed documents of ``w`` (copies: later edits do not change them) added to ``previous``.  A document
+    inside another one (the player of a Java level.dat) is kept with the document that holds it."""
+    if w.read_only:
+        raise PermissionError(tr("This world is read-only."))
+    out = StagedEdits(source, w.kind)
+    if previous is not None and previous.kind == w.kind:
+        out.roots = {k: copy.deepcopy(v) for k, v in previous.roots.items()}
+        out.labels = dict(previous.labels)
+    for d in w.docs:
+        if not d.dirty:
+            continue
+        top = d
+        while top.parent is not None:
+            top = top.parent
+        out.roots[top.key] = copy.deepcopy(top.root)
+        out.labels[top.key] = top.label
+    return out
+
+
+# files that change while a world is played or opened (replaced by real copies in the working copy, never
+# hard-linked); the big, immutable ones (regions, LevelDB tables) are linked
+_MUTABLE = re.compile(r"(?i)(.*\.(dat|dat_old|log|json|txt|properties|old)|CURRENT|LOG|MANIFEST-.*)$")
+# the files beside an LCE save file that the reader looks at (the split regions, the thumbnail...)
+_LCE_SIDE = re.compile(r"(?i)(GAMEDATA_[0-9a-f]{8}|THUMB|ICON0\.PNG|thumbData\.png|wd_displayname\.txt)$")
+
+
+@dataclass
+class StagedCopy:
+    path: str                                         # what the conversion reads: the same name as the original
+    root: str                                         # the working folder (``.worldbridge_edit_*``), removed by cleanup()
+    missing: List[str] = field(default_factory=list)  # edited documents the world no longer has
+
+    def cleanup(self) -> None:
+        shutil.rmtree(self.root, ignore_errors=True)
+
+
+def _staging_root(world: str) -> str:
+    """A new working folder next to the world (where hard links work); in the system's temporary folder when
+    the world's folder cannot be written."""
+    parent = os.path.dirname(os.path.abspath(world)) or "."
+    try:
+        return tempfile.mkdtemp(prefix=".worldbridge_edit_", dir=parent)
+    except OSError:
+        return tempfile.mkdtemp(prefix="worldbridge_edit_")
+
+
+def build_staged_copy(edits: StagedEdits, progress=None) -> StagedCopy:
+    """A working copy of the world ``edits.source`` with the edits written into it; the original is not
+    changed in any way (its files are only read, or hard-linked and never written).
+
+    Layout: ``<next to the world>/.worldbridge_edit_<random>/<the world's own name>``, so the names derived
+    from the world (output name, detection, LCE file names) stay the same.  The big files are hard links,
+    the documents are real copies and every file that is written is a new one put in place."""
+    from . import detect as det
+
+    d = det.detect(edits.source)
+    if d is None or d.kind == "archive":
+        raise ValueError(tr("World format not recognised."))
+    root = _staging_root(d.path)
+    try:
+        name = os.path.basename(os.path.normpath(d.path)) or "world"
+        dest = os.path.join(root, name)
+        lce = d.kind == "lce"
+
+        def link_it(src: str) -> bool:
+            return lce or not _MUTABLE.match(os.path.basename(src))
+
+        if os.path.isdir(d.path):
+            det.linked_copy(d.path, dest, link_it, ignore=("LOCK", "session.lock", "*.wb-backup", "*.wb-new"),
+                            progress=progress)
+        else:                                                  # an LCE save file: it and the files it reads
+            _copy_lce_file(d.path, root, progress)
+        w = open_world(dest)
+        if w.read_only:
+            raise PermissionError(tr("This world is read-only."))
+        w.staged = True
+        missing = []
+        for key, tag in edits.roots.items():
+            doc = w.doc(key)
+            if doc is None:
+                missing.append(edits.labels.get(key, key))
+                continue
+            doc.root = copy.deepcopy(tag)
+            doc.dirty = True
+        w.save()
+        return StagedCopy(dest, root, missing)
+    except BaseException:
+        shutil.rmtree(root, ignore_errors=True)
+        raise
+
+
+def _copy_lce_file(path: str, root: str, progress=None) -> None:
+    """The save file (hard link) and its side files, flat into ``root``."""
+    folder, name = os.path.split(path)
+    stem = os.path.splitext(name)[0].lower()
+    for fn in sorted(os.listdir(folder)):
+        src = os.path.join(folder, fn)
+        if fn == name or (os.path.isfile(src) and (_LCE_SIDE.match(fn) or os.path.splitext(fn)[0].lower() == stem)) or \
+                (os.path.isdir(src) and fn.lower() in ("sce_sys", "thumbnails")):
+            if progress is not None:
+                progress.check()
+            dst = os.path.join(root, fn)
+            if os.path.isdir(src):
+                from . import detect as det
+
+                det.linked_copy(src, dst, progress=progress)
+                continue
+            try:
+                os.link(src, dst)
+            except OSError:
+                shutil.copy2(src, dst)
 
 
 # ============================================================ inventories
