@@ -1575,6 +1575,12 @@ _SECTIONS = {
             "All'account Java del nickname",
         'The first player who opens the world':
             'Al primo giocatore che apre il mondo',
+        'The source world has no known seed: the converted world gets seed {seed} (derived from its name), so that the game and the ring around the converted world generate the same terrain.':
+            'Il mondo di origine non ha un seed noto: il mondo convertito riceve il seed {seed} (ricavato dal suo nome), così il gioco e l\'anello attorno al mondo convertito generano lo stesso terreno.',
+        'Blending data written to {n} chunks of the overworld.':
+            'Dati di raccordo scritti in {n} chunk dell\'Overworld.',
+        'The terrain comes from another generator or seed: the chunks carry blending data and Minecraft blends the new terrain with the converted one by itself.':
+            'Il terreno viene da un altro generatore o seed: i chunk portano i dati di raccordo e Minecraft raccorda da solo il terreno nuovo con quello convertito.',
     },
 }
 
