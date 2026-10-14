@@ -152,6 +152,17 @@ def _java_upgrade_only(d: det.Detected, t: TargetSpec) -> bool:
     return bool(dvs) and max(dvs) <= target_dv
 
 
+def _needs_blending_data(d: det.Detected, t: TargetSpec, sel: Selection, old_source: bool) -> bool:
+    """True for a Java 1.18+ target whose terrain another generator made (java/blending.py): every source but
+    an unmoved Java 1.18+ world going to the same or a newer version."""
+    if t.family != "java" or not t.blend or tuple(t.version or ab.latest("java")) < CAVES_CLIFFS:
+        return False
+    from .java import blending
+
+    unmoved = sel.move_to is None and not sel.biomes
+    return blending.needed(d.kind, old_source, unmoved, d.kind == "java_modern" and _java_upgrade_only(d, t))
+
+
 def _write_version(platform: str, version, blend: bool, old_source: bool):
     """Version actually written by Amulet (pre-1.18 when the game must blend)."""
     v = tuple(version)
@@ -1237,9 +1248,12 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
         _plan_pets(d, target, info, progress)
     from .terrain import policy
 
-    plan = policy.decide(target, old_source)
+    foreign = _needs_blending_data(d, target, sel, old_source)
+    plan = policy.decide(target, old_source, foreign=foreign)
     if plan.kind == "missing":
         progress.warn(plan.text)
+    elif foreign and plan.kind == "game":
+        progress.log(plan.text)
     wver = _write_version(platform, target.version, target.blend, old_source)
     if wver != tuple(target.version):
         progress.log(tr("Blending: pre-1.18 source world, the chunks are written in the {format} format and Minecraft "
@@ -1283,6 +1297,10 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
             progress.warn(tr(CUSTOMIZED))
     if platform == "java" and target.ring and tuple(target.version or (99,)) < CAVES_CLIFFS:
         _rings3d_after_amulet(out_dir, target, info, wver, tmp, progress)
+    if foreign and plan.kind == "game":
+        from .java import blending
+
+        progress.log(tr("Blending data written to {n} chunks of the overworld.", n=blending.mark_world(out_dir)))
     progress.done()
     return ConversionResult(out_dir, n or 0)
 

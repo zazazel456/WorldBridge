@@ -45,7 +45,8 @@ del gioco* / `--no-blend` and *Anello di raccordo* / `--no-ring`.
 | Target | Remedy | Status |
 |---|---|---|
 | Java 1.18 – 26.x from pre-1.18 sources | A | ✅ chunks written in a pre-1.18 format; the game's upgrade adds `blending_data` |
-| Java 1.18 – 26.x from 1.18+ sources with another generator or seed (Bedrock 1.18+, LCE Aquatic, compressed worlds) | A | ✅ the game's blending is enough |
+| Java 1.18 – 26.x from 1.18+ sources with another generator or seed (Bedrock 1.18+, Java 1.18+ of another seed, a moved world or a newer version) | A | ✅ the overworld chunks are written with `blending_data` (`{old_noise: 1b}` up to DataVersion 3440, `{min_section: -4, max_section: 20}` from 3441; the game computes the heights), so the game blends its terrain into them. Without it the game assumed the edge continued and met it with a wall (mean jump 23 – 40 blocks measured). `--no-blend` turns it off |
+| Java 1.18 – 26.x from an unmoved Java 1.18+ world, same seed, same or newer version | A | ✅ no `blending_data`: the game generates the same terrain (the world is copied and upgraded by the game) |
 | Bedrock 1.18 – 26.50 | A | ✅ pre-1.18 format plus real height maps |
 | Bedrock 1.1 – 1.17 | C | ❌ Bedrock's pre-1.18 generator is not public and its noise differs from Java's: the conversion warns and suggests 1.18+ |
 | LCE maps of 54 / 64 chunks (Xbox 360, PS3, Vita, and the small sizes elsewhere) | B | ✅ whole map written (54 × 54: 18 s, 3 MB) |
