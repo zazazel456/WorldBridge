@@ -38,8 +38,10 @@ def neo_legacy(target) -> bool:
     return target.family == "lce" and getattr(target, "lce_platform", "") == "win64"
 
 
-def decide(target, old_source: bool, source_kind: str = "", writer_opt=None) -> Plan:
-    plan = _decide(target, old_source, source_kind, writer_opt)
+def decide(target, old_source: bool, source_kind: str = "", writer_opt=None, same_game: bool = False) -> Plan:
+    """``same_game``: the source is itself a neoLegacy / Windows64 world and stays in place (same seed, no
+    move): its terrain is the one the target game generates, so an LCE → neoLegacy copy needs no ring."""
+    plan = _decide(target, old_source, source_kind, writer_opt, same_game)
     if plan.kind in ("ring", "fill") and not getattr(target, "ring", True):
         return Plan("off", tr("Ring turned off: at the edges of the converted world the game will put its own terrain "
                               "without a transition."))
@@ -49,9 +51,11 @@ def decide(target, old_source: bool, source_kind: str = "", writer_opt=None) -> 
     return plan
 
 
-def _decide(target, old_source: bool, source_kind: str = "", writer_opt=None) -> Plan:
+def _decide(target, old_source: bool, source_kind: str = "", writer_opt=None, same_game: bool = False) -> Plan:
     fam = target.family
-    if fam == "lce" and source_kind == "lce":
+    # a console save has the generator of its own title update, not neoLegacy's: only a Windows64 / neoLegacy
+    # world that stays where it is continues by itself; for a neoLegacy target everything else gets the ring
+    if fam == "lce" and source_kind == "lce" and (same_game or not neo_legacy(target)):
         return Plan("game", tr("LCE → LCE: the game generates the same terrain as the source world, the edge continues "
                                "by itself."))
     if fam == "pe_old" and source_kind == "pe_old":

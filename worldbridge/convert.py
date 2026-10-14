@@ -225,6 +225,31 @@ def world_seed(level) -> int:
     return int(seed or 0)
 
 
+FALLBACK_SEED = 0x57B1D6E5          # when a world has neither a seed nor a name
+
+
+def ensure_seed(level, progress: Progress, name: str = "") -> int:
+    """The seed a generator-based ring needs, with the source's when it has one.  A source without a seed
+    (a 26.x world without data/minecraft/world_gen_settings.dat, an edited level.dat) reads as 0, which Alpha 1.2
+    treats as "random": the ring would be generated for a seed the game then never uses.  A fixed seed is
+    derived from the level name instead (the same world always gets the same one), written into the level
+    that the target gets and used for the ring."""
+    seed = world_seed(level)
+    if seed:
+        return seed
+    import hashlib
+
+    name = name or str(ab.nbt.get(level, "LevelName", "") or "")
+    seed = FALLBACK_SEED
+    if name:
+        seed = int.from_bytes(hashlib.sha256(("WorldBridge:" + name).encode("utf-8")).digest()[:8], "big") & (2 ** 63 - 1)
+        seed = seed or FALLBACK_SEED
+    level["RandomSeed"] = ab.nbt.LongTag(seed)
+    progress.log(tr("The source world has no known seed: the converted world gets seed {seed} (derived from its name), "
+                    "so that the game and the ring around the converted world generate the same terrain.", seed=seed))
+    return seed
+
+
 def target_ceiling(t: TargetSpec) -> Optional[int]:
     """First y the target cannot store, for the targets lower than the hub (256)."""
     if t.family == "pe_old" or (t.family == "java" and t.java_mode in ("mcregion", "alpha")):
@@ -767,8 +792,11 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
             return ConversionResult(out_dir, 0, time.time() - t0, list(progress.warnings))
         # ---- Java 1.13+ -> the same or a newer Java: the game's own upgrade keeps every block, item
         # component, book, mob and setting, which no translation does as well (before 1.18 the game
-        # does not blend the border: there the ring needs the translation route)
+        # does not blend the border: there the ring needs the translation route).  With the blending turned
+        # off a pre-1.18 world is not copied either (the game would blend it on upgrade): it is translated
+        # and written in the target's own format
         if (same_edition and target.family == "java" and _java_upgrade_only(d, target)
+                and not (old_source and not target.blend)
                 and (not target.ring or tuple(target.version or ab.latest("java")) >= CAVES_CLIFFS)):
             progress.stage(tr("Copying the world (Minecraft will upgrade it when it is opened)"), 0.05, 0.95)
             copy_tree(d.path, out_dir, progress)
@@ -877,7 +905,8 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
         # nearest real biomes instead (LCE and numeric Java targets keep 255: the game recomputes it).
         filler = BiomeFiller(writer.stored_biomes) if amulet_target else None
         # the border between the converted world and the terrain the game generates (docs/SEAMLESS_BORDERS.md)
-        plan = policy.decide(target, old_source, d.kind, getattr(writer, "opt", None))
+        same_game = (d.kind == "lce" and getattr(src.info, "source_platform", "") == "win64" and not move.active)
+        plan = policy.decide(target, old_source, d.kind, getattr(writer, "opt", None), same_game)
         if plan.kind == "ring" and target.family == "java":
             from .java.numeric import generator_name
 
@@ -892,7 +921,7 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
         elif plan.text:
             progress.log(plan.text)
         ring = None
-        seed = world_seed(src.info.level)
+        seed = ensure_seed(src.info.level, progress, target.world_name) if plan.kind == "ring" else world_seed(src.info.level)
         if plan.kind == "ring" and coords.get(OVERWORLD) and target.family == "lce":
             from .terrain.neogen import NeoGenerator
 
@@ -1216,6 +1245,8 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
         progress.log(tr("Blending: pre-1.18 source world, the chunks are written in the {format} format and Minecraft "
                         "blends them with the new terrain when the world is opened.", format=ab.version_str(wver)))
     ring_here = plan.kind == "ring" and platform == "java"
+    if plan.kind == "ring":
+        ensure_seed(info.level, progress, target.world_name)
     progress.stage(tr("Converting with Amulet to {target}", target=target.describe()), 0.03, 0.75 if ring_here else 0.9)
     from . import depthfit
 

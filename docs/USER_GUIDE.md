@@ -356,7 +356,7 @@ worldbridge convert saveData.ms <output> --to java --trim        # convert only 
 | `--center-on-spawn`, `--offset X,Z` | which source chunk becomes the centre of the LCE world |
 | `--name` | the target world's name |
 | `--player-id` | LCE PC / Xbox: the XUID (file name in `players/`) for the main player |
-| `--no-blend` | Java / Bedrock 1.18+: no game blending |
+| `--no-blend` | Java / Bedrock 1.18+: no game blending (a pre-1.18 world is translated, not copied for the game to upgrade) |
 | `--no-ring` | no ring (Java Alpha 1.2 – 1.17, neoLegacy, Nether and End) and no fill of finite maps (PE 0.x, LCE 54 / 64 chunks) |
 | `--tall-terrain compress\|cut` | 128-block targets: compress tall mountains (default) or cut them at y 127 |
 | `--depth auto\|cut\|keep\|Y` | 1.18+ worlds to games that start at y 0: `auto` (default) keeps the underground of flat or low worlds (superflat 1.18+ has its surface at y -61) and cuts normal ones, `cut` below y 0, `keep` everything (the world rises by 64), or keep from a negative Y |
