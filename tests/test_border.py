@@ -1,10 +1,12 @@
 """The border of converted worlds: the remedy for every target, the ring's width, finite worlds filled."""
+import os
+
 import numpy as np
 
 from worldbridge import nbt
 from worldbridge.convert import TargetSpec, convert
 from worldbridge.java.numeric import JavaNumericWriter, JavaWriteOptions
-from worldbridge.model import NumericChunk, Progress
+from worldbridge.model import NumericChunk, Progress, WorldInfo
 from worldbridge.terrain import policy
 from worldbridge.terrain.filler import FillGenerator
 from worldbridge.terrain.ring import Ring
@@ -110,8 +112,99 @@ def test_lce_worlds_are_written_whole(tmp_path):
     assert len(w.chunk_coords(0)) == 54 * 54
 
 
-def test_lce_to_lce_needs_nothing():
-    assert policy.decide(TargetSpec(family="lce", lce_world_size=54), True, "lce").kind == "game"
+def test_lce_to_lce_needs_nothing_unless_the_generators_differ():
+    T = TargetSpec
+    # a console save to neoLegacy: the console's title-update generator is not neoLegacy's -> ring
+    assert policy.decide(T(family="lce", lce_world_size=54), True, "lce").kind == "ring"
+    # a Windows64 / neoLegacy world that stays in place: the same terrain, nothing to add
+    assert policy.decide(T(family="lce", lce_world_size=54), True, "lce", same_game=True).kind == "game"
+    # console targets have no generator: they keep "the game continues the terrain"
+    assert policy.decide(T(family="lce", lce_platform="xbox360", lce_world_size=54), True, "lce").kind == "game"
+    assert policy.decide(T(family="lce", lce_world_size=54, ring=False), True, "lce").kind == "off"
+
+
+def test_unknown_seed_gets_a_fixed_non_zero_one():
+    from worldbridge.convert import FALLBACK_SEED, ensure_seed
+
+    msgs = []
+
+    class P:
+        def log(self, m):
+            msgs.append(m)
+
+    a = nbt.CompoundTag({"LevelName": nbt.StringTag("Mondo")})
+    seed = ensure_seed(a, P())
+    assert seed != 0 and int(a["RandomSeed"].py_data) == seed and msgs and str(seed) in msgs[0]
+    b = nbt.CompoundTag({"LevelName": nbt.StringTag("Mondo"), "RandomSeed": nbt.LongTag(0)})
+    assert ensure_seed(b, P()) == seed                                # the same name, the same seed
+    assert ensure_seed(nbt.CompoundTag(), P()) == FALLBACK_SEED
+    real = nbt.CompoundTag({"RandomSeed": nbt.LongTag(-77)})
+    n = len(msgs)
+    assert ensure_seed(real, P()) == -77 and len(msgs) == n          # a known seed is left alone
+    wgs = nbt.CompoundTag({"WorldGenSettings": nbt.CompoundTag({"seed": nbt.LongTag(5)})})
+    assert ensure_seed(wgs, P()) == 5
+
+
+def test_26x_seed_is_read_from_world_gen_settings(tmp_path):
+    from worldbridge.convert import world_seed
+    from worldbridge.extra import classic_java_level
+    from worldbridge.model import WorldInfo
+
+    d = tmp_path / "w" / "data" / "minecraft"
+    d.mkdir(parents=True)
+    root = nbt.CompoundTag({"data": nbt.CompoundTag({"seed": nbt.LongTag(-4780892816315930611)})})
+    (d / "world_gen_settings.dat").write_bytes(nbt.dump(root, "", compressed=True))
+    info = WorldInfo()
+    classic_java_level(info, str(tmp_path / "w"))
+    assert world_seed(info.level) == -4780892816315930611
+
+
+def test_seedless_source_to_alpha_writes_the_seed_the_ring_uses(tmp_path):
+    hub = str(tmp_path / "src")
+    w = JavaNumericWriter(hub, JavaWriteOptions(kind="anvil"), Progress())
+    for cx in range(2):
+        for cz in range(2):
+            c = NumericChunk(cx, cz, 256)
+            c.blocks[0] = 7
+            c.blocks[1:60] = 1
+            w.add_chunk(0, c)
+    info = WorldInfo()
+    info.level = nbt.CompoundTag({"LevelName": nbt.StringTag("Senza seme"), "RandomSeed": nbt.LongTag(0),
+                                  "SpawnX": nbt.IntTag(8), "SpawnY": nbt.IntTag(64), "SpawnZ": nbt.IntTag(8)})
+    w.finish(info)
+    out = str(tmp_path / "alpha")
+    logs = []
+    convert(hub, out, TargetSpec(family="java", java_mode="alpha", java_version_limit="alpha"),
+            progress=Progress(on_log=logs.append))
+    lvl = nbt.load(open(os.path.join(out, "level.dat"), "rb").read()).tag
+    seed = int(nbt.get(nbt.get_tag(lvl, "Data") or lvl, "RandomSeed"))
+    assert seed != 0 and any(str(seed) in m for m in logs)
+
+
+def test_no_blend_translates_a_pre_118_java_world_to_the_targets_own_format(tmp_path):
+    hub = str(tmp_path / "a")
+    _write_small_lce(hub)
+    old = str(tmp_path / "old")
+    convert(hub, old, TargetSpec(family="java", java_mode="amulet"))                  # pre-1.18 chunks
+    kept = str(tmp_path / "kept")
+    convert(old, kept, TargetSpec(family="java", java_mode="amulet", version=(1, 20, 4), ring=False))
+    plain = str(tmp_path / "plain")
+    convert(old, plain, TargetSpec(family="java", java_mode="amulet", version=(1, 20, 4), ring=False, blend=False))
+    assert _chunk_dv(kept) < 2825 <= _chunk_dv(plain)           # the copy is left to the game, --no-blend is not
+
+
+def _chunk_dv(world):
+    from worldbridge.java.region import JavaRegion
+
+    r = JavaRegion(os.path.join(world, "region", "r.0.0.mca"))
+    cx, cz = next((x, z) for x in range(32) for z in range(32) if r.read(x, z))
+    return int(nbt.load(r.read(cx, cz), compressed=False).tag["DataVersion"].py_data)
+
+
+def _write_small_lce(path):
+    from .test_biomes_blend import _lce_with_biomes
+
+    _lce_with_biomes(__import__("pathlib").Path(path))
 
 
 def test_the_sea_levels_of_old_and_new_games():

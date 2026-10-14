@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Borders (docs/SEAMLESS_BORDERS.md)**:
+  - **LCE → neoLegacy (Windows64) gets the ring.** A console save (Xbox 360 54 × 54 measured: mean jump 46.6 blocks, a
+    cut) was treated as "the game generates the same terrain"; the consoles' generators are not neoLegacy's. Only a
+    Windows64 world kept in place needs nothing now; console targets keep their behaviour.
+  - **A source without a seed no longer breaks the ring.** A 26.x world with no `world_gen_settings.dat` read as seed 0,
+    which Alpha 1.2 treats as random. A fixed seed derived from the level name is now written to the target and used
+    for the ring (logged). Real 26.x worlds keep the seed of `data/minecraft/world_gen_settings.dat`.
+  - **`--no-blend` is honoured for pre-1.18 Java → Java 1.18+.** The world used to be copied for the game to upgrade
+    (and blend); it is now translated into the target's own format.
+- **Java 1.18+ targets: terrain of another generator or seed now blends instead of ending in a wall.** Bedrock 1.18+,
+  Java 1.18+ worlds of another seed / moved / converted to an older version were written as finished chunks without
+  `blending_data`, so the game assumed the edge continued (measured in the games: mean step 23 – 40 blocks). The
+  overworld chunks now carry the tag in the layout of the target (`old_noise` up to DataVersion 3440, `min_section` /
+  `max_section` from 3441; the game computes the heights). `--no-blend` leaves it out.
 - **Bedrock → Java 26.x, found converting a real world (Casca) and playing it in 26.3**:
   - **The host player arrives.** It was silently deleted by Minecraft 26.1's own upgrade (a `level.dat` player with a
     UUID and no file of that name is dropped). It is now written like a real single player world, in `level.dat` and

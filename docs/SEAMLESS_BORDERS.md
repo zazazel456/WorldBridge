@@ -45,13 +45,17 @@ del gioco* / `--no-blend` and *Anello di raccordo* / `--no-ring`.
 | Target | Remedy | Status |
 |---|---|---|
 | Java 1.18 – 26.x from pre-1.18 sources | A | ✅ chunks written in a pre-1.18 format; the game's upgrade adds `blending_data` |
-| Java 1.18 – 26.x from 1.18+ sources with another generator or seed (Bedrock 1.18+, LCE Aquatic, compressed worlds) | A | ✅ the game's blending is enough |
+| Java 1.18 – 26.x from 1.18+ sources with another generator or seed (Bedrock 1.18+, Java 1.18+ of another seed, a moved world or a newer version) | A | ✅ the overworld chunks are written with `blending_data` (`{old_noise: 1b}` up to DataVersion 3440, `{min_section: -4, max_section: 20}` from 3441; the game computes the heights), so the game blends its terrain into them. Without it the game assumed the edge continued and met it with a wall (mean jump 23 – 40 blocks measured). `--no-blend` turns it off |
+| Java 1.18 – 26.x from an unmoved Java 1.18+ world, same seed, same or newer version | A | ✅ no `blending_data`: the game generates the same terrain (the world is copied and upgraded by the game) |
 | Bedrock 1.18 – 26.50 | A | ✅ pre-1.18 format plus real height maps |
 | Bedrock 1.1 – 1.17 | C | ❌ Bedrock's pre-1.18 generator is not public and its noise differs from Java's: the conversion warns and suggests 1.18+ |
 | LCE maps of 54 / 64 chunks (Xbox 360, PS3, Vita, and the small sizes elsewhere) | B | ✅ whole map written (54 × 54: 18 s, 3 MB) |
 | LCE neoLegacy (Windows64, TU31), maps of every size | C | ✅ ring with neoLegacy's generator, read from its source: biomes 100 %, ground 98.9 % of the columns, blocks 96 % (the rest is decoration). Past the ring the game continues with the same terrain |
-| Other LCE with 192 / 320-chunk maps (Xbox One, PS4, Switch, Wii U) | C | ⏳ the consoles use 4J's generator of their title update, different from Java and from neoLegacy: the conversion warns. LCE → LCE needs nothing |
+| Other LCE with 192 / 320-chunk maps (Xbox One, PS4, Switch, Wii U) | C | ⏳ the consoles use 4J's generator of their title update, different from Java and from neoLegacy: the conversion warns. A console save to a console target keeps the game's own terrain past the edge (no generator to reproduce, no warning) |
 | PE 0.x | B | ✅ all 256 chunks written. The game does not decorate chunks that already exist, so the fill has no trees |
+| LCE source (Xbox 360, PS3...) → neoLegacy (Windows64) | C | ✅ the consoles' title-update generators are not neoLegacy's, so the ring is written from the converted LCE chunks (measured on a 54 × 54 Xbox 360 save: the border jump was a cut, mean 46.6 blocks). Only a Windows64 / neoLegacy world that stays in place (same seed, not moved) needs nothing |
+| Any generator-based ring (Alpha 1.2 – 1.17, neoLegacy) from a source without a seed (26.x without `world_gen_settings.dat`) | C | ✅ Alpha treats seed 0 as "random", so a fixed seed derived from the level name is written into the target `level.dat` and used for the ring (logged). A real 26.x world keeps its seed (`data/minecraft/world_gen_settings.dat`, `data.seed`) |
+| Pre-1.18 Java with `--no-blend` → Java 1.18+ | off | ✅ the world is not copied for the game to upgrade (which would blend it): it is translated and written in the target's own format, with no blending and no ring |
 | Java Alpha 1.2 – Beta 1.7.3 | C | ✅ checked on 736 chunks of the game |
 | Java Infdev, Alpha 1.0 – 1.1 | C | ⏳ a different generator without biomes: needs the jars and a reference world |
 | Java Beta 1.8, 1.0, 1.1 | C | ✅ exact biomes; terrain, caves and ravines read from the 1.0 / 1.1 code (99 % of the columns, 99.8 % of the blocks). Beta 1.8: the 1.0 heights with the b1.8.1 ocean (scale 0.5) |
