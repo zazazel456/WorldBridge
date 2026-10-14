@@ -76,6 +76,19 @@ class JavaRegion:
             if off:
                 yield i % 32, i // 32
 
+    def zlib_body(self, lx: int, lz: int) -> Optional[bytes]:
+        """The chunk's stored bytes when they are a plain zlib stream kept inside the region file (what
+        ``RegionWriter.put_compressed`` takes), else None: lets a chunk that is not changed be copied without
+        decompressing and compressing it again."""
+        off = self.offsets[lx + lz * 32]
+        p = (off >> 8) * SECTOR
+        if not off or p + 5 > len(self.data):
+            return None
+        length, ctype = struct.unpack_from(">IB", self.data, p)
+        if ctype != 2:
+            return None
+        return self.data[p + 5 : p + 4 + length]
+
     def read(self, lx: int, lz: int) -> Optional[bytes]:
         off = self.offsets[lx + lz * 32]
         if not off:

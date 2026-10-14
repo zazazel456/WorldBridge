@@ -136,6 +136,7 @@ def test_bta_to_java_26_3(tmp_path):
     o = Out(out)
     root = o.chunk(0, 0)
     assert int(root["DataVersion"].py_data) == 2975 and int(root["yPos"].py_data) == -4
+    assert set(root["blending_data"]) == {"old_noise"}       # marked for the game's blending, whatever the target
     # "extended" world: moved down 65 blocks, BTA's floor becomes the 1.18 bedrock floor
     assert o.block(0, -64, 0) == "minecraft:bedrock"
     assert o.block(0, 62, 0) == "minecraft:stone" and o.block(0, 63, 0).startswith("minecraft:grass_block")
@@ -173,6 +174,13 @@ def test_bta_to_java_26_3(tmp_path):
     assert inv == {0: "minecraft:iron_sword", 103: "minecraft:iron_helmet", 100: "minecraft:iron_boots"}
     assert float(p["Pos"][1].py_data) == 129.0 - 65
     assert os.path.isfile(os.path.join(out, "playerdata", PLAYER + ".dat"))
+
+
+def test_bta_no_blend_leaves_the_chunks_untagged(tmp_path):
+    src = make_bta_world(tmp_path)
+    out = str(tmp_path / "java")
+    convert(src, out, TargetSpec(family="java", blend=False))
+    assert "blending_data" not in Out(out).chunk(0, 0)
 
 
 def test_selection_spawn_and_player_link(tmp_path):

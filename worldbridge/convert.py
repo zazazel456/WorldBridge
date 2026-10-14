@@ -152,17 +152,6 @@ def _java_upgrade_only(d: det.Detected, t: TargetSpec) -> bool:
     return bool(dvs) and max(dvs) <= target_dv
 
 
-def _needs_blending_data(d: det.Detected, t: TargetSpec, sel: Selection, old_source: bool) -> bool:
-    """True for a Java 1.18+ target whose terrain another generator made (java/blending.py): every source but
-    an unmoved Java 1.18+ world going to the same or a newer version."""
-    if t.family != "java" or not t.blend or tuple(t.version or ab.latest("java")) < CAVES_CLIFFS:
-        return False
-    from .java import blending
-
-    unmoved = sel.move_to is None and not sel.biomes
-    return blending.needed(d.kind, old_source, unmoved, d.kind == "java_modern" and _java_upgrade_only(d, t))
-
-
 def _write_version(platform: str, version, blend: bool, old_source: bool):
     """Version actually written by Amulet (pre-1.18 when the game must blend)."""
     v = tuple(version)
@@ -815,6 +804,11 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
                 _edit_copy(d, out_dir, target, sel, progress)
             progress.log(tr("The target version is the same as the world's or newer: the world is kept as it is, and "
                             "Minecraft upgrades it with its own upgrade when it is opened."))
+            from .java import blending
+
+            if not old_source and blending.supported(target):
+                # the chunks of a 1.18+ world are marked too: the game blends whatever it generates next to them
+                progress.log(tr("Blending data written to {n} chunks of the overworld.", n=blending.mark_world(out_dir)))
             progress.done()
             return ConversionResult(out_dir, 0, time.time() - t0, list(progress.warnings))
 
@@ -1204,6 +1198,7 @@ def bta_target_error(target: TargetSpec) -> Optional[str]:
 def _convert_bta(d: det.Detected, out_dir: str, target: TargetSpec, progress: Progress, t0: float) -> ConversionResult:
     """Better than Adventure -> Java 26.3 (1.18.2 chunks upgraded and blended by the game)."""
     from .bta import TARGET
+    from .java import blending
     from .bta.convert import BtaOptions, convert_world
     from .bta.world import from_wb_dim
 
@@ -1225,6 +1220,9 @@ def _convert_bta(d: det.Detected, out_dir: str, target: TargetSpec, progress: Pr
                      chunks=chunks, spawn=sel.spawn, player_links=links)
     progress.stage(tr("Converting Better than Adventure → Java 26.3"), 0.03, 0.97)
     n, _report = convert_world(d.path, out_dir, opt, progress)
+    if blending.supported(target):
+        # 1.18.2-format chunks (the game's upgrade adds the tag too, but a 1.18.2 / 1.20.x target would not)
+        progress.log(tr("Blending data written to {n} chunks of the overworld.", n=blending.mark_world(out_dir)))
     progress.stage(tr("Writing the final files"), 0.97, 0.99)
     progress.log(tr("Open the world with Minecraft Java 26.3: on first start the game upgrades it (it may ask for a "
                     "backup) and blends the new terrain with the converted chunks."))
@@ -1248,11 +1246,13 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
         _plan_pets(d, target, info, progress)
     from .terrain import policy
 
-    foreign = _needs_blending_data(d, target, sel, old_source)
-    plan = policy.decide(target, old_source, foreign=foreign)
+    from .java import blending
+
+    plan = policy.decide(target, old_source)
+    marked = not old_source and blending.supported(target)       # pre-1.18 sources: the game's upgrade blends
     if plan.kind == "missing":
         progress.warn(plan.text)
-    elif foreign and plan.kind == "game":
+    elif plan.kind == "game" and plan.text and platform == "java":
         progress.log(plan.text)
     wver = _write_version(platform, target.version, target.blend, old_source)
     if wver != tuple(target.version):
@@ -1297,9 +1297,7 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
             progress.warn(tr(CUSTOMIZED))
     if platform == "java" and target.ring and tuple(target.version or (99,)) < CAVES_CLIFFS:
         _rings3d_after_amulet(out_dir, target, info, wver, tmp, progress)
-    if foreign and plan.kind == "game":
-        from .java import blending
-
+    if marked and plan.kind == "game":
         progress.log(tr("Blending data written to {n} chunks of the overworld.", n=blending.mark_world(out_dir)))
     progress.done()
     return ConversionResult(out_dir, n or 0)

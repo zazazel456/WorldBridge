@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Blending is the rule for every Java 1.18+ target.** Converted overworld chunks always get `blending_data`, whatever the
+  seed or the source: the unmoved same-seed Java 1.18+ copy (copied and upgraded by the game) is now tagged after the
+  copy too, in `region/` and in the 26.x layout (`dimensions/minecraft/overworld/region/`), each chunk with the layout of
+  its own DataVersion, and Better than Adventure worlds (1.18.2-format chunks) are tagged. WorldBridge's ring stays for
+  the targets without blending. `--no-blend` is the only opt-out; the policy text no longer says that the edge
+  "continues by itself" for Java 1.18+. Marking a world of ~5000 chunks takes about 7 s; chunks are decompressed once and
+  untouched ones are copied as stored.
 - **Borders (docs/SEAMLESS_BORDERS.md)**:
   - **LCE → neoLegacy (Windows64) gets the ring.** A console save (Xbox 360 54 × 54 measured: mean jump 46.6 blocks, a
     cut) was treated as "the game generates the same terrain"; the consoles' generators are not neoLegacy's. Only a
