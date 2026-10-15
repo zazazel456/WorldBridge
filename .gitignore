@@ -7,3 +7,4 @@ dist/
 *.egg-info/
 .worldbridge_*/
 .runtime/
+matrix-out/

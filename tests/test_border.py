@@ -24,7 +24,8 @@ def test_every_target_gets_a_remedy_or_a_warning():
         (T(family="java", java_mode="numeric", java_version_limit="1.12"), "ring"),
         (T(family="java", java_mode="numeric", java_version_limit="1.4"), "ring"),
         (T(family="java", java_mode="amulet", version=(1, 16, 5)), "ring"),
-        (T(family="bedrock", version=(1, 21, 50)), "game"), (T(family="bedrock", version=(1, 16, 0)), "missing"),
+        (T(family="bedrock", version=(1, 21, 50)), "game"), (T(family="bedrock", version=(1, 16, 0)), "ring"),
+        (T(family="bedrock", version=(1, 5, 2)), "missing"),
         (T(family="lce", lce_platform="xbox360", lce_world_size=54), "fill"),
         (T(family="lce", lce_platform="xboxone", lce_world_size=320), "missing"),
         (T(family="lce", lce_world_size=320), "ring"),                                   # PC: neoLegacy

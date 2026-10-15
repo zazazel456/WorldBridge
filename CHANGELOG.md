@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **A ring for Bedrock 1.6 – 1.17 targets.** The overworld generator of Bedrock before 1.18 is reproduced (biome graph,
+  terrain density, surface pass, bedrock floor), bit for bit against Bedrock Dedicated Server 1.16.220 under a debugger and
+  against saved worlds of 1.6, 1.10, 1.12, 1.14, 1.16 and 1.17 (same algorithm in all of them; seeds above 2^31 too), and
+  used for the ring like the Java generators: the game's own terrain around the converted world, raised or lowered smoothly
+  to meet its edge. Both routes: through the numeric hub and after a direct Amulet conversion (the ring's chunks join
+  the world's database, never over a converted chunk). The ring's chunks are marked "needs population" (FinalizedState 1) so
+  the game adds ores, lakes, trees and structures; their exact Bedrock biomes (warm / lukewarm / cold oceans, mutated
+  biomes, bamboo) are written back after Amulet's translation. The seed is the level seed as an unsigned 32-bit number
+  (a derived seed for worlds without one is 32-bit for Bedrock). An old Bedrock world that stays where it is needs no ring.
+  Bedrock before 1.6 still warns. The ring has no caves or ravines (Bedrock carves them when it generates a chunk).
 - **Composing the new world in the map tab.** A second view, **New world** (next to **Source world**, Ctrl+1 / Ctrl+2), shows
   the converted world as a grid of white chunks (the finite LCE / Pocket Edition map drawn white with the outside greyed,
   and the new spawn). **Paste selection** (Ctrl+V) turns the chunks selected on the source map into a group, at the same

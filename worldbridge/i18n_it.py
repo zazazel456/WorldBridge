@@ -365,8 +365,12 @@ _SECTIONS = {
             'Bedrock raccorda da solo il terreno nuovo con quello convertito.',
         'Bedrock 1.18+ generates the same terrain as Java 1.18+: the edge continues by itself.':
             'Bedrock 1.18+ genera lo stesso terreno di Java 1.18+: il bordo continua da solo.',
-        'Bedrock before 1.18 does not blend terrain and its generator cannot be reproduced: a step will remain where the converted world ends. For an edge without steps choose Bedrock 1.18 or later.':
-            'Bedrock prima della 1.18 non raccorda il terreno e il suo generatore non è riproducibile: dove finisce il mondo convertito resterà un gradino. Per un bordo senza gradini scegli Bedrock 1.18 o successiva.',
+        'Bedrock before 1.6 does not blend terrain and WorldBridge does not have its generator: a step will remain where the converted world ends. For an edge without steps choose Bedrock 1.6 or later.':
+            'Bedrock prima della 1.6 non raccorda il terreno e WorldBridge non ne ha il generatore: dove finisce il mondo convertito resterà un gradino. Per un bordo senza gradini scegli Bedrock 1.6 o successiva.',
+        'Bedrock → Bedrock: the game generates the same terrain as the source world, the edge continues by itself.':
+            'Bedrock → Bedrock: il gioco genera lo stesso terreno del mondo di origine, il bordo continua da solo.',
+        "Bedrock before 1.18 does not blend terrain: around the converted world WorldBridge writes a ring with the game's own generator (same seed, same biomes and terrain as {target}), meeting the converted terrain; past the ring the game continues without steps. Its caves, ravines, ores, lakes and trees are added by the game.":
+            "Bedrock prima della 1.18 non raccorda il terreno: intorno al mondo convertito WorldBridge scrive un anello con il generatore del gioco (stesso seed, stessi biomi e stesso terreno di {target}) che si raccorda al terreno convertito; oltre l'anello il gioco continua senza gradini. Grotte, forre, minerali, laghi e alberi li aggiunge il gioco.",
         'Minecraft blends the new terrain with the converted one by itself.':
             'Minecraft raccorda da solo il terreno nuovo con quello convertito (blending).',
     },

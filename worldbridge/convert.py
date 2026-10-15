@@ -232,12 +232,13 @@ def world_seed(level) -> int:
 FALLBACK_SEED = 0x57B1D6E5          # when a world has neither a seed nor a name
 
 
-def ensure_seed(level, progress: Progress, name: str = "") -> int:
+def ensure_seed(level, progress: Progress, name: str = "", bedrock: bool = False) -> int:
     """The seed a generator-based ring needs, with the source's when it has one.  A source without a seed
     (a 26.x world without data/minecraft/world_gen_settings.dat, an edited level.dat) reads as 0, which Alpha 1.2
     treats as "random": the ring would be generated for a seed the game then never uses.  A fixed seed is
     derived from the level name instead (the same world always gets the same one), written into the level
-    that the target gets and used for the ring."""
+    that the target gets and used for the ring.  ``bedrock``: the target is Bedrock, whose seed is an unsigned
+    32-bit number (the derived one is too)."""
     seed = world_seed(level)
     if seed:
         return seed
@@ -247,7 +248,7 @@ def ensure_seed(level, progress: Progress, name: str = "") -> int:
     seed = FALLBACK_SEED
     if name:
         seed = int.from_bytes(hashlib.sha256(("WorldBridge:" + name).encode("utf-8")).digest()[:8], "big") & (2 ** 63 - 1)
-        seed = seed or FALLBACK_SEED
+        seed = (seed & 0xFFFFFFFF if bedrock else seed) or FALLBACK_SEED
     level["RandomSeed"] = ab.nbt.LongTag(seed)
     progress.log(tr("The source world has no known seed: the converted world gets seed {seed} (derived from its name), "
                     "so that the game and the ring around the converted world generate the same terrain.", seed=seed))
@@ -923,7 +924,7 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
         # the border between the converted world and the terrain the game generates (docs/SEAMLESS_BORDERS.md)
         same_game = (d.kind == "lce" and getattr(src.info, "source_platform", "") == "win64" and not move.active)
         plan = policy.decide(target, old_source, d.kind, getattr(writer, "opt", None), same_game)
-        if plan.kind == "ring" and target.family == "java":
+        if plan.kind == "ring" and target.family in ("java", "bedrock"):
             from .java.numeric import generator_name
 
             wtype = generator_name(src.info.level)
@@ -937,7 +938,8 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
         elif plan.text:
             progress.log(plan.text)
         ring = None
-        seed = ensure_seed(src.info.level, progress, target.world_name) if plan.kind == "ring" else world_seed(src.info.level)
+        seed = (ensure_seed(src.info.level, progress, target.world_name, target.family == "bedrock")
+                if plan.kind == "ring" else world_seed(src.info.level))
         if plan.kind == "ring" and coords.get(OVERWORLD) and target.family == "lce":
             from .terrain.neogen import NeoGenerator
 
@@ -1133,6 +1135,14 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
             ab.amulet_convert(hub_dir, out_dir, platform, wver, progress, painted)
             if ring is not None and plan.kind == "ring" and platform == "java" and ring.written:
                 ring_mod.mark_proto_chunks(out_dir, ring.written, ring_mod.ring_status(target))
+            if ring is not None and plan.kind == "ring" and platform == "bedrock" and ring.written:
+                from leveldb import LevelDB
+
+                db = LevelDB(os.path.join(out_dir, "db"))
+                try:
+                    ring_mod.finish_bedrock_ring(db, ring.written, ring.gen)
+                finally:
+                    db.close()
             if platform == "java":
                 for dim, r3 in rings3d.items():
                     _mark_ring3d(out_dir, r3)
@@ -1260,19 +1270,22 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
 
     from .java import blending
 
-    plan = policy.decide(target, old_source)
+    from .relocate import Relocation
+
+    unmoved = not edge.is_moved(target, sel) and not Relocation(sel).active
+    plan = policy.decide(target, old_source, d.kind, None, d.kind == "bedrock" and old_source and unmoved)
     marked = not old_source and blending.supported(target)       # pre-1.18 sources: the game's upgrade blends
     if plan.kind == "missing":
         progress.warn(plan.text)
-    elif plan.kind == "game" and plan.text and platform == "java":
+    elif plan.text and (plan.kind == "ring" or (plan.kind == "game" and platform == "java")):
         progress.log(plan.text)
     wver = _write_version(platform, target.version, target.blend, old_source)
     if wver != tuple(target.version):
         progress.log(tr("Blending: pre-1.18 source world, the chunks are written in the {format} format and Minecraft "
                         "blends them with the new terrain when the world is opened.", format=ab.version_str(wver)))
-    ring_here = plan.kind == "ring" and platform == "java"
+    ring_here = plan.kind == "ring"
     if plan.kind == "ring":
-        ensure_seed(info.level, progress, target.world_name)
+        ensure_seed(info.level, progress, target.world_name, platform == "bedrock")
     progress.stage(tr("Converting with Amulet to {target}", target=target.describe()), 0.03, 0.75 if ring_here else 0.9)
     from . import depthfit
 
@@ -1305,7 +1318,8 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
         from .java.numeric import generator_name
 
         wtype = generator_name(info.level)
-        if wtype != "flat" and _ring_after_amulet(out_dir, target, info, wver, tmp, progress, wtype) is None:
+        ring_after = _ring_after_amulet if platform == "java" else _ring_after_amulet_bedrock
+        if wtype != "flat" and ring_after(out_dir, target, info, wver, tmp, progress, wtype) is None:
             progress.warn(tr(CUSTOMIZED))
     if platform == "java" and target.ring and tuple(target.version or (99,)) < CAVES_CLIFFS:
         _rings3d_after_amulet(out_dir, target, info, wver, tmp, progress)
@@ -1663,6 +1677,75 @@ def _ring_after_amulet(out_dir: str, target: TargetSpec, info, wver, tmp: str, p
             continue
         os.makedirs(region, exist_ok=True)
         out.write(dst_path)
+    progress.log(tr("Ring: {n} chunks of the game's terrain (seed {seed}) around the converted world, raised or lowered "
+                    "smoothly to meet its edge, 3 to {width} chunks wide depending on the height difference; caves, "
+                    "trees, ores and lakes are added by the game.", n=n, seed=seed, width=ring.ring))
+    return n
+
+
+def _ring_after_amulet_bedrock(out_dir: str, target: TargetSpec, info, wver, tmp: str, progress: Progress,
+                               world_type: str) -> Optional[int]:
+    """The ring of a world Amulet converted straight to Bedrock 1.6 - 1.17: its border chunks are read back (as
+    1.12 numeric chunks), the ring is generated with the old Bedrock generator, translated by Amulet and its
+    chunks are added to the world's database (never over a converted chunk).  The game finishes them (caves,
+    ravines, ores, lakes, trees).  None: no generator."""
+    import struct
+
+    from leveldb import LevelDB
+
+    from .bedrock import edge
+    from .java.numeric import JavaNumericWorld, JavaNumericWriter, JavaWriteOptions
+    from .terrain import ring as ring_mod
+
+    if not ring_mod.supported(target, world_type):
+        return None
+    db = LevelDB(os.path.join(out_dir, "db"))
+    try:
+        coords = edge.overworld_chunks(db)
+    finally:
+        db.close()
+    if not coords:
+        return 0
+    seed = world_seed(info.level)
+    gen, sea = ring_mod.generator(target, seed, world_type)
+    ring = ring_mod.Ring(gen, sea, coords, seed=seed)
+    progress.stage(tr("Edge of the converted world (reading)"), 0.8, 0.83)
+    edge_hub = os.path.join(tmp, "ring_edges")
+    ab.amulet_convert(out_dir, edge_hub, "java", (1, 12, 2), progress,
+                      Selection(chunks={OVERWORLD: set(ring.edge_chunks)}))
+    edges = JavaNumericWorld(edge_hub)
+    for cx, cz in ring.edge_chunks:
+        try:
+            c = edges.read_chunk(OVERWORLD, cx, cz)
+        except Exception:  # noqa: BLE001
+            c = None
+        if c is not None:
+            ring.observe(OVERWORLD, c)
+    progress.stage(tr("Terrain around the converted world ({target})", target=target.describe()), 0.83, 0.87)
+    ring_hub = os.path.join(tmp, "ring_hub")
+    writer = JavaNumericWriter(ring_hub, JavaWriteOptions(kind="anvil"), progress)
+    n = 0
+    for rc in ring.chunks(progress):
+        progress.check()
+        writer.add_chunk(OVERWORLD, rc, shift=False)
+        n += 1
+    if not n:
+        return 0
+    writer.finish(info)
+    ring_out = os.path.join(tmp, "ring_out")
+    progress.stage(tr("Translating the terrain around the world (Amulet)"), 0.87, 0.9)
+    ab.amulet_convert(ring_hub, ring_out, "bedrock", wver, progress)
+    written = set(ring.written)
+    src, dst = LevelDB(os.path.join(ring_out, "db")), LevelDB(os.path.join(out_dir, "db"))
+    try:
+        for k, v in src.iterate():
+            k = bytes(k)
+            if (len(k) == 9 or (len(k) == 10 and k[8] == edge.SUBCHUNK_TAG)) and struct.unpack_from("<ii", k) in written:
+                dst.put(k, bytes(v))
+        ring_mod.finish_bedrock_ring(dst, written, gen)
+    finally:
+        src.close()
+        dst.close()
     progress.log(tr("Ring: {n} chunks of the game's terrain (seed {seed}) around the converted world, raised or lowered "
                     "smoothly to meet its edge, 3 to {width} chunks wide depending on the height difference; caves, "
                     "trees, ores and lakes are added by the game.", n=n, seed=seed, width=ring.ring))

@@ -264,7 +264,7 @@ More figures are in [VERIFICATION.md](docs/VERIFICATION.md#speed-and-large-world
   what.
 - **Entity data between editions.** Villager trades and very specific entity data pass only between
   LCE and Java and through Minecraft's own upgrade.
-- **Not every target has a border remedy yet.** Bedrock 1.1 – 1.17, large LCE console maps and
+- **Not every target has a border remedy yet.** Bedrock before 1.6, large LCE console maps and
   Customized Java worlds have none; the conversion warns.
 - **Nether and End on Java and Bedrock 1.18+.** When converted from another generator or seed, they
   keep a step at the edge, because the game blends only the Overworld. *Regenerate* is available.
