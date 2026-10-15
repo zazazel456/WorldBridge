@@ -9,7 +9,7 @@ The border work has its own document: [SEAMLESS_BORDERS.md](SEAMLESS_BORDERS.md)
 | Feature | Notes |
 |---|---|
 | **LCE on PC = neoLegacy TU31 only** | Windows64 has a single target version, the current neoLegacy (TU31), updated along with it. Consoles keep their own title updates (TU31, TU46, TU54). |
-| **Two separate border options** | *Game blending* (Java / Bedrock 1.18+: chunks written as pre-1.18 so the game blends them and generates the depth below y 0) and *Ring* (WorldBridge writes the game's terrain around the converted world for games that do not blend: Java Alpha 1.2 – 1.17, neoLegacy, and the fill of small finite LCE / PE maps). |
+| **Two separate border options** | *Game blending* (Java / Bedrock 1.18+: chunks written as pre-1.18 so the game blends them and generates the depth below y 0) and *Ring* (WorldBridge writes the game's terrain around the converted world for games that do not blend: Java Alpha 1.2 – 1.17, Bedrock 1.6 – 1.17, neoLegacy, and the fill of small finite LCE / PE maps). |
 | **Underground of 1.18+ worlds** | For targets that start at y 0 (Java 1.2 – 1.17, LCE, Bedrock ≤ 1.17): *automatic* (flat or low worlds are kept, the others cut), *cut* below y 0, *keep everything* (the world rises by 64 blocks) or *keep from a chosen y*; what does not fit at the top is compressed (mountains come down whole) or cut. GUI *Sottosuolo dei mondi 1.18+*, CLI `--depth auto\|cut\|keep\|Y`. |
 | **Map tab** | Regenerate the Nether and End from there; paint a biome on the selected chunks (CLI `--biome BIOME=[DIM:]FILE.csv`). |
 | **World management** | A full NBT editor (every tag, editable) for Java, Bedrock (old Pocket Edition too) and LCE, with quick settings per world type: name, seed, game mode, difficulty, spawn, time and weather, game rules, players and inventories. Every save leaves a `*.wb-backup` copy; LCE saves inside an Xbox 360 STFS package are read-only. |
@@ -33,7 +33,7 @@ The border work has its own document: [SEAMLESS_BORDERS.md](SEAMLESS_BORDERS.md)
 
 Open items of the world border (the remedy for each target is described in [SEAMLESS_BORDERS.md](SEAMLESS_BORDERS.md)):
 
-- Bedrock 1.12 – 1.17: needs our own Bedrock generator for the ring.
+- Bedrock 1.6 – 1.17: the ring is done (the game's own generator, measured on Bedrock Dedicated Server). Open: the ring's caves and ravines (Bedrock carves them at generation, so the ring has none), the biome heights of mushroom islands (taken from Java, not yet seen in the server), the surface pass of 1.17 beyond y 127 (assumed the same), and versions before 1.6.
 - neoLegacy: the ring is off by 6 – 18 blocks in places.
 - LCE → Java 1.20: the ring leaves a step (the terrain is too different for the game's own blending).
 - Nether on Java 1.18+: the game's blending is overworld-only, so the Nether border stays cut.

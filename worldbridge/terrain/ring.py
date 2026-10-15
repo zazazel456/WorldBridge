@@ -4,7 +4,7 @@ Games older than 1.18 (Java) do not blend.  WorldBridge writes terrain around th
 with a generator:
 
 * **ring** (infinite worlds): the game's own generator (betagen for Alpha 1.2 - Beta 1.7.3,
-  releasegen for Beta 1.8 - 1.1, bit for bit);
+  releasegen for Beta 1.8 - 1.1, ... bedrockgen for Bedrock 1.6 - 1.17; bit for bit);
 * **fill** (finite worlds, LCE and PE 0.x): every chunk of the map that the conversion does not
   write is written, from the fast filler (filler.py): the game never generates anything, so there
   is nothing to meet.
@@ -47,6 +47,7 @@ MODERN_GEN_LIMITS = {"1.7", "1.8", "1.9", "1.10", "1.11", "1.12"}      # modern.
 NOISE_GEN_LIMITS = {"1.13", "1.14", "1.15", "1.16", "1.17"}            # modern16.py (Amulet targets)
 # the status of the ring's chunks in 1.14 - 1.17: noise and surface done, the game carves and decorates
 RING_STATUS = "surface"
+BEDROCK_GEN = "bedrock"     # Bedrock 1.6 - 1.17 (bedrockgen.py, whose own list of versions decides)
 RING = 3        # chunks, the narrowest ring
 MAX_RING = 12   # chunks, the widest
 SLOPE = 0.5     # the steepest average slope of the ring: 1 block every 2 columns
@@ -74,6 +75,10 @@ _SURFACE = {2: (GRASS, DIRT), 3: (GRASS, DIRT), 110: (GRASS, DIRT), 208: (GRASS,
 
 
 def _limit(target) -> str:
+    if getattr(target, "family", "") == "bedrock":
+        from . import bedrockgen
+
+        return BEDROCK_GEN if bedrockgen.supports(getattr(target, "version", None)) else ""
     mode = getattr(target, "java_mode", "")
     if getattr(target, "family", "") == "java" and mode == "amulet":
         v = tuple(getattr(target, "version", None) or (99,))
@@ -94,7 +99,7 @@ def supported(target, world_type: str = "default") -> bool:
     lim = _limit(target)
     if lim in MODERN_GEN_LIMITS or lim in NOISE_GEN_LIMITS:
         return world_type.lower() != "customized"
-    return lim in BETA_GEN_LIMITS or lim in RELEASE_GEN_LIMITS
+    return lim in BETA_GEN_LIMITS or lim in RELEASE_GEN_LIMITS or lim == BEDROCK_GEN
 
 
 def generator(target, seed: int, world_type: str = "default"):
@@ -102,6 +107,11 @@ def generator(target, seed: int, world_type: str = "default"):
     ``world_type``: the generatorName of the level (largeBiomes: 1.3+)."""
     lim = _limit(target)
     kind = world_type.lower()
+    if lim == BEDROCK_GEN:
+        from .bedrockgen import BedrockGenerator
+
+        gen = BedrockGenerator(seed, target.version)
+        return gen, gen.sea
     if lim == "1.13":
         from .modern16 import Modern13Generator
 
@@ -647,6 +657,36 @@ def ring_status(target) -> str:
     """The status of the ring's chunks: 1.13 calls the chunk with its noise, surface and bedrock
     "base", 1.14 - 1.17 "surface"."""
     return "base" if _limit(target) == "1.13" else RING_STATUS
+
+
+def finish_bedrock_ring(db, coords: Iterable[Tuple[int, int]], gen=None, state: int = 1) -> int:
+    """The ring's chunks in a Bedrock world (``db``: its open LevelDB), as the game leaves a chunk it has only
+    shaped: FinalizedState (key 0x36) 1, "needs population", so it adds its ores, lakes, trees and structures when
+    it loads them (Amulet writes every chunk as finished, 2).  With the generator ``gen`` the exact Bedrock biomes of
+    the generator come back into Data2D (key 0x2d), which the numeric hub could not carry (see bedrockgen.py).
+    Returns the chunks marked."""
+    import struct
+
+    n = 0
+    for cx, cz in coords:
+        key = struct.pack("<ii", cx, cz)
+        db.put(key + b"\x36", struct.pack("<i", state))
+        n += 1
+        if gen is None or not hasattr(gen, "biomes"):
+            continue
+        try:
+            raw = bytes(db.get(key + b"\x2d"))
+        except KeyError:
+            continue
+        if len(raw) < 768:
+            continue
+        from .bedrockgen import restore_biomes
+
+        stored = np.frombuffer(raw[512:768], np.uint8).reshape(16, 16)                    # [z, x]
+        fixed = restore_biomes(stored, gen.biomes(cx, cz).T)
+        if not np.array_equal(fixed, stored):
+            db.put(key + b"\x2d", raw[:512] + fixed.tobytes() + raw[768:])
+    return n
 
 
 def mark_proto_chunks(world_dir: str, coords: Iterable[Tuple[int, int]], status: str = RING_STATUS,

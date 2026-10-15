@@ -302,7 +302,8 @@ Run `pytest` and `tools/matrix.py quick` again and compare `report.md` with the 
 | → Bedrock | frames with maps keep the drawing; blending with new terrain is done by the game and is less smooth than Java's | Bedrock blends only heights and biomes at the edge of old chunks |
 | → Java Alpha / Beta / 1.x, LCE | items, mobs and block entities newer than the target are removed or replaced (report at the end) | the old game would crash |
 | → Java 1.18+ and Bedrock 1.18+ | Nether and End converted from another generator or seed keep a step at the edge | the game's blending covers the Overworld only; *Regenerate* is available |
-| → Bedrock 1.1 – 1.17, LCE consoles with 192 / 320-chunk maps, Customized Java worlds | no border remedy: the conversion warns | their generators are not reproduced |
+| → Bedrock 1.6 – 1.17 | a ring of the game's own terrain around the converted world, finished by the game (ores, lakes, trees; no caves in the ring) | WorldBridge has the pre-1.18 Bedrock generator |
+| → Bedrock before 1.6, LCE consoles with 192 / 320-chunk maps, Customized Java worlds | no border remedy: the conversion warns | their generators are not reproduced |
 | → PE 0.x, LCE with 54 / 64-chunk maps | the whole map is written, with natural terrain around the converted world; on PE the fill has no trees | small finite worlds: no exposed edge |
 | → LCE | chunks outside the map (54 / 64 / 192 / 320 chunks) are left out; blocks newer than the title update are replaced | LCE worlds are finite |
 | → Pocket Edition 0.8 | 256 × 256 area, Overworld only; the player keeps position and health but not the inventory | the 0.x client format is undocumented |

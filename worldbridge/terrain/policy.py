@@ -2,7 +2,8 @@
 
 * ``game``  the target blends by itself (Java 1.18+: its converted chunks carry ``blending_data``, always;
   Bedrock 1.18+) or generates the same terrain;
-* ``ring``  WorldBridge writes a ring with the target's own generator (Alpha 1.2 - 1.12, neoLegacy);
+* ``ring``  WorldBridge writes a ring with the target's own generator (Java Alpha 1.2 - 1.17, Bedrock 1.6 - 1.17,
+  neoLegacy);
 * ``fill``  small finite world (PE 0.x, other LCE up to 64 x 64 chunks): every chunk of the map is written;
 * ``missing`` no remedy yet: the conversion warns, so a seam never goes unannounced;
 * ``off``   the user switched the border off (``target.ring`` for ring / fill, ``target.blend`` for
@@ -40,8 +41,9 @@ def neo_legacy(target) -> bool:
 
 
 def decide(target, old_source: bool, source_kind: str = "", writer_opt=None, same_game: bool = False) -> Plan:
-    """``same_game``: the source is itself a neoLegacy / Windows64 world and stays in place (same seed, no
-    move): its terrain is the one the target game generates, so an LCE → neoLegacy copy needs no ring.
+    """``same_game``: the source is itself a neoLegacy / Windows64 world, or a Bedrock world of the old generator,
+    and stays in place (same seed, no move): its terrain is the one the target game generates, so an LCE →
+    neoLegacy or Bedrock → Bedrock copy needs no ring.
     A Java 1.18+ target blends: its chunks get ``blending_data`` (java/blending.py) whatever the seed or source."""
     plan = _decide(target, old_source, source_kind, writer_opt, same_game)
     if plan.kind in ("ring", "fill") and not getattr(target, "ring", True):
@@ -84,9 +86,18 @@ def _decide(target, old_source: bool, source_kind: str = "", writer_opt=None, sa
         if v >= CAVES_CLIFFS:
             return Plan("game", tr("Bedrock blends the new terrain with the converted one by itself.") if old_source else
                                 tr("Bedrock 1.18+ generates the same terrain as Java 1.18+: the edge continues by itself."))
-        return Plan("missing", tr("Bedrock before 1.18 does not blend terrain and its generator cannot be reproduced: a "
+        if same_game and source_kind == "bedrock":
+            return Plan("game", tr("Bedrock → Bedrock: the game generates the same terrain as the source world, the edge "
+                                   "continues by itself."))
+        if ring_mod.supported(target):
+            return Plan("ring", tr("Bedrock before 1.18 does not blend terrain: around the converted world WorldBridge writes "
+                                   "a ring with the game's own generator (same seed, same biomes and terrain as {target}), "
+                                   "meeting the converted terrain; past the ring the game continues without steps. "
+                                   "Its caves, ravines, ores, lakes and trees are added by the game.",
+                                   target=target.describe()))
+        return Plan("missing", tr("Bedrock before 1.6 does not blend terrain and WorldBridge does not have its generator: a "
                                   "step will remain where the converted world ends. For an edge without steps choose "
-                                  "Bedrock 1.18 or later."))
+                                  "Bedrock 1.6 or later."))
     # Java
     mode = getattr(target, "java_mode", "auto")
     if mode in ("mcregion", "alpha"):
