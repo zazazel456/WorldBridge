@@ -830,5 +830,10 @@ saves the game despawned hostile mobs far from the player (Vita: 2,162 → 1,866
      the class attribute had shown no change: the interface instances had already registered the old bound
      method, which `_patch_amulet_biomes` re-binds. Java 1.15+ keeps one biome per 4 x 4 cell, so a
      16 x 16 map with finer detail loses some ids there by design. Test: `tests/test_biome_ids.py`.
+175. **Java 1.13 chunks with status `fullchunk` were silently left out** of every Amulet route (about 15 % of the
+     finished chunks of a 1.13 world). Amulet scores `fullchunk` 1.9 and `finalized` 1.5 and its save writes only
+     chunks that score 2.0, although both hold complete terrain (`incomplete.py` already counts `fullchunk` as
+     finished, so nothing warned). The load hook of `_AmuletJob` now sets every chunk scoring 1.5 or more to full;
+     what counts as unfinished is unchanged. Test: `tests/test_fullchunk_status.py`.
 
 The tests of these fixes are listed by area in [VERIFICATION.md](VERIFICATION.md#automated-tests).

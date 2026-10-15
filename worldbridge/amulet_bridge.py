@@ -61,7 +61,9 @@ def _patch_amulet_biomes():
     def na_decode(self, chunk, data, floor_cy, height_cy):
         biomes = self.get_layer_obj(data, self.Biomes, pop_last=True)
         if isinstance(biomes, AbstractBaseArrayTag) and biomes.np_array.size == 256:
-            chunk.biomes = biomes.np_array.astype(numpy.uint32).reshape((16, 16)).T.copy()
+            # the on-disk array is signed bytes (129 is stored as -127): mask to 0..255 before widening,
+            # or astype(uint32) gives 4294967169, which no table has (-> plains)
+            chunk.biomes = (biomes.np_array.astype(numpy.int64) & 0xFF).astype(numpy.uint32).reshape((16, 16)).T.copy()
 
     def na_encode(self, chunk, data, floor_cy, height_cy):
         chunk.biomes.convert_to_2d()
@@ -72,6 +74,7 @@ def _patch_amulet_biomes():
             chunk.biomes.convert_to_2d()
             self.set_layer_obj(data, self.Biomes, IntArrayTag(numpy.asarray(chunk.biomes).astype(numpy.uint32).T.ravel()))
 
+    _patch_java12_biome_table()
     AnvilNAInterface._decode_biomes = na_decode
     AnvilNAInterface._encode_biomes = na_encode
     Anvil1467Interface._encode_biomes = i1467_encode
@@ -95,6 +98,48 @@ def _patch_amulet_biomes():
                     fn = getattr(obj, "_decode_biomes" if "decode" in name else "_encode_biomes")
                 rebuilt[fn] = None
             setattr(obj, attr, rebuilt)
+
+
+_LATER_JAVA = ((1, 13, 2), (1, 14, 4), (1, 16, 5), (1, 17, 1))
+
+
+def _patch_java12_biome_table():
+    """Let PyMCTranslate's Java 1.12.2 table *read* the ids of later Java versions (and Bedrock's have the void).
+
+    That table stops at the 1.12 ids, so numeric ids 40 - 50 (1.13 end/ocean biomes) and 168+ (bamboo,
+    1.14) unpacked to plains whenever a world went through Amulet from a Java <= 1.12 Anvil chunk (the
+    numeric hub is declared 1.12.2).  Only the number -> name -> universal direction is extended: the
+    other one (pack) is left alone, so a real 1.12 target still gets valid 1.12 ids."""
+    from PyMCTranslate.py3.api.version.translators import biome as tb
+
+    if getattr(tb.BiomeTranslator, "_wb_extended", False):
+        return
+    original = tb.BiomeTranslator.__init__
+
+    def init(self, biome_data, translation_manager):
+        original(self, biome_data, translation_manager)
+        names = self._biome_str_to_int
+        if "minecraft:the_void" not in names and "minecraft:void" not in names and "minecraft:warm_ocean" in names:
+            # Bedrock's table lacks the void (id 127, which the game has) and sends it to plains
+            names["minecraft:the_void"] = 127
+            self._biome_int_to_str.setdefault(127, "minecraft:the_void")
+            self._biome_to_universal.setdefault("minecraft:the_void", "universal_minecraft:the_void")
+            self._biome_from_universal["universal_minecraft:the_void"] = "minecraft:the_void"
+            return
+        if "minecraft:extreme_hills" not in names or "minecraft:warm_ocean" in names:
+            return                                       # not the Java <= 1.12 table
+        try:
+            for ver in _LATER_JAVA:
+                later = translation_manager.get_version("java", ver).biome
+                for num, name in later._biome_int_to_str.items():
+                    if num not in self._biome_int_to_str and name not in names:
+                        self._biome_int_to_str[num] = name
+                        self._biome_to_universal.setdefault(name, later.to_universal(name))
+        except Exception:  # noqa: BLE001 - the plain table still works
+            log.debug("could not extend the Java 1.12 biome table", exc_info=True)
+
+    tb.BiomeTranslator.__init__ = init
+    tb.BiomeTranslator._wb_extended = True
 
 
 @functools.lru_cache(maxsize=1)
@@ -559,17 +604,17 @@ class _AmuletJob:
     def hook(self, level) -> None:
         depth, floor, painted, move = self.depth, self.floor, self.painted, self.move
         keep = self.keep_unfinished
-        if not (depth is not None or floor or painted or move is not None or keep):
-            return
+        # (no early return: the status rule below applies to every conversion)
         by_dim = {name: dim for dim, name in AMULET_DIMS.items()}
         load = level.level_wrapper.load_chunk
-        if keep:
-            from amulet.api.chunk.status import StatusFormats
+        from amulet.api.chunk.status import StatusFormats
 
         def transformed(cx, cz, dimension, *a, **kw):
             chunk = load(cx, cz, dimension, *a, **kw)
             if keep and chunk.status.as_type(StatusFormats.Java_14) != "full":
                 chunk.status = "full"        # Amulet's save only writes finished chunks (the state is restored afterwards)
+            elif chunk.status.value >= 1.5:
+                chunk.status = "full"        # Java 1.13 "finalized" / "fullchunk" hold complete terrain but score under 2.0
             if depth is not None and dimension == "minecraft:overworld":
                 depth.apply(chunk)
             if floor and dimension == "minecraft:overworld":

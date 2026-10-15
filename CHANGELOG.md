@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Java 1.13 worlds lost their `fullchunk` chunks.** Converting a 1.13 world through Amulet dropped every chunk the
+  game had left in the `fullchunk` state (complete terrain, about 15 % of the finished chunks); they are converted now.
 - **Biomes no longer turn into plains.** Converting a Java 1.12 style world (our numeric intermediate included, so
   every route that uses it, ring worlds too) to Bedrock or Java 1.13+ lost every biome from 40 up (oceans other than the
   plain one, End biomes, bamboo) and the mutated ones (sunflower plains, gravelly mountains, mesa Bryce...) read as
