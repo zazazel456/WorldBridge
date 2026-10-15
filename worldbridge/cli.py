@@ -276,6 +276,13 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--no-blend", action="store_true",
                    help=tr("Java / Bedrock 1.18+: no game blending (the chunks of a pre-1.18 world are written in the "
                            "new format: the game does not blend them with new terrain nor generate the part below y 0)"))
+    c.add_argument("--bedrock-edge-blend", action="store_true",
+                   help=tr("Bedrock 1.18+ from a 1.18+ world (not a Bedrock world left where it is): blend the border "
+                           "of the converted world. Bedrock blends only chunks it takes for pre-1.18 ones, so the outer "
+                           "ring of chunks is marked as old and the game regenerates their layer below y 0 (the "
+                           "interior is untouched). Without it the border stays cut, and the conversion warns"))
+    c.add_argument("--bedrock-edge-width", type=int, default=1, metavar="N",
+                   help=tr("with --bedrock-edge-blend: how many chunks wide the blended border is (default 1)"))
     c.add_argument("--no-ring", action="store_true",
                    help=tr("no WorldBridge ring (Java Alpha 1.2 – 1.17, neoLegacy, Nether and End) and no filling of "
                            "finite maps (PE 0.x, LCE 54 / 64 chunks)"))
@@ -480,7 +487,8 @@ def _run(args) -> int:
                        version=_parse_version(args.version, fam) if args.version else None, lce_platform=args.platform,
                        lce_profile=args.profile, lce_world_size=args.size, lce_offset=(ox, oz),
                        lce_center_on_spawn=args.center_on_spawn, lce_player_id=args.player_id, world_name=args.name,
-                       y_offset=args.y_offset, blend=not args.no_blend, ring=not args.no_ring, bta_palette=args.bta_palette,
+                       y_offset=args.y_offset, blend=not args.no_blend, bedrock_edge_blend=args.bedrock_edge_blend,
+                       bedrock_edge_width=args.bedrock_edge_width, ring=not args.no_ring, bta_palette=args.bta_palette,
                        bta_y_offset=args.bta_y_offset, tall_terrain=args.tall_terrain,
                        regen=tuple({"nether": -1, "end": 1}[d] for d in dict.fromkeys(args.regen)),
                        depth=args.depth, pet_owner=args.pet_owner)

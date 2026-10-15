@@ -705,3 +705,37 @@ def test_trim_settings_do_not_touch_the_user_settings_when_not_remembered(app, m
     s.ring.setValue(9)
     assert s.options().ring == 9
     s.close()
+
+
+def test_bedrock_edge_blend_only_where_the_border_stays_cut(win):
+    """The checkbox exists only for Bedrock 1.18+ made from a 1.18+ source that is not an unmoved Bedrock world."""
+    def shown():
+        return win.edge_row.isVisibleTo(win) and _shown(win, win.borders)
+
+    new = max(tuple(win.bed_ver.itemData(i)) for i in range(win.bed_ver.count()))
+    old = [tuple(win.bed_ver.itemData(i)) for i in range(win.bed_ver.count()) if tuple(win.bed_ver.itemData(i)) < (1, 18)]
+    _pick(win.edition, "bedrock")
+    _pick(win.bed_ver, new)
+    assert not win.edge_blend.isChecked()                                  # off by default
+    for kind, old_src in (("", True), ("lce", True), ("java_modern", True), ("bedrock", False)):
+        win._on_detected([("title", "x")], kind, "W", old_src)
+        assert not shown(), kind
+    win._on_detected([("title", "x")], "java_modern", "W", False)
+    assert shown()
+    _pick(win.bed_ver, old[0])                                              # Bedrock before 1.18: no
+    assert not shown()
+    _pick(win.bed_ver, new)
+    _pick(win.edition, "java")
+    assert not shown()
+    _pick(win.edition, "bedrock")
+    assert shown() and not win._target().bedrock_edge_blend
+    win.edge_blend.setChecked(True)
+    assert win._target().bedrock_edge_blend
+    # a Bedrock world: the box appears when its chunks are moved elsewhere
+    win._on_detected([("title", "x")], "bedrock", "W", False)
+    assert not shown() and not win._target().bedrock_edge_blend            # hidden: never passed on
+    win.map_tab.scope_sel.setChecked(True)
+    win.map_tab.move_sel.setChecked(True)
+    assert shown()
+    win.map_tab.move_sel.setChecked(False)
+    assert not shown()

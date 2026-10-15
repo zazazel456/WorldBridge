@@ -56,6 +56,10 @@ class TargetSpec:
     # as pre-1.18 chunks, so that Minecraft blends terrain + biomes with newly generated chunks and
     # fills the new depth below y=0 when the world is opened
     blend: bool = True
+    # Bedrock 1.18+ from a 1.18+ source: mark the outer ring of converted chunks as pre-1.18 so the game blends the
+    # border, at the price of regenerating the layer below y 0 in those chunks only (bedrock/edge.py); off by default
+    bedrock_edge_blend: bool = False
+    bedrock_edge_width: int = 1
     # WorldBridge's own border for the games that do not blend (terrain/policy.py): the ring of the
     # game's terrain (Java Alpha 1.2 - 1.17, neoLegacy; Nether and End too) and the filling of the
     # small finite worlds (PE 0.x, LCE 54 / 64 chunks)
@@ -601,6 +605,8 @@ def _make_writer(t: TargetSpec, out: str, progress: Progress, src: WorldSource, 
 
 def validate_target(t: TargetSpec) -> None:
     """Refuses, before anything is read, the options the target cannot honour (``ConversionError``)."""
+    if int(t.bedrock_edge_width) < 1:
+        raise ConversionError(tr("The width of the border to blend is at least 1 chunk."))
     if t.family == "lce":
         from .lce.container import PLATFORMS
         from .lce.world import platform_profiles, platform_sizes
@@ -1232,6 +1238,7 @@ def _convert_bta(d: det.Detected, out_dir: str, target: TargetSpec, progress: Pr
 
 def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: Progress, tmp: str,
                    old_source: bool = False, sel: Optional[Selection] = None) -> ConversionResult:
+    from .bedrock import edge
     from .extra import direct_extras, read_amulet_info
 
     platform = "bedrock" if target.family == "bedrock" else "java"
@@ -1299,8 +1306,27 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
         _rings3d_after_amulet(out_dir, target, info, wver, tmp, progress)
     if marked and plan.kind == "game":
         progress.log(tr("Blending data written to {n} chunks of the overworld.", n=blending.mark_world(out_dir)))
+    if platform == "bedrock":
+        _bedrock_edge(out_dir, target, d.kind, old_source, move.active or edge.is_moved(target, sel), progress)
     progress.done()
     return ConversionResult(out_dir, n or 0)
+
+
+def _bedrock_edge(out_dir: str, target: TargetSpec, source_kind: str, old_source: bool, moved: bool,
+                  progress: Progress) -> None:
+    """Bedrock 1.18+ from a 1.18+ source: the border stays cut unless the outer ring is marked as pre-1.18."""
+    from .bedrock import edge
+
+    if not edge.applies(target, source_kind, old_source, moved):
+        if target.bedrock_edge_blend:
+            progress.log(tr("Border blending ignored: it applies to Bedrock 1.18+ worlds made from a 1.18+ source (a "
+                            "Bedrock world that stays where it is continues by itself)."))
+        return
+    if not target.bedrock_edge_blend:
+        progress.warn(edge.warning_text())
+        return
+    r = edge.mark_border(out_dir, target.bedrock_edge_width)
+    progress.log(edge.done_text(r["marked"], r["below0"], target.bedrock_edge_width))
 
 
 def _plan_pets(d: det.Detected, target: TargetSpec, info, progress: Progress) -> None:

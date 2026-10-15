@@ -8,7 +8,8 @@ conversion says so.
 **The rule.** A target that blends by itself (Java 1.18 and later; Bedrock 1.18 and later) gets its converted
 chunks marked for the game's own blending, **always, whatever the seed or the source**. WorldBridge's ring and fill
 are used only for targets without blending (Java Alpha 1.2 – 1.17, neoLegacy, small finite worlds). The only opt-out
-is `--no-blend`.
+is `--no-blend`. The exception is Bedrock from a 1.18+ source, where blending costs the layer below y 0 of the
+border chunks: it is opt-in (`--bedrock-edge-blend`) and the conversion warns while it is off.
 
 ## Contents
 
@@ -51,7 +52,8 @@ del gioco* / `--no-blend` and *Anello di raccordo* / `--no-ring`.
 |---|---|---|
 | Java 1.18 – 26.x from pre-1.18 sources | A | ✅ chunks written in a pre-1.18 format; the game's upgrade adds `blending_data` |
 | Java 1.18 – 26.x from any 1.18+ source: Bedrock 1.18+, another seed, a moved world, a Better than Adventure world, **and an unmoved Java 1.18+ world of the same seed going to the same or a newer version** | A | ✅ the overworld chunks carry `blending_data` (`{old_noise: 1b}` up to DataVersion 3440, `{min_section: -4, max_section: 20}` from 3441, per chunk; the game computes the heights), so the game blends its terrain into them. Without it the game assumed the edge continued and met it with a wall (mean jump 23 – 40 blocks measured). The same-seed copy is still copied and upgraded by the game; WorldBridge then adds the tag to its overworld regions (`region/` and, in 26.1+, `dimensions/minecraft/overworld/region/`). `--no-blend` turns it off |
-| Bedrock 1.18 – 26.50 | A | ✅ pre-1.18 format plus real height maps |
+| Bedrock 1.18 – 26.50 from pre-1.18 sources | A | ✅ pre-1.18 format plus real height maps |
+| Bedrock 1.18 – 26.50 from 1.18+ sources (Java 1.18+; Bedrock 1.18+ moved with `--move-to` or `--y-offset`) | A (opt-in) | ⚠️ Bedrock blends only the chunks it takes for pre-1.18 ones, and the only marker it honours is the chunk version record (key `0x2c`) **below 39**; the flag `0x3d = 1` or version 39 do not blend. A world written as 1.18+ therefore meets the new terrain with a wall (1.18.33 measured on a Java 26 world: mean jump 37.9 blocks; 1.21 happened to coincide). **Every conversion of this kind warns.** With `--bedrock-edge-blend` (GUI: *Blend the Bedrock border*, shown only for this case) the outer ring of converted chunks (`--bedrock-edge-width N`, default 1) gets `0x2c = 22` and loses its `0x3d/0x3f/0x40/0x41` records; interior chunks are untouched. The price: the game regenerates **everything below y 0 in the marked chunks** (the log counts the chunks and the blocks). Measured in Bedrock 1.18.33 on a 30-chunk selection: mean jump 37.9 → 2.6 (W = 1, 18 border chunks, 12.5 % of the pairs over 8 blocks) and 3.7 (W = 2, 28 border chunks, 16.9 %); blocks below y 0 in the border chunks 279 601 → 160 014 (W = 1; W = 2: 434 463 → 268 805), in the interior 185 588 → 185 588 (W = 1) and 30 726 → 30 726 (W = 2), i.e. unchanged. W = 2 gives no better seam than W = 1 and costs more of the underground. A Bedrock 1.18+ world converted to Bedrock where it was needs nothing (same terrain, same seed) |
 | Bedrock 1.1 – 1.17 | C | ❌ Bedrock's pre-1.18 generator is not public and its noise differs from Java's: the conversion warns and suggests 1.18+ |
 | LCE maps of 54 / 64 chunks (Xbox 360, PS3, Vita, and the small sizes elsewhere) | B | ✅ whole map written (54 × 54: 18 s, 3 MB) |
 | LCE neoLegacy (Windows64, TU31), maps of every size | C | ✅ ring with neoLegacy's generator, read from its source: biomes 100 %, ground 98.9 % of the columns, blocks 96 % (the rest is decoration). Past the ring the game continues with the same terrain |

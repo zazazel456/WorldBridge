@@ -96,6 +96,12 @@ Choose the **Game** and the **Version**. Only the options that apply to that tar
   a world already played on that PC.
 - **Terrain:**
   - **Game blending**, for Java and Bedrock 1.18+;
+  - **Blend the Bedrock border**, only when the target is Bedrock 1.18+ and the source is a Java or Bedrock 1.18+
+    world (not a Bedrock world converted where it was). Off by default: Bedrock blends only chunks it takes for
+    pre-1.18 ones, so without it the border of the converted world stays cut (the conversion warns). Ticked, the
+    outer ring of converted chunks is marked as old and the game blends it, **but it regenerates the layer below
+    y 0 of those chunks** (caves, ores, builds); the chunks inside keep theirs. The log tells how many chunks were
+    marked and how many blocks below y 0 they hold;
   - **Transition ring**, for games that do not blend;
   - **Underground of 1.18+ worlds** and **Tall mountains**, only for games whose world starts at
     y 0 or is 128 blocks high.
@@ -357,6 +363,7 @@ worldbridge convert saveData.ms <output> --to java --trim        # convert only 
 | `--name` | the target world's name |
 | `--player-id` | LCE PC / Xbox: the XUID (file name in `players/`) for the main player |
 | `--no-blend` | Java / Bedrock 1.18+: no game blending (a pre-1.18 world is translated, not copied for the game to upgrade) |
+| `--bedrock-edge-blend`, `--bedrock-edge-width N` | Bedrock 1.18+ from a Java / Bedrock 1.18+ world (not an unmoved Bedrock world): blend the border by marking the outer ring of converted chunks (N chunks wide, default 1) as pre-1.18. The game blends them with its terrain and regenerates their layer below y 0; inner chunks are untouched. Without it the border stays cut and the conversion warns |
 | `--no-ring` | no ring (Java Alpha 1.2 – 1.17, neoLegacy, Nether and End) and no fill of finite maps (PE 0.x, LCE 54 / 64 chunks) |
 | `--tall-terrain compress\|cut` | 128-block targets: compress tall mountains (default) or cut them at y 127 |
 | `--depth auto\|cut\|keep\|Y` | 1.18+ worlds to games that start at y 0: `auto` (default) keeps the underground of flat or low worlds (superflat 1.18+ has its surface at y -61) and cuts normal ones, `cut` below y 0, `keep` everything (the world rises by 64), or keep from a negative Y |

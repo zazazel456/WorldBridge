@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Bedrock 1.18+ from a 1.18+ source: optional border blending, and a warning when it is off.** Bedrock blends only
+  chunks it takes for pre-1.18 ones (chunk version `0x2c` below 39; the `0x3d` flag or version 39 do not work), so the
+  border of such a conversion stayed cut (measured in BDS 1.18.33 on a Java 26 world: mean step 37.9 blocks). The
+  conversion now always warns (Java 1.18+ → Bedrock 1.18+, and Bedrock 1.18+ moved with `--move-to` / `--y-offset`;
+  not for an unmoved Bedrock world or pre-1.18 sources). `--bedrock-edge-blend` (GUI checkbox *Blend the Bedrock
+  border*, shown only in that case; default off) marks only the outer ring of converted chunks (`--bedrock-edge-width N`,
+  default 1) as pre-1.18 (`0x2c = 22`, blending records removed), so the game blends the border and regenerates the
+  layer below y 0 **in those chunks only**; the log gives the chunks marked and the blocks below y 0 they hold.
+  Measured (30-chunk selection): mean step 37.9 → 2.6 (width 1) / 3.7 (width 2); inner chunks keep every block below y 0.
 - **Blending is the rule for every Java 1.18+ target.** Converted overworld chunks always get `blending_data`, whatever the
   seed or the source: the unmoved same-seed Java 1.18+ copy (copied and upgraded by the game) is now tagged after the
   copy too, in `region/` and in the 26.x layout (`dimensions/minecraft/overworld/region/`), each chunk with the layout of
