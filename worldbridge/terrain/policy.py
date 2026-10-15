@@ -1,6 +1,7 @@
 """Which remedy keeps a conversion's border without a seam (docs/SEAMLESS_BORDERS.md).
 
-* ``game``  the target blends by itself (Java / Bedrock 1.18+) or generates the same terrain;
+* ``game``  the target blends by itself (Java 1.18+: its converted chunks carry ``blending_data``, always;
+  Bedrock 1.18+) or generates the same terrain;
 * ``ring``  WorldBridge writes a ring with the target's own generator (Alpha 1.2 - 1.12, neoLegacy);
 * ``fill``  small finite world (PE 0.x, other LCE up to 64 x 64 chunks): every chunk of the map is written;
 * ``missing`` no remedy yet: the conversion warns, so a seam never goes unannounced;
@@ -38,24 +39,22 @@ def neo_legacy(target) -> bool:
     return target.family == "lce" and getattr(target, "lce_platform", "") == "win64"
 
 
-def decide(target, old_source: bool, source_kind: str = "", writer_opt=None, same_game: bool = False,
-           foreign: bool = False) -> Plan:
+def decide(target, old_source: bool, source_kind: str = "", writer_opt=None, same_game: bool = False) -> Plan:
     """``same_game``: the source is itself a neoLegacy / Windows64 world and stays in place (same seed, no
     move): its terrain is the one the target game generates, so an LCE → neoLegacy copy needs no ring.
-    ``foreign``: a Java 1.18+ target whose chunks were not made by its own generator at this place (another
-    edition, seed or version, a moved world): they get ``blending_data`` (java/blending.py)."""
-    plan = _decide(target, old_source, source_kind, writer_opt, same_game, foreign)
+    A Java 1.18+ target blends: its chunks get ``blending_data`` (java/blending.py) whatever the seed or source."""
+    plan = _decide(target, old_source, source_kind, writer_opt, same_game)
     if plan.kind in ("ring", "fill") and not getattr(target, "ring", True):
         return Plan("off", tr("Ring turned off: at the edges of the converted world the game will put its own terrain "
                               "without a transition."))
-    if plan.kind == "game" and (old_source or foreign) and not getattr(target, "blend", True):
+    if (plan.kind == "game" and not getattr(target, "blend", True)
+            and (target.family == "java" or old_source)):
         return Plan("off", tr("Game blending turned off: the chunks are written in the new format, so the game does "
                               "not blend them with the new terrain nor generate the part below y 0."))
     return plan
 
 
-def _decide(target, old_source: bool, source_kind: str = "", writer_opt=None, same_game: bool = False,
-            foreign: bool = False) -> Plan:
+def _decide(target, old_source: bool, source_kind: str = "", writer_opt=None, same_game: bool = False) -> Plan:
     fam = target.family
     # a console save has the generator of its own title update, not neoLegacy's: only a Windows64 / neoLegacy
     # world that stays where it is continues by itself; for a neoLegacy target everything else gets the ring
@@ -102,8 +101,5 @@ def _decide(target, old_source: bool, source_kind: str = "", writer_opt=None, sa
         if ring_mod.supported(target):
             return Plan("ring", "")
         return _missing("Java " + ".".join(str(x) for x in target.version))
-    if foreign and not old_source:
-        return Plan("game", tr("The terrain comes from another generator or seed: the chunks carry blending data and "
-                               "Minecraft blends the new terrain with the converted one by itself."))
     return Plan("game", tr("Minecraft blends the new terrain with the converted one by itself.") if old_source
-                else tr("Java 1.18+ generates the terrain with the same generator: the edge continues by itself."))
+                else tr("The chunks carry blending data: Minecraft blends the new terrain with the converted one by itself."))

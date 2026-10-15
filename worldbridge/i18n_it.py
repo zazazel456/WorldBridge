@@ -369,8 +369,6 @@ _SECTIONS = {
             'Bedrock prima della 1.18 non raccorda il terreno e il suo generatore non è riproducibile: dove finisce il mondo convertito resterà un gradino. Per un bordo senza gradini scegli Bedrock 1.18 o successiva.',
         'Minecraft blends the new terrain with the converted one by itself.':
             'Minecraft raccorda da solo il terreno nuovo con quello convertito (blending).',
-        'Java 1.18+ generates the terrain with the same generator: the edge continues by itself.':
-            'Java 1.18+ genera il terreno con lo stesso generatore: il bordo continua da solo.',
     },
     'worldbridge/trim.py': {
         'InhabitedTime < {time} → removed · protective ring {ring} chunks · spawn ±{spawn} chunks':
@@ -1579,8 +1577,8 @@ _SECTIONS = {
             'Il mondo di origine non ha un seed noto: il mondo convertito riceve il seed {seed} (ricavato dal suo nome), così il gioco e l\'anello attorno al mondo convertito generano lo stesso terreno.',
         'Blending data written to {n} chunks of the overworld.':
             'Dati di raccordo scritti in {n} chunk dell\'Overworld.',
-        'The terrain comes from another generator or seed: the chunks carry blending data and Minecraft blends the new terrain with the converted one by itself.':
-            'Il terreno viene da un altro generatore o seed: i chunk portano i dati di raccordo e Minecraft raccorda da solo il terreno nuovo con quello convertito.',
+        'The chunks carry blending data: Minecraft blends the new terrain with the converted one by itself.':
+            'I chunk portano i dati di raccordo: Minecraft raccorda da solo il terreno nuovo con quello convertito.',
     },
 }
 
