@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- **Composing the new world in the map tab.** A second view, **New world** (next to **Source world**, Ctrl+1 / Ctrl+2), shows
+  the converted world as a grid of white chunks (the finite LCE / Pocket Edition map drawn white with the outside greyed,
+  and the new spawn). **Paste selection** (Ctrl+V) turns the chunks selected on the source map into a group, at the same
+  coordinates or at the nearest free place, drawn with the map's own tiles, a coloured outline and a name. Drag a group
+  (snaps to whole chunks), arrow keys move it by 1 chunk (Shift: 8), Ctrl+click selects several that move together, Delete
+  removes, Ctrl+Z / Ctrl+Y undo and redo. The side panel lists the groups (rename, offset, **Back to its place**, **Centre
+  on the spawn**) and checks the layout live: overlapping groups and chunks outside the map are red, the problems are
+  listed and **Convert** waits until there are none. **Save / Load layout** use the `--layout` JSON file. While groups
+  exist the conversion uses them and the *Move the selected chunks* choice gives way; the layout survives the language
+  switch and is dropped (after asking) when another world is opened.
+- **Composition on the Amulet route:** riders (`Passengers`) inside an entity's own NBT now move with their group
+  (their `Pos` was left behind).
+- **Composition: groups of chunks, each at its own destination** (engine and command line).
+  The new world contains only groups of chunks of the source, each moved by its own offset (whole chunks), e.g. two builds
+  1000 chunks apart brought next to each other to fit a 54 x 54 LCE map. `worldbridge.layout` (`Group`, `Layout`:
+  `dest`, `problems`, JSON load / save) and `Selection(layout=...)`; `--move-to` is now a one-group layout (same
+  behaviour). Blocks, block entities, entities (and riders), scheduled ticks, the spawn, the players standing in a group
+  (the others go to the new spawn), the Bedrock local player and the positions villagers remember move with their group,
+  on every route; the Amulet job partitions the chunks by the region they are written to. `--layout FILE.json` is
+  checked before anything is read (overlapping destinations, a chunk in two groups, chunks outside a finite LCE / Pocket
+  Edition map) and excludes `--chunks` / `--move-to`. The border (ring, blending, Bedrock edge, LCE / PE fill) goes around
+  the groups as placed: groups closer than the ring width get one joined ring.
 - **Bedrock 1.18+ from a 1.18+ source: optional border blending, and a warning when it is off.** Bedrock blends only
   chunks it takes for pre-1.18 ones (chunk version `0x2c` below 39; the `0x3d` flag or version 39 do not work), so the
   border of such a conversion stayed cut (measured in BDS 1.18.33 on a Java 26 world: mean step 37.9 blocks). The

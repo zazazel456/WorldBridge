@@ -11,6 +11,7 @@ result where each game will find it. What WorldBridge does and how it is verifie
 - [Language](#language)
 - [Conversion tab](#conversion-tab)
 - [Map and chunks tab](#map-and-chunks-tab)
+- [Composing the new world](#composing-the-new-world)
 - [World trim](#world-trim)
 - [Players tab](#players-tab)
 - [World management tab](#world-management-tab)
@@ -162,6 +163,14 @@ game generates them (or the ring fills them, for the targets that have one).
   the others start at the new spawn. Useful above all for finite worlds (LCE, PE), where a build at
   x 900, z 16,180 would be outside the map. CLI: `--move-to center` or `--move-to X,Z` (with
   `--chunks`).
+- **Composition:** the **New world** view (see [Composing the new world](#composing-the-new-world)); on the command line `--layout FILE.json` builds the new world from groups of chunks, each moved by its own
+  offset in whole chunks (e.g. to bring far apart builds together inside a finite LCE map). The file:
+  `{"groups": [{"dimension": "overworld", "chunks": [[100, 1000], [101, 1000]], "offset": [-100, -1000]}, ...]}`;
+  `chunks` can also be a text `"x,z;x,z"`, `dimension` is `overworld`, `nether` or `end` (a Nether group's offset is in
+  Nether chunks). Only the chunks of the groups are converted. Spawn and players in a group follow it, the others start
+  at the spawn of the first Overworld group. The conversion refuses, before reading anything, overlapping groups, a chunk
+  in two groups and chunks that would land outside a finite map. The border (ring or blending) goes around all the groups
+  together; groups closer than the ring's width are joined by it.
 - **Spawn:** click on the map in **Spawn** mode (Y = the highest block + 1) or type X / Y / Z;
   **Restore the original** puts it back. The map also shows the original spawn and the players.
 - **Nether and End:** **Regenerate … from scratch** leaves the dimension to the game, which
@@ -180,6 +189,38 @@ Then, separately, **Edit the source world**, without converting, like an NBT edi
 
 These work on Java (Anvil 1.2 → 26.x), LCE (every platform) and Bedrock. The changed files are first
 copied to `<world>.wb-backup-<date>/` next to the world. The game must be closed.
+
+## Composing the new world
+
+The **New world** button next to **Source world** (toolbar of the map tab; Ctrl+2, and Ctrl+1 to go back) shows the
+converted world as a **grid of white chunks**, with the same zoom and pan as the map (wheel, middle button, Space or
+dragging the empty grid). It is for bringing parts of a big world close together, e.g. two builds 1000 chunks apart into a
+54 × 54 LCE map: the source map stays where chunks are selected, the new world is where they are placed.
+
+1. On the **Source world** map select the chunks of one build (Select mode).
+2. **Paste selection** (button or **Ctrl+V**, from either view). They become a *group* ("Group 1"…), placed at the same
+   coordinates or, when that overlaps another group or leaves the map, at the nearest free place. The group is drawn with the
+   map's own tiles, a coloured outline and its name. Chunks already in a group are left out of the next paste.
+3. Select other chunks and paste again; each paste is its own group. A group belongs to the dimension shown when it was
+   pasted; the view shows one dimension at a time (the **Dimension** box).
+4. Move the groups: **drag** (snaps to whole chunks), **arrow keys** (1 chunk; **Shift** 8), **Ctrl+click** to select several
+   groups that then move together, **Delete** to remove. **Ctrl+Z / Ctrl+Y** undo and redo paste, move and delete.
+
+The side panel lists the groups (name, chunks, offset); with one group selected you can rename it and type its offset in
+chunks. **Back to its place** puts it at its source coordinates (offset 0, 0); **Centre on the spawn** centres the selected
+groups on the spawn of the new world (a red cross on the grid: the source spawn, or the one chosen in Spawn mode, moved with
+its chunk, otherwise inside the first Overworld group). **Save layout…** / **Load layout…** keep the groups in the JSON
+file that `--layout` reads (see below); **Remove all groups** empties the new world.
+
+**Live check.** For LCE and Pocket Edition 0.x the finite map is drawn white and the outside grey (it follows the platform,
+size and "centre on the spawn" chosen on the Conversion tab). Overlapping groups, a source chunk in two groups and chunks
+outside the map are drawn **red**; the problems are listed under **Check** and on the bar at the bottom, and **Convert**
+stays disabled until there are none.
+
+While at least one group exists, only the groups are converted: *The whole world / Selected chunks only* and *Move the
+selected chunks* give way (the latter is the one-group case and works as before when there is no group). The new world
+lives in the window: it survives the language switch, and opening another source world discards it (after asking; save
+the layout first to keep it). It is not saved with the world or between sessions.
 
 ## World trim
 
@@ -372,6 +413,7 @@ worldbridge convert saveData.ms <output> --to java --trim        # convert only 
 | `--biome BIOME=[DIM:]FILE` | give a biome (name or number) to the chunks of a CSV; repeatable |
 | `--spawn X,Y,Z` | new world spawn |
 | `--move-to center\|X,Z` | move the selected chunks: their centre goes to 0, 0 (`center`) or to X, Z |
+| `--layout FILE.json` | composition: only groups of chunks of the source, each placed at its own offset (see below); checked before converting; not with `--chunks` / `--move-to` |
 | `--player KEY[=NICKNAME]` | players to transfer (the first is the main one) and their nicknames; KEY as shown by `players`; repeatable |
 | `--offline` | Java: offline UUIDs (non-premium servers) |
 | `--pet-owner account\|first-player` | Java: who the tamed animals belong to: the Java account the main player is linked to (`--player host=NAME`), or the player who opens the world first (data pack). Default: the account when there is a link, else the first player (Bedrock worlds) |

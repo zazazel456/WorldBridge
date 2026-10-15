@@ -18,6 +18,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import numpy as np
 
 from . import nbt
+from .layout import Layout
 from .model import NETHER, OVERWORLD, THE_END, Progress, WorldInfo, dimension_of
 from .i18n import tr
 
@@ -29,37 +30,62 @@ def _floordiv(a: int, b: int) -> int:
 
 
 class Relocation:
+    """Where every selected chunk goes: ``sel.layout`` (groups of chunks, each with its own offset) or ``sel.move_to``
+    (one group per dimension, see ``Layout.centred``).  ``offset(dim, cx, cz)`` is the one lookup every hook uses."""
+
     def __init__(self, sel):
         self.sel = sel
-        self.dest: Optional[Tuple[int, int]] = getattr(sel, "move_to", None)
-        self.moves: Dict[int, Chunk] = {}
+        self.layout: Optional[Layout] = getattr(sel, "layout", None)
+        self.dest: Optional[Tuple[int, int]] = getattr(sel, "move_to", None)     # block where a stray player starts
         self.top: Optional[int] = None              # ground height at the destination (new spawn)
         self.new_spawn: Optional[Tuple[int, int, int]] = None   # set by apply_info
-        if self.dest is None or not sel.chunks:
-            return
-        bx, bz = (int(v) for v in self.dest)
-        for dim, cs in sel.chunks.items():
-            if not cs:
-                continue
-            xs = [c[0] for c in cs]
-            zs = [c[1] for c in cs]
-            ccx, ccz = (min(xs) + max(xs)) >> 1, (min(zs) + max(zs)) >> 1
-            scale = 8 if dim == NETHER else 1
-            tx, tz = _floordiv(bx, scale) >> 4, _floordiv(bz, scale) >> 4
-            self.moves[dim] = (tx - ccx, tz - ccz)
+        if self.layout is None and self.dest is not None and sel.chunks:
+            self.layout = Layout.centred(sel.chunks, self.dest)
+        elif self.layout is not None:
+            self.dest = self.layout.default_spawn()
+        if self.layout is not None and not sel.chunks:
+            self.layout = None
 
     @property
     def active(self) -> bool:
-        return any(self.moves.values())
+        return self.layout is not None and any(g.offset != (0, 0) for g in self.layout.groups if g.chunks)
+
+    def offset(self, dim: int, cx: int, cz: int) -> Chunk:
+        """Where a source chunk moves (whole chunks); (0, 0) for a chunk in no group."""
+        if self.layout is None:
+            return 0, 0
+        return self.layout.offset(dim, cx, cz) or (0, 0)
 
     def delta(self, dim: int) -> Chunk:
-        return self.moves.get(dim, (0, 0))
+        """The offset of a dimension that has a single one (--move-to); ValueError with several (use ``offset``)."""
+        offs = {g.offset for g in self.layout.groups_of(dim)} if self.layout is not None else set()
+        if len(offs) > 1:
+            raise ValueError("several groups with different offsets: use offset(dim, cx, cz)")
+        return next(iter(offs), (0, 0))
 
     def coords(self, dim: int, coords: Iterable[Chunk]) -> List[Chunk]:
-        dx, dz = self.delta(dim)
-        return [(cx + dx, cz + dz) for cx, cz in coords]
+        out = []
+        for cx, cz in coords:
+            dx, dz = self.offset(dim, cx, cz)
+            out.append((cx + dx, cz + dz))
+        return out
+
+    def within(self, dim: int, coords: Iterable[Chunk], box: Optional[Tuple[int, int, int, int]]) -> List[Chunk]:
+        """The chunks of ``coords`` that land inside ``box`` (chunks [x0, x1) × [z0, z1) of the converted world)."""
+        if box is None:
+            return []
+        x0, x1, z0, z1 = box
+        out = []
+        for c in coords:
+            dx, dz = self.offset(dim, *c)
+            if x0 <= c[0] + dx < x1 and z0 <= c[1] + dz < z1:
+                out.append(c)
+        return out
 
     def describe(self) -> str:
+        groups = [g for g in (self.layout.groups if self.layout is not None else []) if g.chunks]
+        if self.sel.layout is not None:
+            return tr("Composition: {n} groups of chunks placed at their destinations.", n=len(groups))
         bx, bz = self.dest or (0, 0)
         dx, dz = self.delta(OVERWORLD)
         return tr("Selected chunks moved: their centre goes to x {x}, z {z} ({dx}, {dz} blocks).", x=bx, z=bz,
@@ -68,7 +94,7 @@ class Relocation:
     # ------------------------------------------------------------------ numeric chunks
     def numeric_chunk(self, dim: int, c) -> None:
         """Moves a hub chunk (NumericChunk) with everything that has a position in it."""
-        dx, dz = self.delta(dim)
+        dx, dz = self.offset(dim, c.cx, c.cz)
         if not (dx or dz):
             return
         c.cx += dx
@@ -87,7 +113,7 @@ class Relocation:
     # ------------------------------------------------------------------ Amulet chunks
     def amulet_chunk(self, dim: int, chunk) -> None:
         """Moves an Amulet universal chunk (while it is read, before it is written elsewhere)."""
-        dx, dz = self.delta(dim)
+        dx, dz = self.offset(dim, chunk.cx, chunk.cz)
         if not (dx or dz):
             return
         chunk._cx += dx
@@ -97,6 +123,13 @@ class Relocation:
                                 for be in list(chunk.block_entities.values())]
         for e in chunk.entities:
             e.x, e.z = e.x + bx, e.z + bz
+            try:                                  # the riders are inside the entity's own NBT, with their own Pos
+                riders = e.nbt.compound.get("Passengers")
+            except AttributeError:
+                riders = None
+            if isinstance(riders, nbt.ListTag):
+                for r in riders:
+                    shift_entity(r, bx, bz)
         if dim == OVERWORLD and self.dest is not None:
             x, z = self.dest
             if (x >> 4, z >> 4) == (chunk.cx, chunk.cz):
@@ -106,7 +139,7 @@ class Relocation:
     def canon_chunk(self, dim: int, cx: int, cz: int, tl: list, el: list) -> Chunk:
         """Moves the canonical block entities and entities of a source chunk (see tiles / entities);
         returns where the chunk went."""
-        dx, dz = self.delta(dim)
+        dx, dz = self.offset(dim, cx, cz)
         if not (dx or dz):
             return cx, cz
         bx, bz = dx * 16, dz * 16
@@ -118,17 +151,25 @@ class Relocation:
                 if p is not None and len(p) == 3:
                     c[key] = type(p)((p[0] + bx, p[1], p[2] + bz)) if isinstance(p, (tuple, list)) else p
             if isinstance(c.get("poi"), dict):                       # a villager's bed / bell / job site
-                c["poi"] = {k: (p[0] + bx, p[1], p[2] + bz) for k, p in c["poi"].items()}
+                c["poi"] = {k: self._poi(dim, p, dx, dz) for k, p in c["poi"].items()}
         return cx + dx, cz + dz
+
+    def _poi(self, dim: int, p, dx: int, dz: int):
+        """A position a villager remembers (bed, job site): shifted by the group that holds it; one that lies in no
+        group goes with the chunk of the villager."""
+        o = self.layout.offset(dim, math.floor(p[0]) >> 4, math.floor(p[2]) >> 4) if self.layout is not None else None
+        ox, oz = o if o is not None else (dx, dz)
+        return (p[0] + ox * 16, p[1], p[2] + oz * 16)
 
     # ------------------------------------------------------------------ spawn and players
     def _moved(self, dim: int, x: float, z: float) -> Optional[Tuple[float, float]]:
         """Where a point of a moved chunk goes (None: its chunk was not selected)."""
-        cs = (self.sel.chunks or {}).get(dim) or set()
-        if (math.floor(x) >> 4, math.floor(z) >> 4) not in cs:      # floor: x = -0.7 is in chunk -1, not 0
+        if self.layout is None:
             return None
-        dx, dz = self.delta(dim)
-        return x + dx * 16, z + dz * 16
+        o = self.layout.offset(dim, math.floor(x) >> 4, math.floor(z) >> 4)     # floor: x = -0.7 is in chunk -1, not 0
+        if o is None:
+            return None
+        return x + o[0] * 16, z + o[1] * 16
 
     def spawn(self, info: WorldInfo) -> Tuple[int, int, int]:
         """The new spawn: moved with its chunk, or on the destination when its chunk stays behind."""
@@ -185,7 +226,7 @@ class Relocation:
         if new is not None:
             root["Pos"] = nbt.ListTag([nbt.FloatTag(new[0]), nbt.FloatTag(y), nbt.FloatTag(new[1])], 5)
             return True
-        sx, sy, sz = self.new_spawn or (int(self.dest[0]), int(self.top if self.top is not None else y), int(self.dest[1]))
+        sx, sy, sz = self.new_spawn or (int((self.dest or (0, 0))[0]), int(self.top if self.top is not None else y), int((self.dest or (0, 0))[1]))
         root["DimensionId"] = nbt.IntTag(0)
         root["Pos"] = nbt.ListTag([nbt.FloatTag(sx + 0.5), nbt.FloatTag(sy + 1.62), nbt.FloatTag(sz + 0.5)], 5)
         return True
@@ -200,6 +241,7 @@ class Relocation:
         if self.sel.exclude:
             out.exclude = {d: set(self.coords(d, cs)) for d, cs in self.sel.exclude.items()}
         out.move_to = None
+        out.layout = None
         return out
 
 

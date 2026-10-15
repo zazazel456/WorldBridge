@@ -304,6 +304,8 @@ class MainWindow(QMainWindow):
         self.manage_tab.staged_changed.connect(self._update_staged_hint)
         self.map_tab.players_loaded.connect(self.players_tab.set_players)
         self.map_tab.summary_changed.connect(self._update_scope)
+        self.map_tab.bounds_provider = self._layout_bounds
+        self.map_tab.layout_changed.connect(self._layout_check)
         self.players_tab.changed.connect(self._update_scope)
         self.players_tab.center_requested.connect(self._show_player)
 
@@ -311,6 +313,11 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
         self._on_edition()
         self._update_scope()
+        for w, sig in ((self.edition, "currentIndexChanged"), (self.java_ver, "currentIndexChanged"),
+                       (self.bed_ver, "currentIndexChanged"), (self.lce_plat, "currentIndexChanged"),
+                       (self.lce_prof, "currentIndexChanged"), (self.lce_size, "currentIndexChanged"),
+                       (self.lce_center, "toggled"), (self.lce_ox, "valueChanged"), (self.lce_oz, "valueChanged")):
+            getattr(w, sig).connect(lambda *_a: self.map_tab.refresh_layout())    # the finite map depends on them
         QShortcut(QKeySequence("Ctrl+O"), self, self._pick_src_dir)
         QShortcut(QKeySequence("Ctrl+Shift+O"), self, self._pick_src_file)
         QShortcut(QKeySequence("Ctrl+Return"), self, lambda: self.btn_convert.isEnabled() and self._start())
@@ -810,7 +817,7 @@ class MainWindow(QMainWindow):
         from ..bedrock import edge
 
         target = SimpleNamespace(family="bedrock", version=tuple(self.bed_ver.currentData()))
-        return edge.applies(target, self._src_kind, self._src_old, self.map_tab.move_target() is not None)
+        return edge.applies(target, self._src_kind, self._src_old, self.map_tab.moves_chunks())
 
     def _target_game(self):
         """(family, version) of the conversion's target, for the biomes it has."""
@@ -923,6 +930,13 @@ class MainWindow(QMainWindow):
             self._keep_world(tr("The world is being edited: it can be changed when the edit ends."),
                              self.map_tab.path)
             return
+        if self.map_tab.layout() is not None and path != self.map_tab.path:
+            n = len(self.map_tab.layout().groups)
+            if QMessageBox.question(self, tr("New world"), tr("Opening another world discards the {n} groups composed in "
+                                                              "the “New world” view. Continue?", n=n)) != QMessageBox.Yes:
+                self.src_edit.setText(self.map_tab.path)
+                self._analysed = self.map_tab.path or None
+                return
         if self.manage_tab.source_changed(path):          # the edits kept for the old world do not belong to this one
             self.message.show_message("neutral", tr("The changes kept for the converted world were discarded: the "
                                                     "world to convert has changed."))
@@ -1071,9 +1085,36 @@ class MainWindow(QMainWindow):
             t.bta_palette = self.bta_palette.text().strip() or None
             t.bta_y_offset = None if self.bta_auto_y.isChecked() else self.bta_y.value()
         sel = Selection(chunks=self.map_tab.chunk_selection(), spawn=self.map_tab.spawn(), players=self.players_tab.links(),
-                        biomes=self.map_tab.biome_overrides(), move_to=self.map_tab.move_target())
+                        biomes=self.map_tab.biome_overrides(), move_to=self.map_tab.move_target(),
+                        layout=self.map_tab.layout())
         t.selection = sel if sel.active else None
         return t
+
+    def _layout_bounds(self, layout, spawn):
+        """The chunks the target's finite map holds (None: no limit), for the check of the new world's groups."""
+        from ..convert import layout_bounds
+
+        return layout_bounds(self._target(), layout, spawn)
+
+    def _layout_check(self):
+        """The Convert button waits while the groups of the new world overlap or leave the finite map."""
+        if not hasattr(self, "btn_convert"):
+            return
+        probs = self.map_tab.layout_problems()
+        self._layout_problems = probs
+        self.btn_convert.setEnabled(self._worker is None and not probs)
+        if probs:
+            more = len(probs) - 1
+            text = tr("The new world cannot be converted yet: {problem}", problem=probs[0])
+            if more:
+                text += " " + tr("(and {n} more: see the “New world” view)", n=more)
+            self.run_hint.setText(theme.span(_esc(text), "negative"))
+            self.run_hint.setToolTip("\n".join(probs))
+            self.btn_convert.setToolTip(tr("Fix the new world first:") + "\n" + "\n".join(probs))
+        else:
+            self.run_hint.setText(tr("Every tab except “World management” prepares this conversion."))
+            self.run_hint.setToolTip("")
+            self.btn_convert.setToolTip(tr("Convert the world with the choices of these tabs (Ctrl+Enter)"))
 
     def _output_dir(self, target: TargetSpec) -> str:
         src = self.src_edit.text().strip().rstrip("/\\")
@@ -1097,6 +1138,13 @@ class MainWindow(QMainWindow):
         return final
 
     def _start(self):
+        probs = self.map_tab.layout_problems()
+        if probs:
+            self.tabs.setCurrentWidget(self.map_tab)
+            self.map_tab.show_view(1)
+            self.message.show_message("negative", tr("The new world cannot be converted yet:") + "<br>"
+                                      + "<br>".join(_esc(t) for t in probs[:6]))
+            return
         if self.map_tab.jobs_running():
             self.tabs.setCurrentIndex(0)
             self.message.show_message("negative", tr("A change to the source world (edit, trim or copy) is running: "
@@ -1173,7 +1221,7 @@ class MainWindow(QMainWindow):
             self.close()
             return
         self.map_tab.set_conversion_running(False)
-        self.btn_convert.setEnabled(True)
+        self.btn_convert.setEnabled(not self.map_tab.layout_problems())
         self.btn_cancel.setEnabled(False)
         self.btn_cancel.hide()
         self._worker = None

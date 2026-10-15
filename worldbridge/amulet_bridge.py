@@ -597,10 +597,9 @@ def _partition(job: _AmuletJob, coords: Dict[str, list], n: int) -> List[Dict[st
     by_dim = {name: dim for dim, name in AMULET_DIMS.items()}
     regions: Dict[tuple, list] = {}
     for dname, cs in coords.items():
-        dx, dz = (0, 0)
-        if job.move is not None and dname in by_dim:
-            dx, dz = job.move.delta(by_dim[dname])
+        move = job.move if job.move is not None and dname in by_dim else None
         for cx, cz in cs:
+            dx, dz = move.offset(by_dim[dname], cx, cz) if move is not None else (0, 0)     # per group (composition)
             regions.setdefault((dname, (cx + dx) >> 5, (cz + dz) >> 5), []).append((cx, cz))
     parts: List[Dict[str, list]] = [{} for _ in range(n)]
     load = [0] * n
