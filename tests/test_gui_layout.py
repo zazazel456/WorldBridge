@@ -12,6 +12,7 @@ from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QFileDialog, QMessageBox  # noqa: E402
 
 from worldbridge import i18n  # noqa: E402
+from worldbridge.gui import app as app_mod  # noqa: E402
 from worldbridge.java.numeric import JavaNumericWorld, JavaNumericWriter, JavaWriteOptions  # noqa: E402
 from worldbridge.layout import Group, Layout  # noqa: E402
 from worldbridge.model import OVERWORLD, Progress  # noqa: E402
@@ -416,6 +417,7 @@ def test_the_layout_follows_the_language_and_is_cleared_with_another_world(gw, a
         assert it.map_tab.layout() is None
     finally:
         i18n.set_language("en")
+        app_mod._install_qt_translations()                        # Qt's dialog buttons back in English too
         it.close()
         app.processEvents()
 
