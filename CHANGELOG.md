@@ -2,7 +2,19 @@
 
 ## Unreleased
 
-- **Composition: groups of chunks, each at its own destination** (engine and command line; the map tab comes next).
+- **Composing the new world in the map tab.** A second view, **New world** (next to **Source world**, Ctrl+1 / Ctrl+2), shows
+  the converted world as a grid of white chunks (the finite LCE / Pocket Edition map drawn white with the outside greyed,
+  and the new spawn). **Paste selection** (Ctrl+V) turns the chunks selected on the source map into a group, at the same
+  coordinates or at the nearest free place, drawn with the map's own tiles, a coloured outline and a name. Drag a group
+  (snaps to whole chunks), arrow keys move it by 1 chunk (Shift: 8), Ctrl+click selects several that move together, Delete
+  removes, Ctrl+Z / Ctrl+Y undo and redo. The side panel lists the groups (rename, offset, **Back to its place**, **Centre
+  on the spawn**) and checks the layout live: overlapping groups and chunks outside the map are red, the problems are
+  listed and **Convert** waits until there are none. **Save / Load layout** use the `--layout` JSON file. While groups
+  exist the conversion uses them and the *Move the selected chunks* choice gives way; the layout survives the language
+  switch and is dropped (after asking) when another world is opened.
+- **Composition on the Amulet route:** riders (`Passengers`) inside an entity's own NBT now move with their group
+  (their `Pos` was left behind).
+- **Composition: groups of chunks, each at its own destination** (engine and command line).
   The new world contains only groups of chunks of the source, each moved by its own offset (whole chunks), e.g. two builds
   1000 chunks apart brought next to each other to fit a 54 x 54 LCE map. `worldbridge.layout` (`Group`, `Layout`:
   `dest`, `problems`, JSON load / save) and `Selection(layout=...)`; `--move-to` is now a one-group layout (same

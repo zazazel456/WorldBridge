@@ -123,6 +123,13 @@ class Relocation:
                                 for be in list(chunk.block_entities.values())]
         for e in chunk.entities:
             e.x, e.z = e.x + bx, e.z + bz
+            try:                                  # the riders are inside the entity's own NBT, with their own Pos
+                riders = e.nbt.compound.get("Passengers")
+            except AttributeError:
+                riders = None
+            if isinstance(riders, nbt.ListTag):
+                for r in riders:
+                    shift_entity(r, bx, bz)
         if dim == OVERWORLD and self.dest is not None:
             x, z = self.dest
             if (x >> 4, z >> 4) == (chunk.cx, chunk.cz):

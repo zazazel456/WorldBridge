@@ -18,7 +18,7 @@ from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QRectF, Qt, QThread,
 from PySide6.QtGui import QAction, QBrush, QColor, QFont, QImage, QKeySequence, QPainter, QPen
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFormLayout, QGridLayout, QHBoxLayout, QLabel, QMenu, QMessageBox,
-    QPushButton, QRadioButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter, QStyle, QToolBar, QToolButton,
+    QPushButton, QRadioButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter, QStackedWidget, QStyle, QToolBar, QToolButton,
     QVBoxLayout, QWidget, QWidgetAction,
 )
 
@@ -196,6 +196,7 @@ class MapCanvas(QWidget):
     hover = Signal(str)
     spawn_picked = Signal(int, int, int)
     selection_changed = Signal()
+    tiles_changed = Signal()          # tiles were drawn (the "New world" view copies them)
 
     MODE_PAN, MODE_SELECT, MODE_SPAWN = range(3)
 
@@ -209,6 +210,7 @@ class MapCanvas(QWidget):
         self.scale = 1.0                 # screen pixels per block
         self.center = QPointF(0, 0)      # block coordinates at the centre of the widget
         self.regions: Dict[int, Dict[Chunk, QImage]] = {}
+        self.tile_version = 0
         self.info: Dict[int, Dict[Chunk, Tuple[np.ndarray, np.ndarray, List[str]]]] = {}
         self.present: Dict[int, Set[Chunk]] = {}
         self.selection: Dict[int, Set[Chunk]] = {}
@@ -235,6 +237,8 @@ class MapCanvas(QWidget):
         self.players = []
         self.heat.clear()
         self._heat_img.clear()
+        self.tile_version += 1
+        self.tiles_changed.emit()
         self.update()
 
     def set_heat(self, heat, min_ticks: int, show: bool):
@@ -299,6 +303,8 @@ class MapCanvas(QWidget):
             pres.add((cx, cz))
         for p in painters.values():
             p.end()
+        self.tile_version += 1
+        self.tiles_changed.emit()
         self.update()
 
     def center_on(self, x: float, z: float):
@@ -617,6 +623,7 @@ class MapTab(QWidget):
     players_loaded = Signal(object)   # list of PlayerEntry
     meta_loaded = Signal(object)
     summary_changed = Signal()        # what will be converted changed (see summary())
+    layout_changed = Signal()         # the groups of the new world (or their check) changed
 
     def __init__(self, parent=None, remember=None):
         super().__init__(parent)
@@ -630,19 +637,32 @@ class MapTab(QWidget):
         self._meta = None
         self._loaded_dims: Set[int] = set()
         self._requested: Set[int] = set()
+        self._reloading = False
+        self.bounds_provider = None        # (Layout, spawn) -> the finite map's chunks (set by the window: it knows the target)
 
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0)
-        v.addWidget(self._toolbar())
-
         self.canvas = MapCanvas()
         self.canvas.hover.connect(lambda t: self.hover_label.setText(t))
         self.canvas.spawn_picked.connect(self._on_spawn_picked)
         self.canvas.selection_changed.connect(self._on_selection_changed)
+        from .layoutview import LayoutController
+
+        self.layout_ctl = LayoutController(self)
+        self.layout_ctl.model.bounds_fn = lambda lay, spawn: (self.bounds_provider(lay, spawn)
+                                                              if self.bounds_provider is not None else None)
+        self.layout_ctl.changed.connect(self._on_layout_changed)
+        v.addWidget(self._toolbar())
+        self.view_stack = QStackedWidget()
+        self.view_stack.addWidget(self.canvas)
+        self.view_stack.addWidget(self.layout_ctl.canvas)
+        self.side_stack = QStackedWidget()
+        self.side_stack.addWidget(self._side_panel())
+        self.side_stack.addWidget(self.layout_ctl.panel)
         self.split = QSplitter(Qt.Horizontal)
         self.split.setChildrenCollapsible(True)
-        self.split.addWidget(self.canvas)
-        self.split.addWidget(self._side_panel())
+        self.split.addWidget(self.view_stack)
+        self.split.addWidget(self.side_stack)
         self.split.setStretchFactor(0, 1)
         self.split.setStretchFactor(1, 0)
         self.split.setCollapsible(0, False)
@@ -689,6 +709,34 @@ class MapTab(QWidget):
         lab.setBuddy(self.dim_box)
         bar.addWidget(self.dim_box)
         bar.addSeparator()
+        self.views = QButtonGroup(self)
+        self._view_buttons = []
+        for i, (label, icons, tip) in enumerate((
+                (tr("Source world"), ("map-flat", "globe", "applications-education-geography"),
+                 tr("The map of the world to convert, where chunks are selected (Ctrl+1)")),
+                (tr("New world"), ("document-new", "view-grid", "view-list-icons"),
+                 tr("The converted world as a grid of chunks: paste the selected chunks and move them in groups "
+                    "(Ctrl+2)")))):
+            b = QToolButton()
+            b.setText(label)
+            b.setIcon(theme.icon(*icons))
+            b.setToolTip(tip)
+            b.setCheckable(True)
+            b.setAutoRaise(True)
+            b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+            b.setAccessibleName(label)
+            self.views.addButton(b, i)
+            self._view_buttons.append(b)
+            bar.addWidget(b)
+            a = QAction(self)
+            a.setShortcut(QKeySequence(f"Ctrl+{i + 1}"))
+            a.setShortcutContext(Qt.WidgetWithChildrenShortcut)
+            a.triggered.connect(b.click)
+            self.addAction(a)
+        self._view_buttons[0].setChecked(True)
+        self.views.idClicked.connect(self._on_view)
+        bar.addSeparator()
+        self._source_tools = []            # the toolbar items of the source map: hidden in the "New world" view
         self.modes = QButtonGroup(self)
         for i, (label, icons, tip) in enumerate((
                 (tr("Pan"), ("transform-browse", "tool-pointer", "input-mouse"),
@@ -706,10 +754,10 @@ class MapTab(QWidget):
             b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
             b.setAccessibleName(tr("{mode} mode", mode=label))
             self.modes.addButton(b, i)
-            bar.addWidget(b)
+            self._source_tools.append(bar.addWidget(b))
         self.modes.button(1).setChecked(True)
         self.modes.idClicked.connect(self._on_mode)
-        bar.addSeparator()
+        self._source_tools.append(bar.addSeparator())
 
         sel = QToolButton()
         sel.setText(tr("Selection"))
@@ -743,7 +791,7 @@ class MapTab(QWidget):
             menu.addAction(a)
             self.sel_actions.append(a)
         sel.setMenu(menu)
-        bar.addWidget(sel)
+        self._source_tools.append(bar.addWidget(sel))
         fit = QAction(theme.icon("zoom-fit-best", "zoom-original"), tr("Fit"), self)
         fit.setToolTip(tr("Show the whole world (Ctrl+0)"))
         fit.setShortcut(QKeySequence("Ctrl+0"))
@@ -765,7 +813,7 @@ class MapTab(QWidget):
                                     "a trimmed copy of the world."))
         self.trim_btn.clicked.connect(self.run_trim)
         self.trim_btn.setEnabled(False)
-        bar.addWidget(self.trim_btn)
+        self._source_tools.append(bar.addWidget(self.trim_btn))
         self.trim_gear = QToolButton()
         self.trim_gear.setIcon(theme.icon("configure", "preferences-system"))
         self.trim_gear.setText(tr("Trim settings"))
@@ -782,7 +830,7 @@ class MapTab(QWidget):
         menu.addAction(wa)
         self.trim_gear.setMenu(menu)
         self.trim_settings.changed.connect(self._trim_settings_changed)
-        bar.addWidget(self.trim_gear)
+        self._source_tools.append(bar.addWidget(self.trim_gear))
         return bar
 
     def _side_panel(self) -> QWidget:
@@ -803,11 +851,16 @@ class MapTab(QWidget):
         self.scope_all.toggled.connect(self._update_move)
         v.addWidget(self.scope_all)
         v.addWidget(self.scope_sel)
+        self.composed_hint = HintLabel(tr("The new world is composed in the “New world” view: only its groups are "
+                                          "converted."))
+        self.composed_hint.hide()
+        v.addWidget(self.composed_hint)
         self.move_sel = QCheckBox(tr("Move the selected chunks"))
         self.move_sel.setToolTip(tr("In the converted world the selected chunks do not stay at their coordinates"))
         self.move_sel.toggled.connect(self._update_status)
         self.move_sel.toggled.connect(self._update_move)
-        v.addWidget(with_help(self.move_sel, tr(HELP_MOVE)))
+        self.move_sel_row = with_help(self.move_sel, tr(HELP_MOVE))
+        v.addWidget(self.move_sel_row)
         self.move_box = QWidget()
         mb = QGridLayout(self.move_box)
         mb.setContentsMargins(self.style().pixelMetric(QStyle.PM_IndicatorWidth) + spacing(body), 0, 0, 0)
@@ -912,15 +965,25 @@ class MapTab(QWidget):
 
     def _update_move(self, *_a):
         """The destination of the moved chunks only matters when they are moved."""
-        on = self.move_sel.isChecked()
+        ctl = getattr(self, "layout_ctl", None)
+        composed = ctl is not None and ctl.has_groups()     # the groups replace this one-group special case
+        on = self.move_sel.isChecked() and not composed
         self.move_box.setEnabled(on)
         self.move_box.setVisible(on)
+        self.move_sel_row.setVisible(not composed)
+        self.scope_all.setEnabled(not composed)
+        self.scope_sel.setEnabled(not composed)
+        self.composed_hint.setVisible(composed)
         self.summary_changed.emit()
 
     def summary(self) -> str:
         """What will be converted, in a few words (shown on the conversion tab)."""
         parts = []
-        if self.scope_sel.isChecked():
+        lay = self.layout()
+        if lay is not None:
+            parts.append(tr("composed world ({groups} groups, {n} chunks)", groups=len(lay.groups),
+                            n=sum(len(g.chunks) for g in lay.groups)))
+        elif self.scope_sel.isChecked():
             n = sum(len(v) for v in self.canvas.selection.values())
             parts.append(tr("selected chunks only ({n})", n=n))
             if self.move_sel.isChecked():
@@ -954,7 +1017,8 @@ class MapTab(QWidget):
                 "regen": (self.regen_nether.isChecked(), self.regen_end.isChecked()),
                 "painted": {d: dict(v) for d, v in self.painted.items()}, "biome": self.biome_box.currentData(),
                 "view": (c.dim, c.center.x(), c.center.y(), c.scale), "mode": self.modes.checkedId(),
-                "trim": (self._trim_scan, self._trim_active), "split": self.split.saveState()}
+                "trim": (self._trim_scan, self._trim_active), "split": self.split.saveState(),
+                "layout": self.layout_ctl.export_state(), "page": self.views.checkedId()}
 
     def import_state(self, st: dict) -> None:
         """The choices of export_state(), on the same source world (after set_source)."""
@@ -980,6 +1044,8 @@ class MapTab(QWidget):
             opt = self.trim_settings.options()
             c.set_heat(self._trim_scan.inhabited, opt.min_ticks, self.trim_settings.show_heat())
         self.split.restoreState(st["split"])
+        self.layout_ctl.import_state(st["layout"])
+        self._view_buttons[st["page"]].click()
         self._pending = st                       # spawn and view: once the world's data has arrived
         if self._meta is not None:
             self._apply_pending()
@@ -1000,6 +1066,7 @@ class MapTab(QWidget):
             self.dim_box.setCurrentIndex(i)
         self.canvas.scale = scale
         self.canvas.center_on(x, z)
+        self.layout_ctl.set_dim(self.canvas.dim)
         self._keep_view = True
         self._update_status()
 
@@ -1036,6 +1103,8 @@ class MapTab(QWidget):
         self._loaded_dims.clear()
         self._requested.clear()
         self.canvas.reset()
+        if not self._reloading:                            # (a reload after an edit: the chunks keep their coordinates)
+            self.layout_ctl.clear()
         self.dim_box.blockSignals(True)
         self.dim_box.clear()
         self.dim_box.blockSignals(False)
@@ -1155,6 +1224,7 @@ class MapTab(QWidget):
         if dim is None:
             return
         self.canvas.dim = dim
+        self.layout_ctl.set_dim(dim)
         if dim not in self._loaded_dims and self._meta is not None:
             sx, _sy, sz = self.canvas.orig_spawn or (0, 0, 0)
             f = {NETHER: 1 / 8, THE_END: 0}.get(dim, 1)
@@ -1202,7 +1272,51 @@ class MapTab(QWidget):
         self.canvas.invert()
 
     def _fit(self):
-        self.canvas.fit(self.canvas.dim)
+        if self.views.checkedId() == 1:
+            self.layout_ctl.canvas.fit_layout()
+        else:
+            self.canvas.fit(self.canvas.dim)
+
+    # ---------------------------------------------------------- the new world (groups of chunks)
+    def _on_view(self, i: int):
+        """Switches between the source map and the new world."""
+        new = i == 1
+        self.view_stack.setCurrentIndex(i)
+        self.side_stack.setCurrentIndex(i)
+        for a in self._source_tools:
+            a.setVisible(not new)
+        for a in self.sel_actions:
+            a.setEnabled(not new)                 # Ctrl+A ... belong to the source map's chunks
+        if new:
+            c = self.layout_ctl.canvas
+            if not c._fitted:
+                c.fit_layout()
+            c.setFocus()
+        else:
+            self.canvas.setFocus()
+
+    def show_view(self, i: int) -> None:
+        self._view_buttons[i].click()
+
+    def _on_layout_changed(self):
+        n = len(self.layout_ctl.model.groups)
+        self._view_buttons[1].setText(tr("New world ({n})", n=n) if n else tr("New world"))
+        self._update_move()
+        self.layout_changed.emit()
+
+    def refresh_layout(self) -> None:
+        """The conversion's target changed (the finite map): the groups are checked again."""
+        self.layout_ctl.model.refresh()
+
+    def layout(self):
+        """The Layout the conversion uses (None: no group, the choices of the map apply)."""
+        return self.layout_ctl.layout()
+
+    def layout_problems(self) -> List[str]:
+        return self.layout_ctl.problems()
+
+    def moves_chunks(self) -> bool:
+        return self.layout() is not None or self.move_target() is not None
 
     def _import(self):
         from ..selection import load_csv
@@ -1469,6 +1583,8 @@ class MapTab(QWidget):
             return
         self.canvas.spawn = (self.sx.value(), self.sy.value(), self.sz.value())
         self.use_spawn.setChecked(True)
+        if self.layout_ctl.has_groups():
+            self.refresh_layout()
         self.canvas.update()
         self.summary_changed.emit()
 
@@ -1479,6 +1595,8 @@ class MapTab(QWidget):
         elif on:
             self.canvas.spawn = (self.sx.value(), self.sy.value(), self.sz.value())
         self.canvas.update()
+        if self.layout_ctl.has_groups():                   # the new world's spawn moves with it
+            self.refresh_layout()
         self.summary_changed.emit()
 
     def _reset_spawn(self):
@@ -1608,17 +1726,21 @@ class MapTab(QWidget):
     def reload(self) -> None:
         """Reads the world again (after it was changed on disk)."""
         path, self._path = self._path, ""
-        self.set_source(path)
+        self._reloading = True
+        try:
+            self.set_source(path)
+        finally:
+            self._reloading = False
 
     def move_target(self) -> Optional[Tuple[int, int]]:
         """Where the selected chunks go in the converted world (None: they stay where they are)."""
-        if not (self.move_sel.isChecked() and self.scope_sel.isChecked()):
+        if not (self.move_sel.isChecked() and self.scope_sel.isChecked()) or self.layout() is not None:
             return None
         return (0, 0) if self.move_center.isChecked() else (self.move_x.value(), self.move_z.value())
 
     # ---------------------------------------------------------- result
     def chunk_selection(self) -> Optional[Dict[int, Set[Chunk]]]:
-        if not self.scope_sel.isChecked():
+        if not self.scope_sel.isChecked() or self.layout() is not None:     # a layout brings its own chunks
             return None
         return {d: set(v) for d, v in self.canvas.selection.items() if v}
 

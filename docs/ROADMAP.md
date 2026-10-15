@@ -16,6 +16,7 @@ The border work has its own document: [SEAMLESS_BORDERS.md](SEAMLESS_BORDERS.md)
 | **In-place edits** | From the map: delete or keep only the selected chunks, trim, paint a biome, directly on Java, LCE and Bedrock worlds, with a backup of the changed files. |
 | **Biomes per game and version** | The list and names follow the target (conversion) or the opened world (in-place edit). |
 | **Move the selected chunks** | To the world centre or to chosen coordinates, on every target (CLI `--move-to`). |
+| **Composition (groups of chunks)** | The new world holds only groups of chunks of the source, each placed at its own destination (to bring parts closer, e.g. to fit a finite LCE map); the border covers all the groups together. In the map tab, the **New world** view: a grid of white chunks onto which the selection is pasted, moved in groups, checked live, with undo and a layout file; CLI `--layout FILE.json`. |
 | **Speed on every core** | Conversion, ring, Amulet translation (Java → Java) and map on every CPU core; faster generators and reading; output identical to single-core (bit for bit on 16 of 18 test conversions, the other 2 identical in content). `WORLDBRIDGE_WORKERS=N` sets the number of processes. |
 | **Reorganised interface and desktop theme** | Following the KDE Human Interface Guidelines: the world is chosen once at the top, each tab shows only the options that apply, long explanations behind ⓘ buttons, messages inside the window, *Converti* at the bottom right; the map has a toolbar and a side panel. The desktop's style, colours, fonts and icons (Breeze, Kvantum, qt6ct, GNOME). No feature removed: 400 combinations of choices give the same conversion as before. |
 | **English and Italian** | The whole program (interface, conversion messages, command line) in English, with Italian as the second language: **EN | IT** at the top right rebuilds the window in the other language keeping every choice; `--lang` on the command line. A test checks that every text has its Italian translation. |
@@ -27,7 +28,6 @@ The border work has its own document: [SEAMLESS_BORDERS.md](SEAMLESS_BORDERS.md)
 |---|---|
 | **LCE consoles:** tests on every platform (Xbox 360, PS3, Vita, Wii U, PS4, Xbox One, Switch), clearer title update and format handling | saves from those consoles |
 | **Minecraft PS Vita "Enhanced"** (PG Team mod): reading and writing its saves | a sample save |
-| **Composition (groups of chunks):** the new world holds only groups of chunks of the source, each placed at its own destination (to bring parts closer, e.g. to fit a finite LCE map); the border covers all the groups together. The engine and `--layout FILE.json` are in; the interface in the map tab comes next | the GUI |
 
 ## Borders
 

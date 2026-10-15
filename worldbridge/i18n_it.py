@@ -1634,6 +1634,125 @@ _SECTIONS = {
         'composition: the new world holds only groups of chunks of the source, each placed at its own offset (in chunks), read from a JSON file (see docs/USER_GUIDE.md). Checked before converting (overlaps, finite map); not with --chunks / --move-to':
             'composizione: il nuovo mondo contiene solo gruppi di chunk dell\'origine, ognuno posizionato col proprio scostamento (in chunk), letti da un file JSON (vedi docs/USER_GUIDE.md). Controllata prima di convertire (sovrapposizioni, mappa finita); non insieme a --chunks / --move-to',
     },
+    'worldbridge/gui/layoutview.py (composition view)': {
+        "Group {n}":
+            "Gruppo {n}",
+        "New world  ·  X {x}  Z {z}   ·   chunk {cx}, {cz}":
+            "Nuovo mondo  ·  X {x}  Z {z}   ·   chunk {cx}, {cz}",
+        "{group} pasted: {n} chunks.":
+            "{group} incollato: {n} chunk.",
+        "Layout loaded: {n} groups.":
+            "Composizione caricata: {n} gruppi.",
+        "Groups of the new world":
+            "Gruppi del nuovo mondo",
+        "Paste selection":
+            "Incolla la selezione",
+        "Add the chunks selected on the source map to the new world as a group (Ctrl+V)":
+            "Aggiunge al nuovo mondo, come gruppo, i chunk selezionati sulla mappa di origine (Ctrl+V)",
+        "Undo":
+            "Annulla",
+        "Undo the last change of the new world (Ctrl+Z)":
+            "Annulla l'ultima modifica del nuovo mondo (Ctrl+Z)",
+        "Redo":
+            "Ripeti",
+        "Redo the change undone (Ctrl+Y)":
+            "Ripete la modifica annullata (Ctrl+Y)",
+        "Group name":
+            "Nome del gruppo",
+        "Back to its place":
+            "Torna al suo posto",
+        "Put the group at the coordinates it has in the source world (offset 0, 0)":
+            "Rimette il gruppo alle coordinate che ha nel mondo di origine (scostamento 0, 0)",
+        "Move the selected groups so that their centre is on the spawn of the new world":
+            "Sposta i gruppi selezionati in modo che il loro centro sia sullo spawn del nuovo mondo",
+        "Delete":
+            "Elimina",
+        "Remove the selected groups from the new world (the source world is not changed) (Del)":
+            "Toglie i gruppi selezionati dal nuovo mondo (il mondo di origine non cambia) (Canc)",
+        "Save layout…":
+            "Salva la composizione…",
+        "Save the groups and their places to a file (JSON), to use again or with the command line (--layout)":
+            "Salva i gruppi e le loro posizioni in un file (JSON), da riusare o da usare da riga di comando (--layout)",
+        "Load layout…":
+            "Carica la composizione…",
+        "Replace the groups with those of a layout file":
+            "Sostituisce i gruppi con quelli di un file di composizione",
+        "Remove all groups":
+            "Togli tutti i gruppi",
+        "Empty the new world: the “Move the selected chunks” choice of the map is available again":
+            "Svuota il nuovo mondo: la scelta «Sposta i chunk selezionati» della mappa torna disponibile",
+        "Save layout":
+            "Salva la composizione",
+        "The new world is empty. Select chunks on the source map and paste them here (Ctrl+V).":
+            "Il nuovo mondo è vuoto. Seleziona dei chunk sulla mappa di origine e incollali qui (Ctrl+V).",
+        "{group} (from the source chunk {sx}, {sz})":
+            "{group} (dal chunk di origine {sx}, {sz})",
+        "Select chunks on the source map and paste them here: every paste is a group that you move around the grid. Drag a group to place it; the arrow keys move it by 1 chunk (Shift: 8); Ctrl + click selects several.":
+            "Seleziona dei chunk sulla mappa di origine e incollali qui: ogni incolla è un gruppo che sposti sulla griglia. Trascina un gruppo per posizionarlo; le frecce lo spostano di 1 chunk (Maiusc: 8); Ctrl + clic ne seleziona più d'uno.",
+        "Selected group":
+            "Gruppo selezionato",
+        "Offset {axis} (chunks)":
+            "Scostamento {axis} (chunk)",
+        "Offset {axis} (chunks):":
+            "Scostamento {axis} (chunk):",
+        "Check":
+            "Verifica",
+        "Layout file":
+            "File di composizione",
+        "Select some chunks on the source map first.":
+            "Prima seleziona dei chunk sulla mappa di origine.",
+        "These chunks are already in a group of the new world.":
+            "Questi chunk sono già in un gruppo del nuovo mondo.",
+        "{n} chunks left out (already in another group).":
+            "{n} chunk esclusi (già in un altro gruppo).",
+        "layout":
+            "composizione",
+        "Layout":
+            "Composizione",
+        "Load layout":
+            "Carica la composizione",
+        "{n} chunks of the file do not exist in this world.":
+            "{n} chunk del file non esistono in questo mondo.",
+        "{name} · {n} chunks · offset {dx}, {dz}":
+            "{name} · {n} chunk · scostamento {dx}, {dz}",
+        "{n} groups selected":
+            "{n} gruppi selezionati",
+        "Layout saved to {path}":
+            "Composizione salvata in {path}",
+        "No group yet: the conversion uses the choices of the map as usual.":
+            "Ancora nessun gruppo: la conversione usa come sempre le scelte della mappa.",
+        "Saving failed: {error}":
+            "Salvataggio non riuscito: {error}",
+        "The layout cannot be loaded:":
+            "Impossibile caricare la composizione:",
+        "The new world is valid: {groups} groups, {n} chunks.":
+            "Il nuovo mondo è valido: {groups} gruppi, {n} chunk.",
+        "The new world is composed in the “New world” view: only its groups are converted.":
+            "Il nuovo mondo è composto nella vista «Nuovo mondo»: si convertono solo i suoi gruppi.",
+        "composed world ({groups} groups, {n} chunks)":
+            "mondo composto ({groups} gruppi, {n} chunk)",
+        "New world ({n})":
+            "Nuovo mondo ({n})",
+        "New world":
+            "Nuovo mondo",
+        "Source world":
+            "Mondo di origine",
+        "The map of the world to convert, where chunks are selected (Ctrl+1)":
+            "La mappa del mondo da convertire, dove si selezionano i chunk (Ctrl+1)",
+        "The converted world as a grid of chunks: paste the selected chunks and move them in groups (Ctrl+2)":
+            "Il mondo convertito come griglia di chunk: incolla i chunk selezionati e spostali a gruppi (Ctrl+2)",
+        "The new world cannot be converted yet: {problem}":
+            "Il nuovo mondo non si può ancora convertire: {problem}",
+        "Opening another world discards the {n} groups composed in the “New world” view. Continue?":
+            "Aprendo un altro mondo si scartano i {n} gruppi composti nella vista «Nuovo mondo». Continuare?",
+        "(and {n} more: see the “New world” view)":
+            "(e altri {n}: vedi la vista «Nuovo mondo»)",
+        "… and {n} more problems.": "… e altri {n} problemi.",
+        "Fix the new world first:":
+            "Prima correggi il nuovo mondo:",
+        "The new world cannot be converted yet:":
+            "Il nuovo mondo non si può ancora convertire:",
+    },
 }
 
 IT = {k: v for d in _SECTIONS.values() for k, v in d.items()}

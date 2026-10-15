@@ -351,3 +351,23 @@ def test_cli_layout_option(tmp_path, monkeypatch, capsys):
     for extra in (["--chunks", str(csv)], ["--move-to", "center"]):
         assert cli.main(["convert", "x", out, "--to", "lce", "--layout", good] + extra) != 0
         assert "--layout" in capsys.readouterr().err and not seen
+
+
+def test_amulet_chunk_shifts_the_passengers_inside_an_entity():
+    """The riders live in the entity's own NBT with their own Pos: they move with their group too."""
+    from types import SimpleNamespace
+
+    from amulet.api.entity import Entity
+    from amulet_nbt import CompoundTag, DoubleTag, ListTag, NamedTag, StringTag
+
+    def pos(x, y, z):
+        return ListTag([DoubleTag(x), DoubleTag(y), DoubleTag(z)])
+
+    rider = CompoundTag({"id": StringTag("minecraft:skeleton"), "Pos": pos(2.5, 64.0, 3.5)})
+    horse = Entity("minecraft", "horse", 1.5, 64.0, 2.5, NamedTag(CompoundTag({"Passengers": ListTag([rider])})))
+    chunk = SimpleNamespace(cx=100, cz=1000, _cx=100, _cz=1000, block_entities={}, entities=[horse])
+    mv = Relocation(Selection(layout=Layout([Group(OVERWORLD, frozenset({(100, 1000)}), (-100, -1000))])))
+    mv.amulet_chunk(OVERWORLD, chunk)
+    assert (horse.x, horse.z) == (1.5 - 1600, 2.5 - 16000)
+    got = [float(v.py_data) for v in horse.nbt.compound["Passengers"][0]["Pos"]]
+    assert got == [2.5 - 1600, 64.0, 3.5 - 16000]
