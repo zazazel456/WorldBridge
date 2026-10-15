@@ -46,6 +46,12 @@ HELP_BLEND = N_("For worlds born before 1.18 (LCE, old Java / Bedrock, Pocket Ed
                 "Bedrock 1.18+: the chunks are written as pre-1.18 chunks, so when the world is opened Minecraft "
                 "blends them with the new terrain (heights and biomes) and generates the part below y 0.\n"
                 "Unticked, the chunks are written in the new format: no blending, no terrain below y 0.")
+HELP_EDGE = N_("Bedrock 1.18+ from a 1.18+ world: Bedrock blends only the chunks it takes for pre-1.18 ones, so the "
+               "border of the converted world stays cut (a wall where the new terrain starts).\n"
+               "Ticked: the outer ring of converted chunks (1 chunk wide) is marked as old and the game blends it "
+               "with the new terrain, but it also regenerates the layer below y 0 of those chunks only: what you "
+               "built or the caves there are replaced by the game's terrain. The chunks inside are not touched.\n"
+               "Unticked: nothing is lost, the border stays cut (the conversion warns).")
 HELP_RING = N_("For the games that do not blend (Java Alpha 1.2 – 1.17, LCE neoLegacy): WorldBridge writes around "
                "the converted world a ring of terrain made by the game's generator (same seed), which passes "
                "smoothly from the converted edge to that version's terrain; in the Nether and the End too.\n"
@@ -74,7 +80,7 @@ HELP_XUID = N_("The game loads the main player from players/<XUID>.dat: the XUID
 
 
 class DetectWorker(QObject):
-    done = Signal(object, str, str)  # ([(kind, html line)], kind, world name)
+    done = Signal(object, str, str, bool)  # ([(kind, html line)], kind, world name, the world predates 1.18)
 
     def __init__(self, path: str):
         super().__init__()
@@ -86,10 +92,11 @@ class DetectWorker(QObject):
             if d is None:
                 self.done.emit([("error", tr("Format not recognised.")),
                                 ("text", tr("Choose the world folder or the save file (saveData.ms, savegame.dat, "
-                                            "GAMEDATA, .bin, level.dat, .mclevel, .mcworld…)."))], "", "")
+                                            "GAMEDATA, .bin, level.dat, .mclevel, .mcworld…)."))], "", "", False)
                 return
             lines: List[Tuple[str, str]] = [("title", _esc(d.description))]
             name = ""
+            old = True
             try:
                 if d.kind in ("lce", "java_numeric", "pe_old", "indev", "classic"):
                     from ..convert import open_source
@@ -126,14 +133,17 @@ class DetectWorker(QObject):
 
                     info = read_amulet_info(d)
                     name = info.name
+                    from ..convert import _source_is_pre118
+
+                    old = _source_is_pre118(d)
                     lines.append(("text", tr("Name: {name}", name=f"<b>{_esc(info.name)}</b>")))
                     if desc:
                         lines.append(("text", tr("Version: {version}", version=desc)))
             except Exception as ex:  # noqa: BLE001
                 lines.append(("warn", tr("Partial analysis: {error}", error=_esc(str(ex)))))
-            self.done.emit(lines, d.kind, name)
+            self.done.emit(lines, d.kind, name, old)
         except Exception as ex:  # noqa: BLE001
-            self.done.emit([("error", tr("Error: {error}", error=_esc(str(ex))))], "", "")
+            self.done.emit([("error", tr("Error: {error}", error=_esc(str(ex))))], "", "", False)
 
 
 class ConvertWorker(QObject):
@@ -223,7 +233,7 @@ def format_summary(lines) -> str:
 
 # the conversion tab's controls carried over when the window is rebuilt in another language (in order)
 _STATE_WIDGETS = ("edition", "java_ver", "bed_ver", "lce_plat", "lce_prof", "lce_size", "lce_center", "lce_ox",
-                  "lce_oz", "lce_xuid", "blend", "ring", "depth", "depth_y", "tall", "name_edit", "out_edit",
+                  "lce_oz", "lce_xuid", "blend", "edge_blend", "ring", "depth", "depth_y", "tall", "name_edit", "out_edit",
                   "bta_palette", "bta_auto_y", "bta_y")
 
 
@@ -260,6 +270,7 @@ class MainWindow(QMainWindow):
         self._gui = GuiThread(self)
         self._worker: Optional[ConvertWorker] = None
         self._src_kind = ""
+        self._src_old = True                # the source predates 1.18 (or is not a Java / Bedrock world)
         self._src_name = ""
         self._analysed = None               # the path the source analysis was last started for
         self._detect_seq = 0                # the answer of an older analysis is ignored
@@ -510,6 +521,10 @@ class MainWindow(QMainWindow):
         self.blend.setChecked(True)
         self.blend.setToolTip(tr("Minecraft Java / Bedrock 1.18+ blends the converted chunks with the new terrain"))
         self.blend_row = with_help(self.blend, tr(HELP_BLEND))
+        self.edge_blend = QCheckBox(tr("Blend the Bedrock bo&rder"))
+        self.edge_blend.setChecked(False)
+        self.edge_blend.setToolTip(tr("Blends the border, regenerating the layer below y 0 in the border chunks only"))
+        self.edge_row = with_help(self.edge_blend, tr(HELP_EDGE))
         self.ring = QCheckBox(tr("Transition &ring"))
         self.ring.setChecked(True)
         self.ring.setToolTip(tr("Around the converted world, terrain generated as in the target game"))
@@ -519,6 +534,7 @@ class MainWindow(QMainWindow):
         bl.setContentsMargins(0, 0, 0, 0)
         bl.setSpacing(0)
         bl.addWidget(self.blend_row)
+        bl.addWidget(self.edge_row)
         bl.addWidget(self.ring_row)
         self.borders = borders
         f.addRow(tr("Terrain border:"), borders)
@@ -773,15 +789,28 @@ class MainWindow(QMainWindow):
         }
         blend_on = new
         ring_on = not new and fam != "bedrock"
+        edge_on = self._edge_applies()
         self.blend_row.setVisible(blend_on)
+        self.edge_row.setVisible(edge_on)
         self.ring_row.setVisible(ring_on)
-        vis[self.borders] = blend_on or ring_on
+        vis[self.borders] = blend_on or ring_on or edge_on
         vis[self.depth_box] = self.depth.isEnabled()
         vis[self.tall_box] = self.tall.isEnabled()
-        vis[self.terrain_heading] = blend_on or ring_on or self.depth.isEnabled() or self.tall.isEnabled()
+        vis[self.terrain_heading] = blend_on or ring_on or edge_on or self.depth.isEnabled() or self.tall.isEnabled()
         self.depth_y.setVisible(self.depth.currentData() == "custom")
         for w, on in vis.items():
             f.setRowVisible(w, bool(on))
+
+    def _edge_applies(self) -> bool:
+        """The option to blend the Bedrock border is offered only where the border would stay cut (bedrock/edge.py)."""
+        if self.edition.currentData() != "bedrock" or not hasattr(self, "map_tab"):
+            return False
+        from types import SimpleNamespace
+
+        from ..bedrock import edge
+
+        target = SimpleNamespace(family="bedrock", version=tuple(self.bed_ver.currentData()))
+        return edge.applies(target, self._src_kind, self._src_old, self.map_tab.move_target() is not None)
 
     def _target_game(self):
         """(family, version) of the conversion's target, for the biomes it has."""
@@ -863,6 +892,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "scope_label"):
             return
         self.scope_label.setText(self.map_tab.summary())
+        self._refresh_rows()                            # a move of the chunks changes whether the border stays cut
         self.players_label.setText(self.players_tab.summary())
 
     # ---------------------------------------------------------- source
@@ -909,7 +939,7 @@ class MainWindow(QMainWindow):
         self._analysed = path or None
         self.message.show_message("negative", text)
 
-    def _on_detected(self, lines, kind: str, name: str):
+    def _on_detected(self, lines, kind: str, name: str, old: bool = True):
         path = self.src_edit.text().strip()
         if kind and not self.map_tab.can_switch(path):   # an edit of the map's world started during the analysis
             self._keep_world(tr("The world is being edited: it can be changed when the edit ends."),
@@ -919,6 +949,7 @@ class MainWindow(QMainWindow):
             return
         self.src_info.setText(format_summary(lines))
         self._src_kind = kind
+        self._src_old = old
         self._src_name = name
         self.setWindowTitle(f"{name} — {APP_NAME}" if kind and name else APP_NAME)
         self._on_lce_platform()                         # the automatic world size depends on the source
@@ -938,7 +969,7 @@ class MainWindow(QMainWindow):
             # the window was rebuilt in another language: the same choices on the same world
             self.players_tab.import_state(st["players"])
             self.map_tab.import_state(st["map"])
-            for name in ("blend", "ring", "bta_auto_y", "bta_y"):
+            for name in ("blend", "edge_blend", "ring", "bta_auto_y", "bta_y"):
                 w = getattr(self, name)
                 w.setChecked(st[name]) if isinstance(w, QCheckBox) else w.setValue(st[name])
         if kind:
@@ -1019,6 +1050,7 @@ class MainWindow(QMainWindow):
     def _target(self) -> TargetSpec:
         fam = self.edition.currentData()
         t = TargetSpec(family=fam, world_name=self.name_edit.text().strip() or None, blend=self.blend.isChecked(), ring=self.ring.isChecked(),
+                       bedrock_edge_blend=self.edge_blend.isChecked() and self._edge_applies(),
                        tall_terrain=self.tall.currentData(),
                        regen=self.map_tab.regen_dims(),
                        depth=self.depth_y.value() if self.depth.currentData() == "custom" else self.depth.currentData())
