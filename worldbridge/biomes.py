@@ -103,6 +103,27 @@ JAVA_118 = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 16, 21, 23, 24, 25, 26
 # the Legacy Console Edition (neoLegacy TU31): no Extreme Hills M / Extreme Hills+ M
 LCE = tuple(b for b in JAVA_17 if b not in (131, 162))
 
+# What a game that stops at the Java 1.9 - 1.12 ids (JAVA_19) shows for the later ones: the same fallbacks Amulet's
+# own 1.12 -> universal -> 1.12 translation gives (warm_ocean -> ocean, bamboo_jungle -> jungle...), so a real 1.12
+# target gets only ids it knows whichever way the world came.  Anything else unknown becomes plains.
+JAVA_12_FALLBACK: Dict[int, int] = {
+    40: 9, 41: 9, 42: 9, 43: 9, 44: 0, 45: 0, 46: 0, 47: 24, 48: 24, 49: 24, 50: 10, 168: 21, 169: 22,
+    170: 8, 171: 8, 172: 8, 173: 8,
+}
+
+
+def java12_lut():
+    """uint8 lookup table: any biome id -> one a Java 1.9 - 1.12 game has (ids it has stay as they are)."""
+    import numpy as np
+
+    lut = np.ones(256, np.uint8)
+    for b in JAVA_19:
+        lut[b] = b
+    for b, to in JAVA_12_FALLBACK.items():
+        lut[b] = to
+    lut[255] = 255                                    # "not computed yet": the game recalculates it
+    return lut
+
 
 def _java_list(version: Sequence[int]) -> Tuple[int, ...]:
     v = tuple(version)

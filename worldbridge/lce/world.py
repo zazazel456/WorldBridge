@@ -23,6 +23,7 @@ from . import thumbmeta as _thumb
 from . import compat as _compat
 from . import region as lreg
 from .container import PLATFORMS, SaveContainer
+from ..biomes import java12_lut
 from ..i18n import N_, tr
 from ..newcontent import tile_names as newcontent_tile_names
 
@@ -959,11 +960,10 @@ def _default_thumbnail() -> bytes:
             + chunk(b"IDAT", _z.compress(raw)) + chunk(b"IEND", b""))
 
 
-# biome ids every LCE target knows (Java 1.7 - 1.12 ids); the 1.9+ End sub-biomes become the End
-_BIOME_LUT = np.arange(256, dtype=np.uint8)
-_BIOME_LUT[40:128] = 1
-_BIOME_LUT[40:44] = 9
-_BIOME_LUT[255] = 255       # "not computed yet": the game recalculates it
+# biome ids every LCE target knows (Java 1.7 - 1.12 ids, without the void); the 1.13+ ones become their 1.12
+# fallbacks (the End sub-biomes the End, warm oceans the ocean, bamboo the jungle...)
+_BIOME_LUT = java12_lut()
+_BIOME_LUT[127] = 1
 
 
 def _biomes_for(biomes, profile: str):

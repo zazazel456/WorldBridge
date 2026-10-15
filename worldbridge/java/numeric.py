@@ -608,7 +608,12 @@ class JavaNumericWriter:
             lvl["InhabitedTime"] = nbt.LongTag(c.inhabited_time)
             lvl["HeightMap"] = nbt.IntArrayTag(hm.reshape(-1).astype(np.int32))
             bio = c.biomes if c.biomes is not None else np.ones((16, 16), np.uint8)
-            lvl["Biomes"] = nbt.ByteArrayTag(bio.astype(np.uint8).reshape(-1).view(np.int8))
+            bio = bio.astype(np.uint8)
+            if self.opt.version_limit is not None:               # a real Java 1.12 or older target (the hub keeps every id)
+                from ..biomes import java12_lut
+
+                bio = java12_lut()[bio]
+            lvl["Biomes"] = nbt.ByteArrayTag(bio.reshape(-1).view(np.int8))
             secs = nbt.ListTag([], 10)
             for sy in range(16):
                 ys = slice(sy * 16, sy * 16 + 16)
