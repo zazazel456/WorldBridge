@@ -53,11 +53,26 @@ class Selection:
     biomes: Dict[int, Dict[Chunk, int]] = field(default_factory=dict)
     # the selected chunks moved: their centre lands on this block (x, z) (worldbridge.relocate)
     move_to: Optional[Tuple[int, int]] = None
+    # composition: groups of chunks, each at its own destination (worldbridge.layout.Layout); ``chunks`` is then the
+    # union of the groups (filled in here), and nothing else is converted.  Not together with ``move_to``.
+    layout: Optional["Layout"] = None
+
+    def __post_init__(self):
+        if self.layout is not None:
+            if self.move_to is not None:
+                raise ValueError("a layout and move_to cannot be used together")
+            if self.chunks is None:
+                self.chunks = self.layout.source_chunks()
+
+    @property
+    def moves(self) -> bool:
+        """The chunks are placed somewhere else (--move-to, or a layout)."""
+        return self.move_to is not None or self.layout is not None
 
     @property
     def active(self) -> bool:
         return (self.chunks is not None or self.spawn is not None or self.players is not None or bool(self.drop)
-                or bool(self.biomes) or self.move_to is not None)
+                or bool(self.biomes) or self.moves)
 
     @property
     def filters(self) -> bool:

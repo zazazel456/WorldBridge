@@ -524,7 +524,7 @@ _FINITE_SOURCES = ("lce", "classic", "indev", "pe_old")
 _AREA_MARGIN = 18
 
 
-def _finite_area(t: TargetSpec, spawn) -> Optional[Dict[int, Tuple[int, int, int, int]]]:
+def _finite_area(t: TargetSpec, spawn, margin: Optional[int] = None) -> Optional[Dict[int, Tuple[int, int, int, int]]]:
     """LCE and PE 0.x maps are finite: per dimension, the chunks ``[x0, x1) × [z0, z1)`` (where they
     land, before moving back to the source's coordinates) that reach the map, with a margin for the
     ring; None for the other targets, which take the whole world."""
@@ -541,8 +541,18 @@ def _finite_area(t: TargetSpec, spawn) -> Optional[Dict[int, Tuple[int, int, int
         areas = {dim: map_area(dim, size, ox, oz, end) for dim in (OVERWORLD, NETHER, THE_END)}
     else:
         return None
-    m = _AREA_MARGIN
+    m = _AREA_MARGIN if margin is None else margin
     return {dim: (x0 - m, x1 + m, z0 - m, z1 + m) for dim, (x0, x1, z0, z1) in areas.items()}
+
+
+def layout_bounds(target: TargetSpec, layout, spawn=None) -> Optional[Dict[int, Tuple[int, int, int, int]]]:
+    """For ``Layout.problems``: per dimension the destination chunks ``[x0, x1) × [z0, z1)`` the target's finite map
+    (LCE, Pocket Edition 0.x) can hold; None for the targets without a limit.  ``spawn``: (x, y, z) of the new world's
+    spawn (only an LCE map centred on the spawn depends on it); default: the first Overworld group."""
+    if spawn is None:
+        x, z = layout.default_spawn() or (0, 0)
+        spawn = (x, 0, z)
+    return _finite_area(target, spawn, 0)
 
 
 def _area_selection(sel: Selection, area: Dict[int, Tuple[int, int, int, int]], move) -> Selection:
@@ -551,21 +561,12 @@ def _area_selection(sel: Selection, area: Dict[int, Tuple[int, int, int, int]], 
 
     chunks = {}
     for dim, (x0, x1, z0, z1) in area.items():
-        dx, dz = move.delta(dim)
-        box = {(x - dx, z - dz) for x in range(x0, x1) for z in range(z0, z1)}
         if sel.chunks is not None:
-            box &= sel.chunks.get(dim, set())
+            box = set(move.within(dim, sel.chunks.get(dim, ()), (x0, x1, z0, z1)))
+        else:
+            box = {(x, z) for x in range(x0, x1) for z in range(z0, z1)}
         chunks[dim] = box
     return dataclasses.replace(sel, chunks=chunks)
-
-
-def _within(coords: List[Tuple[int, int]], box: Optional[Tuple[int, int, int, int]], delta: Tuple[int, int]) -> list:
-    """The chunks of ``coords`` that land (moved by ``delta``) inside ``box``."""
-    if box is None:
-        return []
-    x0, x1, z0, z1 = box
-    dx, dz = delta
-    return [c for c in coords if x0 <= c[0] + dx < x1 and z0 <= c[1] + dz < z1]
 
 
 def _make_writer(t: TargetSpec, out: str, progress: Progress, src: WorldSource, spawn=None):
@@ -782,7 +783,7 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
             except Exception:  # noqa: BLE001
                 pass                              # only a note in the log
         old_source = _source_is_pre118(d)
-        same_edition = (not sel.biomes and sel.move_to is None and target.family in ("java", "bedrock")
+        same_edition = (not sel.biomes and not sel.moves and target.family in ("java", "bedrock")
                         and d.kind == ("bedrock" if target.family == "bedrock" else "java_modern")
                         and (target.family != "java" or target.java_mode in ("auto", "amulet", "dfu")))
         # ---- same edition, old world -> newer version: the game upgrades (and blends) it itself
@@ -893,10 +894,14 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
             progress.log(move.describe())
         outside: Dict[int, int] = {}
         area = None if d.kind in _FINITE_SOURCES else _finite_area(target, move.spawn(src.info) if move.active else src.info.spawn)
+        if sel.layout is not None:
+            bad = sel.layout.problems(_finite_area(target, move.spawn(src.info) if move.active else src.info.spawn, 0))
+            if bad:
+                raise ConversionError(tr("The chunk layout cannot be converted:") + "\n" + "\n".join(bad))
         if area is not None:
             # a finite map (LCE, PE 0.x): the chunks that cannot reach it are not even read
             n_dim = {dim: len(v) for dim, v in coords.items()}
-            coords = {dim: _within(cs, area.get(dim), move.delta(dim)) for dim, cs in coords.items()}
+            coords = {dim: move.within(dim, cs, area.get(dim)) for dim, cs in coords.items()}
             outside = {dim: n - len(coords[dim]) for dim, n in n_dim.items() if n > len(coords[dim])}
         # where the chunks land in the converted world (the same as ``coords`` unless they are moved)
         placed = {dim: move.coords(dim, cs) for dim, cs in coords.items()}

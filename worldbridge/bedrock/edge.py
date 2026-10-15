@@ -45,7 +45,7 @@ def applies(target, source_kind: str, source_old: bool, moved: bool) -> bool:
 def is_moved(target, sel=None) -> bool:
     """The world is not where it was: --move-to, or --y-offset."""
     sel = sel if sel is not None else getattr(target, "selection", None)
-    return getattr(sel, "move_to", None) is not None or bool(getattr(target, "y_offset", 0))
+    return bool(getattr(sel, "moves", False)) or bool(getattr(target, "y_offset", 0))
 
 
 def border_chunks(chunks: Iterable[Chunk], width: int = 1) -> Set[Chunk]:

@@ -139,10 +139,38 @@ def _load_chunks(option: str, path: str):
     return found
 
 
-def _selection(args):
+def _load_layout(path: str, target=None):
+    """``--layout FILE.json`` -> Layout, checked (structure, overlaps, finite map of ``target``) before anything is read."""
+    from .layout import Layout
+
+    layout = None
+    try:
+        layout = Layout.load(path)
+    except OSError as ex:
+        raise SystemExit(tr("--layout {file}: cannot be read ({error})", file=path, error=ex))
+    except ValueError as ex:
+        raise SystemExit(f"--layout {path}: {ex}")
+    bounds = None
+    if target is not None:
+        from .convert import layout_bounds
+
+        bounds = layout_bounds(target, layout)
+    bad = layout.problems(bounds)
+    if bad:
+        raise SystemExit(tr("--layout {file}: the layout cannot be converted:", file=path) + "\n  " + "\n  ".join(bad))
+    return layout
+
+
+def _selection(args, target=None):
     from .selection import PlayerLink, Selection
 
     sel = Selection()
+    layout_file = getattr(args, "layout", None)
+    if layout_file:
+        if args.chunks or getattr(args, "move_to", None):
+            raise SystemExit(tr("--layout already says which chunks and where they go: do not use it with --chunks or "
+                                "--move-to"))
+        sel = Selection(layout=_load_layout(layout_file, target))
     if args.chunks:
         sel.chunks = {}
         for spec in args.chunks:
@@ -306,6 +334,10 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--move-to", default=None, metavar="center|X,Z", type=_move_to,
                    help=tr("move the selected chunks (--chunks): their centre goes to the world centre (0, 0) or to "
                            "the given X,Z coordinates, with the entities, spawn and players on them"))
+    c.add_argument("--layout", default=None, metavar="FILE.json", type=_existing_file,
+                   help=tr("composition: the new world holds only groups of chunks of the source, each placed at its "
+                           "own offset (in chunks), read from a JSON file (see docs/USER_GUIDE.md). Checked before "
+                           "converting (overlaps, finite map); not with --chunks / --move-to"))
     c.add_argument("--player", action="append", default=[], metavar=tr("KEY") + "[=NICKNAME]",
                    help=tr("players to transfer (the first becomes the main player) and the nicknames to link them "
                            "to; KEY as shown by 'worldbridge players'. Repeatable"))
@@ -493,7 +525,7 @@ def _run(args) -> int:
                        regen=tuple({"nether": -1, "end": 1}[d] for d in dict.fromkeys(args.regen)),
                        depth=args.depth, pet_owner=args.pet_owner)
         validate_target(t)                       # before anything is read
-        t.selection = _selection(args)
+        t.selection = _selection(args, t)
         if args.trim:
             t.trim = _trim_options(args, "trim_")
         last = [-1]

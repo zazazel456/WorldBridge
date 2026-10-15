@@ -27,6 +27,17 @@ The border work has its own document: [SEAMLESS_BORDERS.md](SEAMLESS_BORDERS.md)
 |---|---|
 | **LCE consoles:** tests on every platform (Xbox 360, PS3, Vita, Wii U, PS4, Xbox One, Switch), clearer title update and format handling | saves from those consoles |
 | **Minecraft PS Vita "Enhanced"** (PG Team mod): reading and writing its saves | a sample save |
+| **Composition (groups of chunks):** the new world holds only groups of chunks of the source, each placed at its own destination (to bring parts closer, e.g. to fit a finite LCE map); the border covers all the groups together. The engine and `--layout FILE.json` are in; the interface in the map tab comes next | the GUI |
+
+## Borders
+
+Open items of the world border (the remedy for each target is described in [SEAMLESS_BORDERS.md](SEAMLESS_BORDERS.md)):
+
+- Bedrock 1.12 – 1.17: needs our own Bedrock generator for the ring.
+- neoLegacy: the ring is off by 6 – 18 blocks in places.
+- LCE → Java 1.20: the ring leaves a step (the terrain is too different for the game's own blending).
+- Nether on Java 1.18+: the game's blending is overworld-only, so the Nether border stays cut.
+- Bedrock 1.18 – 1.20 from 1.18+ sources: the opt-in edge blending regenerates the layer below y 0 of the border chunks.
 
 ## Waiting
 

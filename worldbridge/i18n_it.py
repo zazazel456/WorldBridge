@@ -1598,6 +1598,42 @@ _SECTIONS = {
         "Bedrock 1.18+ from a 1.18+ world: Bedrock blends only the chunks it takes for pre-1.18 ones, so the border of the converted world stays cut (a wall where the new terrain starts).\nTicked: the outer ring of converted chunks (1 chunk wide) is marked as old and the game blends it with the new terrain, but it also regenerates the layer below y 0 of those chunks only: what you built or the caves there are replaced by the game's terrain. The chunks inside are not touched.\nUnticked: nothing is lost, the border stays cut (the conversion warns).":
             "Bedrock 1.18+ da un mondo 1.18+: Bedrock fonde solo i chunk che crede pre-1.18, quindi il bordo del mondo convertito resta tagliato (un muro dove inizia il terreno nuovo).\nSpuntato: l'anello esterno dei chunk convertiti (largo 1 chunk) viene segnato come vecchio e il gioco lo fonde col terreno nuovo, ma rigenera anche lo strato sotto y 0 di quei soli chunk: ciò che hai costruito o le caverne lì vengono sostituiti dal terreno del gioco. I chunk all'interno non vengono toccati.\nNon spuntato: non si perde nulla, il bordo resta tagliato (la conversione avvisa).",
     },
+    'worldbridge/layout.py': {
+        'group {n} chunks of the {dim}':
+            'gruppo di {n} chunk di {dim}',
+        'The layout has no group.':
+            'La composizione non ha nessun gruppo.',
+        '{group} is empty.':
+            '{group} è vuoto.',
+        '{dim}: the source chunk {x}, {z} is in two groups ({a} and {b}).':
+            '{dim}: il chunk di origine {x}, {z} è in due gruppi ({a} e {b}).',
+        '{dim}: the groups {a} and {b} overlap at the destination chunk {x}, {z}.':
+            '{dim}: i gruppi {a} e {b} si sovrappongono nel chunk di destinazione {x}, {z}.',
+        '{dim}: {n} more chunks with the same problem.':
+            '{dim}: altri {n} chunk con lo stesso problema.',
+        '{dim}: {n} chunks land outside the map (chunks x {x0}..{x1m}, z {z0}..{z1m}), e.g. {x}, {z}.':
+            '{dim}: {n} chunk finiscono fuori dalla mappa (chunk x {x0}..{x1m}, z {z0}..{z1m}), ad es. {x}, {z}.',
+        'expected an object with a "groups" list':
+            'atteso un oggetto con una lista "groups"',
+        'group {n}: expected "dimension" (overworld, nether, end), "chunks" ([[x, z], ...] or "x,z;x,z") and "offset" ([dx, dz])':
+            'gruppo {n}: attesi "dimension" (overworld, nether, end), "chunks" ([[x, z], ...] o "x,z;x,z") e "offset" ([dx, dz])',
+        '{path}: not valid JSON ({error})':
+            '{path}: JSON non valido ({error})',
+    },
+    'worldbridge/composition.py': {
+        'The chunk layout cannot be converted:':
+            'La composizione dei chunk non può essere convertita:',
+        'Composition: {n} groups of chunks placed at their destinations.':
+            'Composizione: {n} gruppi di chunk posizionati alle loro destinazioni.',
+        '--layout {file}: cannot be read ({error})':
+            '--layout {file}: impossibile leggerlo ({error})',
+        '--layout {file}: the layout cannot be converted:':
+            '--layout {file}: la composizione non può essere convertita:',
+        '--layout already says which chunks and where they go: do not use it with --chunks or --move-to':
+            '--layout dice già quali chunk e dove vanno: non usarlo con --chunks o --move-to',
+        'composition: the new world holds only groups of chunks of the source, each placed at its own offset (in chunks), read from a JSON file (see docs/USER_GUIDE.md). Checked before converting (overlaps, finite map); not with --chunks / --move-to':
+            'composizione: il nuovo mondo contiene solo gruppi di chunk dell\'origine, ognuno posizionato col proprio scostamento (in chunk), letti da un file JSON (vedi docs/USER_GUIDE.md). Controllata prima di convertire (sovrapposizioni, mappa finita); non insieme a --chunks / --move-to',
+    },
 }
 
 IT = {k: v for d in _SECTIONS.values() for k, v in d.items()}

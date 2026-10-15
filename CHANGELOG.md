@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Composition: groups of chunks, each at its own destination** (engine and command line; the map tab comes next).
+  The new world contains only groups of chunks of the source, each moved by its own offset (whole chunks), e.g. two builds
+  1000 chunks apart brought next to each other to fit a 54 x 54 LCE map. `worldbridge.layout` (`Group`, `Layout`:
+  `dest`, `problems`, JSON load / save) and `Selection(layout=...)`; `--move-to` is now a one-group layout (same
+  behaviour). Blocks, block entities, entities (and riders), scheduled ticks, the spawn, the players standing in a group
+  (the others go to the new spawn), the Bedrock local player and the positions villagers remember move with their group,
+  on every route; the Amulet job partitions the chunks by the region they are written to. `--layout FILE.json` is
+  checked before anything is read (overlapping destinations, a chunk in two groups, chunks outside a finite LCE / Pocket
+  Edition map) and excludes `--chunks` / `--move-to`. The border (ring, blending, Bedrock edge, LCE / PE fill) goes around
+  the groups as placed: groups closer than the ring width get one joined ring.
 - **Bedrock 1.18+ from a 1.18+ source: optional border blending, and a warning when it is off.** Bedrock blends only
   chunks it takes for pre-1.18 ones (chunk version `0x2c` below 39; the `0x3d` flag or version 39 do not work), so the
   border of such a conversion stayed cut (measured in BDS 1.18.33 on a Java 26 world: mean step 37.9 blocks). The

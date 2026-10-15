@@ -162,6 +162,14 @@ game generates them (or the ring fills them, for the targets that have one).
   the others start at the new spawn. Useful above all for finite worlds (LCE, PE), where a build at
   x 900, z 16,180 would be outside the map. CLI: `--move-to center` or `--move-to X,Z` (with
   `--chunks`).
+- **Composition (command line):** `--layout FILE.json` builds the new world from groups of chunks, each moved by its own
+  offset in whole chunks (e.g. to bring far apart builds together inside a finite LCE map). The file:
+  `{"groups": [{"dimension": "overworld", "chunks": [[100, 1000], [101, 1000]], "offset": [-100, -1000]}, ...]}`;
+  `chunks` can also be a text `"x,z;x,z"`, `dimension` is `overworld`, `nether` or `end` (a Nether group's offset is in
+  Nether chunks). Only the chunks of the groups are converted. Spawn and players in a group follow it, the others start
+  at the spawn of the first Overworld group. The conversion refuses, before reading anything, overlapping groups, a chunk
+  in two groups and chunks that would land outside a finite map. The border (ring or blending) goes around all the groups
+  together; groups closer than the ring's width are joined by it.
 - **Spawn:** click on the map in **Spawn** mode (Y = the highest block + 1) or type X / Y / Z;
   **Restore the original** puts it back. The map also shows the original spawn and the players.
 - **Nether and End:** **Regenerate … from scratch** leaves the dimension to the game, which
@@ -372,6 +380,7 @@ worldbridge convert saveData.ms <output> --to java --trim        # convert only 
 | `--biome BIOME=[DIM:]FILE` | give a biome (name or number) to the chunks of a CSV; repeatable |
 | `--spawn X,Y,Z` | new world spawn |
 | `--move-to center\|X,Z` | move the selected chunks: their centre goes to 0, 0 (`center`) or to X, Z |
+| `--layout FILE.json` | composition: only groups of chunks of the source, each placed at its own offset (see below); checked before converting; not with `--chunks` / `--move-to` |
 | `--player KEY[=NICKNAME]` | players to transfer (the first is the main one) and their nicknames; KEY as shown by `players`; repeatable |
 | `--offline` | Java: offline UUIDs (non-premium servers) |
 | `--pet-owner account\|first-player` | Java: who the tamed animals belong to: the Java account the main player is linked to (`--player host=NAME`), or the player who opens the world first (data pack). Default: the account when there is a link, else the first player (Bedrock worlds) |

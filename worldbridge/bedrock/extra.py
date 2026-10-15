@@ -1003,7 +1003,7 @@ class _Downgrade:
         self.tally = tally
 
     def chunk(self, dim: int, cx: int, cz: int, tiles_raw: List[nbt.CompoundTag], actors_raw: List[nbt.CompoundTag]):
-        dx, dz = self.move.delta(dim) if self.move is not None else (0, 0)
+        dx, dz = self.move.offset(dim, cx, cz) if self.move is not None else (0, 0)
         canon, raw = [], []
         for t in tiles_raw:
             c = tiles.from_bedrock(t)
