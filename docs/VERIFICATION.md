@@ -51,7 +51,7 @@ WorldBridge.
 | neoLegacy items, enchantments, entities, player files | `test_lce_compat` |
 | Old formats: Classic, Indev, PE 0.x, Alpha, Beta | `test_old_formats`, `test_old_java` |
 | Content that converters usually lose | `test_losses`, `test_java_entities`, `test_amulet_paths` |
-| Terrain generators (Beta, 1.0–1.6, 1.7–1.12, 1.13–1.17, neoLegacy, Nether, End) | `test_betagen`, `test_releasegen`, `test_modern`, `test_modern16`, `test_neolegacy`, `test_nether_end` |
+| Terrain generators (Beta, 1.0–1.6, 1.7–1.12, 1.13–1.17, neoLegacy, Nether, End) | `test_betagen`, `test_releasegen`, `test_modern`, `test_modern16`, `test_neolegacy`, `test_nether_end`, `test_nether_ring118` (Java 1.18+ Nether / End ring: biome source against a 26.3 Nether, surface, caves, End biomes) |
 | Ring and border policy | `test_border`, `test_biomes_blend` |
 | Bedrock 1.6 – 1.17 generator and ring (golden values from Bedrock Dedicated Server and saved worlds) | `test_bedrockgen` |
 | Bedrock 1.18+ edge blend, `blending_data` of Java 1.18+ targets, the seam measuring tool | `test_bedrock_edge`, `test_blending_data`, `test_seam_check` |

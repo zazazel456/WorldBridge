@@ -35,8 +35,7 @@ The border work has its own document: [SEAMLESS_BORDERS.md](SEAMLESS_BORDERS.md)
 |---|---|
 | **LCE consoles:** tests on every platform (Xbox 360, PS3, Vita, Wii U, PS4, Xbox One, Switch), clearer title update and format handling | saves from those consoles |
 | **Minecraft PS Vita "Enhanced"** (PG Team mod): reading and writing its saves | a sample save |
-| **Bedrock → Java: Nether and End** (urgent): Bedrock saves chunks it has not finished generating; in the Nether of a
-real world (Casca) pieces of lava come out as terrain in Java. Being verified | the user's world (Casca) |
+| **Bedrock → Java: Nether and End** (urgent): flowing liquids and the Nether border. Done: fluid ticks (#190) and the Nether / End ring for Java 1.18+ targets (#191). To verify | the user's world (Casca) opened in the game |
 | **Bedrock old generator: village layout** (the ground "beard" next to villages is implemented; the placement of the village pieces that feeds it is not) | reverse engineering of Bedrock's village placement |
 
 ## Borders
@@ -46,7 +45,7 @@ Open items of the world border (the remedy for each target is described in [SEAM
 - Bedrock 1.6 – 1.17: the ring is done (the game's own generator, measured on Bedrock Dedicated Server). Open: the ring's caves and ravines (Bedrock carves them at generation, so the ring has none), the biome heights of mushroom islands (taken from Java, not yet seen in the server), the surface pass of 1.17 beyond y 127 (assumed the same), a few residual cells of 1.17 still being checked against the game, and versions before 1.6.
 - neoLegacy: the ring is off by 6 – 18 blocks in places.
 - LCE → Java 1.20: the ring leaves a step (the terrain is too different for the game's own blending).
-- Nether on Java 1.18+: the game's blending is overworld-only, so the Nether border stays cut.
+- Nether and End on Java 1.18+: done with a 3D ring (the 1.16 terrain, surface, caves and biomes of the game's own sources; #191). Open: fortresses and bastions inside the ring, the converted | ring border (8.7 against 3.0 in a world the game made: the ring's caves end at the converted edge), the End ring on a real converted End, and pre-1.18 sources written in the 1.17 format (the game's own blending of their Nether remains).
 - Bedrock 1.18 – 1.20 from 1.18+ sources: the opt-in edge blending regenerates the layer below y 0 of the border chunks.
 
 ## Waiting

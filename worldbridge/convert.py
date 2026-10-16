@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from . import amulet_bridge as ab
+from . import blocks as blk
 from .i18n import N_, tr
 from . import detect as det
 from .model import (y_shifts, NETHER, OVERWORLD, THE_END, UNKNOWN_BIOME, BiomeFiller, ConversionCancelled, ConversionError, NumericChunk,
@@ -1165,6 +1166,11 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
                     tr("{n} Update Aquatic blocks (LCE) were replaced with 1.12 equivalents: choose a specific "
                        "(pre-converted) Java version to keep them identical.", n=n_modern)
                 )
+        if (d.kind == "bedrock" and target.family == "java" and target.java_mode == "numeric" and target.java_version_limit
+                and blk.version_rank(target.java_version_limit) >= blk.version_rank("1.8")):
+            # the numeric Anvil writer stamps no DataVersion: 1.8 - 1.12 name the blocks of their ticks like 1.12
+            _settle_liquids(d, out_dir, progress, moved=move.active or bool(depth is not None and depth.used),
+                            assume_dv=1343)
         if amulet_target:                    # what the translation to the legacy hub left out is counted in the same tally
             _warn_missing_content(progress, platform, wver)
         else:
@@ -1306,6 +1312,10 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
     else:
         ab.write_java_level_dat(out_dir, info, target.version, progress)
     direct_extras(d, out_dir, target, info, progress, wver, move if move.active else None, depth, sel.keep_unfinished)
+    if platform == "java" and d.kind == "bedrock":
+        # Amulet writes no DataVersion in its 1.12 chunks: they are read as 1.12's
+        _settle_liquids(d, out_dir, progress, moved=move.active or bool(depth is not None and depth.used),
+                        assume_dv=1343 if tuple(target.version or (99,)) < (1, 13) else 0)
     _write_pet_pack(out_dir, target, info, progress)
     _warn_missing_content(progress, platform, wver)
     if depth is not None:
@@ -1321,7 +1331,8 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
         ring_after = _ring_after_amulet if platform == "java" else _ring_after_amulet_bedrock
         if wtype != "flat" and ring_after(out_dir, target, info, wver, tmp, progress, wtype) is None:
             progress.warn(tr(CUSTOMIZED))
-    if platform == "java" and target.ring and tuple(target.version or (99,)) < CAVES_CLIFFS:
+    if platform == "java" and target.ring and (tuple(target.version or (99,)) < CAVES_CLIFFS
+                                               or (tuple(wver) >= CAVES_CLIFFS and _ring3d_modern(target))):
         _rings3d_after_amulet(out_dir, target, info, wver, tmp, progress)
     if marked and plan.kind == "game":
         progress.log(tr("Blending data written to {n} chunks of the overworld.", n=blending.mark_world(out_dir)))
@@ -1329,6 +1340,19 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
         _bedrock_edge(out_dir, target, d.kind, old_source, move.active or edge.is_moved(target, sel), progress)
     progress.done()
     return ConversionResult(out_dir, n or 0)
+
+
+def _settle_liquids(d: det.Detected, out_dir: str, progress: Progress, moved: bool = False, assume_dv: int = 0) -> None:
+    """Bedrock saves flowing water / lava mid-flow with its pending ticks: the Java chunks get the ticks (fluid ticks
+    for every flowing cell, the block ticks Bedrock had), or the cells would stay frozen as partial blocks
+    (worldbridge.java.fluids).  ``moved``: the blocks no longer stand where Bedrock's ticks say, only the liquids count."""
+    from .extra import error_text
+    from .java import fluids
+
+    try:
+        fluids.schedule_world(out_dir, progress, None if moved else d.path, assume_dv)
+    except Exception as ex:  # noqa: BLE001 - the world itself is fine without them
+        progress.warn(tr("The ticks of the liquids could not be written: {error}", error=error_text(ex)))
 
 
 def _bedrock_edge(out_dir: str, target: TargetSpec, source_kind: str, old_source: bool, moved: bool,
@@ -1472,28 +1496,36 @@ def _ring_name(dim: int) -> str:
 _DIM_REGION = {NETHER: os.path.join("DIM-1", "region"), THE_END: os.path.join("DIM1", "region")}
 
 
-def _make_rings3d(target: TargetSpec, seed: int, coords, plan) -> dict:
+def _make_rings3d(target: TargetSpec, seed: int, coords, plan, modern_ok: bool = False) -> dict:
     """The rings of the converted Nether and End (terrain/ring3d.py), when the target has their
-    generator: dimension -> Ring3D."""
+    generator: dimension -> Ring3D.  ``modern_ok``: the chunks are written in the 1.18+ format (the Amulet
+    route); a Java 1.18+ target written in the 1.17 format for the game to upgrade gets no ring."""
     from .terrain import ring3d
 
     out = {}
-    if target.family != "java" or not getattr(target, "ring", True) or plan.kind == "off":
+    modern = ring3d.modern_target(target)
+    if modern and not modern_ok:
         return out
-    for dim in (NETHER, THE_END):
+    # Java 1.18+: the "off" plan is the game's blending turned off; the Nether's ring is a ring, it follows --no-ring
+    if target.family != "java" or not getattr(target, "ring", True) or (plan.kind == "off" and not modern):
+        return out
+    for dim in (ring3d.dimensions(target) if modern else (NETHER, THE_END)):
         if not coords.get(dim):
             continue
         g = ring3d.generator(target, seed, dim)
         if g is None:
             continue
         gen, noise_only = g
-        out[dim] = ring3d.Ring3D(gen, dim, coords[dim], dy=target.dy(dim), seed=seed, noise_only=noise_only)
+        out[dim] = ring3d.Ring3D(gen, dim, coords[dim], dy=target.dy(dim), seed=seed, noise_only=noise_only,
+                                 modern=modern)
     return out
 
 
 def _ring3d_text(dim: int, n: int, r3) -> str:
     what = tr("rock, lava and caverns") if dim == NETHER else tr("end stone islands")
-    if r3.noise_only:
+    if getattr(r3, "modern", False):
+        rest = tr("the bedrock and the surface of every biome are written by WorldBridge, the decoration (lava lakes, glowstone, ores, trees...) is added by the game")
+    elif r3.noise_only:
         rest = tr("surfaces and biomes, caves and decoration are added by the game")
     elif dim == NETHER:
         rest = tr("glowstone, fire, lava springs and fortresses are added by the game")
@@ -1511,7 +1543,11 @@ def _mark_ring3d(world_dir: str, r3) -> None:
 
     if not r3.written:
         return
-    if r3.noise_only:
+    if getattr(r3, "modern", False):
+        from .terrain import ring3d
+
+        ring3d.mark_modern(world_dir, r3, _DIM_REGION[r3.dim])
+    elif r3.noise_only:
         ring_mod.mark_proto_chunks(world_dir, r3.written, "noise", _DIM_REGION[r3.dim], biomes="drop")
     else:
         biomes = r3.gen.biome if r3.dim == THE_END and hasattr(r3.gen, "biome") else None
@@ -1563,6 +1599,13 @@ def _region_coords(world_dir: str, sub: str) -> set:
     return coords
 
 
+def _ring3d_modern(target: TargetSpec) -> bool:
+    """A Java 1.18+ target gets a 3D ring around its converted Nether (terrain/ring3d.py)."""
+    from .terrain import ring3d
+
+    return bool(ring3d.dimensions(target))
+
+
 def _rings3d_after_amulet(out_dir: str, target: TargetSpec, info, wver, tmp: str, progress: Progress) -> None:
     """The Nether's and End's rings of a world Amulet converted straight to Java 1.13 - 1.17."""
     from .java.numeric import JavaNumericWorld, JavaNumericWriter, JavaWriteOptions
@@ -1570,7 +1613,7 @@ def _rings3d_after_amulet(out_dir: str, target: TargetSpec, info, wver, tmp: str
 
     seed = world_seed(info.level)
     coords = {dim: _region_coords(out_dir, _DIM_REGION[dim]) for dim in (NETHER, THE_END)}
-    rings = _make_rings3d(target, seed, coords, policy.Plan("ring", ""))
+    rings = _make_rings3d(target, seed, coords, policy.Plan("ring", ""), modern_ok=tuple(wver) >= CAVES_CLIFFS)
     for dim, r3 in rings.items():
         progress.stage(tr("Converted Nether edge (reading)") if dim == NETHER else tr("Converted End edge (reading)"), 0.9, 0.92)
         hub = os.path.join(tmp, f"ring3d_edges_{dim}")

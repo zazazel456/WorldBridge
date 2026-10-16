@@ -1,7 +1,8 @@
 """Which remedy keeps a conversion's border without a seam (docs/SEAMLESS_BORDERS.md).
 
 * ``game``  the target blends by itself (Java 1.18+: its converted chunks carry ``blending_data``, always;
-  Bedrock 1.18+) or generates the same terrain;
+  Bedrock 1.18+) or generates the same terrain.  The game's blending is the Overworld's only: the Nether and the
+  End of a Java 1.18+ target get a 3D ring all the same (terrain/ring3d.py, ``ring3d.dimensions``);
 * ``ring``  WorldBridge writes a ring with the target's own generator (Java Alpha 1.2 - 1.17, Bedrock 1.6 - 1.17,
   neoLegacy);
 * ``fill``  small finite world (PE 0.x, other LCE up to 64 x 64 chunks): every chunk of the map is written;
