@@ -2,13 +2,30 @@
 
 ## Unreleased
 
-- **Java 1.13 worlds lost their `fullchunk` chunks.** Converting a 1.13 world through Amulet dropped every chunk the
-  game had left in the `fullchunk` state (complete terrain, about 15 % of the finished chunks); they are converted now.
-- **Biomes no longer turn into plains.** Converting a Java 1.12 style world (our numeric intermediate included, so
-  every route that uses it, ring worlds too) to Bedrock or Java 1.13+ lost every biome from 40 up (oceans other than the
-  plain one, End biomes, bamboo) and the mutated ones (sunflower plains, gravelly mountains, mesa Bryce...) read as
-  plains: they are all kept now, in the target's own numbers. Toward a real Java 1.12 or LCE target the newer biomes
-  become the nearest older one (warm ocean to ocean, bamboo jungle to jungle). Bedrock's void biome is kept too.
+### Added
+
+- **Composition: groups of chunks, each at its own destination** (engine, command line and map tab).
+  The new world contains only groups of chunks of the source, each moved by its own offset (whole chunks), e.g. two builds
+  1000 chunks apart brought next to each other to fit a 54 x 54 LCE map.
+  - **Engine and `--layout FILE.json`.** `worldbridge.layout` (`Group`, `Layout`: `dest`, `problems`, JSON load / save)
+    and `Selection(layout=...)`; `--move-to` is now a one-group layout (same behaviour). Blocks, block entities, entities
+    (and their riders), scheduled ticks, the spawn, the players standing in a group (the others go to the new spawn), the
+    Bedrock local player and the positions villagers remember move with their group, on every route; the Amulet job
+    partitions the chunks by the region they are written to. The file is checked before anything is read (overlapping
+    destinations, a chunk in two groups, chunks outside a finite LCE / Pocket Edition map) and excludes `--chunks` /
+    `--move-to`.
+  - **Border between groups.** The border (ring, blending, Bedrock edge, LCE / PE fill) goes around the groups as placed:
+    groups closer than the ring width get one joined ring.
+  - **The New world view.** A second view of the map tab, **New world** (next to **Source world**, Ctrl+1 / Ctrl+2), shows
+    the converted world as a grid of white chunks (the finite LCE / Pocket Edition map drawn white with the outside greyed,
+    and the new spawn). **Paste selection** (Ctrl+V) turns the chunks selected on the source map into a group, at the same
+    coordinates or at the nearest free place, drawn with the map's own tiles, a coloured outline and a name. Drag a group
+    (snaps to whole chunks), arrow keys move it by 1 chunk (Shift: 8), Ctrl+click selects several that move together,
+    Delete removes, Ctrl+Z / Ctrl+Y undo and redo. The side panel lists the groups (rename, offset, **Back to its place**,
+    **Centre on the spawn**) and checks the layout live: overlapping groups and chunks outside the map are red, the problems
+    are listed and **Convert** waits until there are none. **Save / Load layout** use the `--layout` JSON file. While
+    groups exist the conversion uses them and the *Move the selected chunks* choice gives way; the layout survives the
+    language switch and is dropped (after asking) when another world is opened.
 - **A ring for Bedrock 1.6 – 1.17 targets.** The overworld generator of Bedrock before 1.18 is reproduced (biome graph,
   terrain density, surface pass, bedrock floor), bit for bit against Bedrock Dedicated Server 1.16.220 under a debugger and
   against saved worlds of 1.6, 1.10, 1.12, 1.14, 1.16 and 1.17 (same algorithm in all of them; seeds above 2^31 too), and
@@ -17,30 +34,9 @@
   the world's database, never over a converted chunk). The ring's chunks are marked "needs population" (FinalizedState 1) so
   the game adds ores, lakes, trees and structures; their exact Bedrock biomes (warm / lukewarm / cold oceans, mutated
   biomes, bamboo) are written back after Amulet's translation. The seed is the level seed as an unsigned 32-bit number
-  (a derived seed for worlds without one is 32-bit for Bedrock). An old Bedrock world that stays where it is needs no ring.
-  Bedrock before 1.6 still warns. The ring has no caves or ravines (Bedrock carves them when it generates a chunk).
-- **Composing the new world in the map tab.** A second view, **New world** (next to **Source world**, Ctrl+1 / Ctrl+2), shows
-  the converted world as a grid of white chunks (the finite LCE / Pocket Edition map drawn white with the outside greyed,
-  and the new spawn). **Paste selection** (Ctrl+V) turns the chunks selected on the source map into a group, at the same
-  coordinates or at the nearest free place, drawn with the map's own tiles, a coloured outline and a name. Drag a group
-  (snaps to whole chunks), arrow keys move it by 1 chunk (Shift: 8), Ctrl+click selects several that move together, Delete
-  removes, Ctrl+Z / Ctrl+Y undo and redo. The side panel lists the groups (rename, offset, **Back to its place**, **Centre
-  on the spawn**) and checks the layout live: overlapping groups and chunks outside the map are red, the problems are
-  listed and **Convert** waits until there are none. **Save / Load layout** use the `--layout` JSON file. While groups
-  exist the conversion uses them and the *Move the selected chunks* choice gives way; the layout survives the language
-  switch and is dropped (after asking) when another world is opened.
-- **Composition on the Amulet route:** riders (`Passengers`) inside an entity's own NBT now move with their group
-  (their `Pos` was left behind).
-- **Composition: groups of chunks, each at its own destination** (engine and command line).
-  The new world contains only groups of chunks of the source, each moved by its own offset (whole chunks), e.g. two builds
-  1000 chunks apart brought next to each other to fit a 54 x 54 LCE map. `worldbridge.layout` (`Group`, `Layout`:
-  `dest`, `problems`, JSON load / save) and `Selection(layout=...)`; `--move-to` is now a one-group layout (same
-  behaviour). Blocks, block entities, entities (and riders), scheduled ticks, the spawn, the players standing in a group
-  (the others go to the new spawn), the Bedrock local player and the positions villagers remember move with their group,
-  on every route; the Amulet job partitions the chunks by the region they are written to. `--layout FILE.json` is
-  checked before anything is read (overlapping destinations, a chunk in two groups, chunks outside a finite LCE / Pocket
-  Edition map) and excludes `--chunks` / `--move-to`. The border (ring, blending, Bedrock edge, LCE / PE fill) goes around
-  the groups as placed: groups closer than the ring width get one joined ring.
+  (a derived seed for worlds without one is 32-bit for Bedrock). An old Bedrock world that stays where it is (Bedrock to
+  Bedrock, not moved) needs no ring. Bedrock before 1.6 still warns. The ring has no caves or ravines (Bedrock carves them
+  when it generates a chunk). How it works and how it was checked: [TECHNICAL.md](docs/TECHNICAL.md#the-bedrock-generator-before-118).
 - **Bedrock 1.18+ from a 1.18+ source: optional border blending, and a warning when it is off.** Bedrock blends only
   chunks it takes for pre-1.18 ones (chunk version `0x2c` below 39; the `0x3d` flag or version 39 do not work), so the
   border of such a conversion stayed cut (measured in BDS 1.18.33 on a Java 26 world: mean step 37.9 blocks). The
@@ -51,12 +47,36 @@
   layer below y 0 **in those chunks only**; the log gives the chunks marked and the blocks below y 0 they hold.
   Measured (30-chunk selection): mean step 37.9 → 2.6 (width 1) / 3.7 (width 2); inner chunks keep every block below y 0.
 - **Blending is the rule for every Java 1.18+ target.** Converted overworld chunks always get `blending_data`, whatever the
-  seed or the source: the unmoved same-seed Java 1.18+ copy (copied and upgraded by the game) is now tagged after the
-  copy too, in `region/` and in the 26.x layout (`dimensions/minecraft/overworld/region/`), each chunk with the layout of
-  its own DataVersion, and Better than Adventure worlds (1.18.2-format chunks) are tagged. WorldBridge's ring stays for
-  the targets without blending. `--no-blend` is the only opt-out; the policy text no longer says that the edge
-  "continues by itself" for Java 1.18+. Marking a world of ~5000 chunks takes about 7 s; chunks are decompressed once and
-  untouched ones are copied as stored.
+  seed or the source. Java 1.18+ targets used to get it only from pre-1.18 sources: Bedrock 1.18+, Java 1.18+ worlds of
+  another seed, moved, or converted to an older version were written as finished chunks without it, so the game assumed the
+  edge continued and met it with a wall (measured in the games: mean step 23 – 40 blocks). The tag is written in the layout
+  of the target (`old_noise` up to DataVersion 3440, `min_section` / `max_section` from 3441, each chunk with the layout of
+  its own DataVersion; the game computes the heights). The unmoved same-seed Java 1.18+ copy (copied and upgraded by the
+  game) is tagged after the copy, in `region/` and in the 26.x layout (`dimensions/minecraft/overworld/region/`), and
+  Better than Adventure worlds (1.18.2-format chunks) are tagged. WorldBridge's ring stays for the targets without
+  blending. `--no-blend` is the only opt-out. Marking a world of ~5000 chunks takes about 7 s; chunks are decompressed
+  once and untouched ones are copied as stored.
+- **`tools/seam_check.py`**: measures the seam between a converted world and the terrain the game generated (height
+  jumps of the top solid block across the border, walls over 3 and 8 blocks, per-edge statistics, water against land,
+  void columns, a baseline from natural game terrain, an OK / STEP / CUT verdict, JSON, a one-line summary and a height-map
+  PNG).
+- **World management: "Apply only to the converted world"**: the changes made in the NBT / quick settings
+  can be kept apart instead of saved into the world; the source stays byte for byte as it is and the next
+  conversion writes the changes into the converted world (any format) from an edited working copy, removed
+  when it ends. Opening a Bedrock world in the editor no longer touches its database either (the players
+  are read from a private copy).
+- **First-start progress window**: `run.sh` shows a "Downloading dependencies" window (package n of N, percentage,
+  MB, speed, time left, Cancel; Italian / English, light / dark) instead of installing silently; plain progress
+  lines in a terminal. New `tools/bootstrap_ui.py`; `WORLDBRIDGE_RUNTIME` moves the runtime folder.
+- **Bedrock → Java 26.x: tamed animals** (found converting a real world, Casca, and playing it in 26.3). New
+  `--pet-owner account|first-player` and a choice in the Players tab. `account` gives them the UUID of the Java account
+  the main player is linked to; `first-player` (default for Bedrock worlds without a link) tags them and writes a small
+  data pack, `datapacks/worldbridge_owner`, that hands each one to the nearest player when its chunk loads (checked on a
+  26.3 server; on a multiplayer server that may not be the main player). The game replaces the UUID inside a player file
+  with the account's, so a UUID made up by the converter cannot own anything.
+
+### Changed
+
 - **Borders (docs/SEAMLESS_BORDERS.md)**:
   - **LCE → neoLegacy (Windows64) gets the ring.** A console save (Xbox 360 54 × 54 measured: mean jump 46.6 blocks, a
     cut) was treated as "the game generates the same terrain"; the consoles' generators are not neoLegacy's. Only a
@@ -66,43 +86,39 @@
     for the ring (logged). Real 26.x worlds keep the seed of `data/minecraft/world_gen_settings.dat`.
   - **`--no-blend` is honoured for pre-1.18 Java → Java 1.18+.** The world used to be copied for the game to upgrade
     (and blend); it is now translated into the target's own format.
-- **Java 1.18+ targets: terrain of another generator or seed now blends instead of ending in a wall.** Bedrock 1.18+,
-  Java 1.18+ worlds of another seed / moved / converted to an older version were written as finished chunks without
-  `blending_data`, so the game assumed the edge continued (measured in the games: mean step 23 – 40 blocks). The
-  overworld chunks now carry the tag in the layout of the target (`old_noise` up to DataVersion 3440, `min_section` /
-  `max_section` from 3441; the game computes the heights). `--no-blend` leaves it out.
-- **Bedrock → Java 26.x, found converting a real world (Casca) and playing it in 26.3**:
+  - The policy text no longer says that the edge "continues by itself" for Java 1.18+.
+- **Bedrock → Java 26.x keeps more of the host player.** The main player is written like a real single player world, in
+  `level.dat` and `playerdata/<UUID>.dat` (every Java route and Better than Adventure), and carries experience points,
+  saturation, exhaustion, effects, the selected slot and the bed / respawn point as well as the inventory, ender chest,
+  armour, off hand, position, health and hunger. The conversion warns that other, unlinked players do not carry their
+  inventories.
+- **Villagers keep their jobs** (Bedrock → Java 26.x): profession, level, experience (`Xp`, only the real one) and trades
+  (`Offers`) are written, with the beds, bell and job site of the Bedrock village records as `Brain` memories; zombie
+  villagers keep their profession. Trades, experience and, from Java 1.13+ worlds, the bed / job site memories also pass
+  from Java and LCE villagers.
+- **Chunks Bedrock does not save**: the log says how many chunks inside the explored area are missing from the Bedrock
+  database; the target game generates them from the seed, so trees can be cut at their edges.
+
+### Fixed
+
+- **Java 1.13 worlds lost their `fullchunk` chunks.** Converting a 1.13 world through Amulet dropped every chunk the
+  game had left in the `fullchunk` state (complete terrain, about 15 % of the finished chunks); they are converted now.
+- **Biomes no longer turn into plains.** Converting a Java 1.12 style world (our numeric intermediate included, so
+  every route that uses it, ring worlds too) to Bedrock or Java 1.13+ lost every biome from 40 up (oceans other than the
+  plain one, End biomes, bamboo) and the mutated ones (sunflower plains, gravelly mountains, mesa Bryce...) read as
+  plains: they are all kept now, in the target's own numbers. Toward a real Java 1.12 or LCE target the newer biomes
+  become the nearest older one (warm ocean to ocean, bamboo jungle to jungle). Bedrock's void biome is kept too.
+- **Composition on the Amulet route:** riders (`Passengers`) inside an entity's own NBT now move with their group
+  (their `Pos` was left behind).
+- **Bedrock → Java 26.x, found in the Casca world in 26.3:**
   - **The host player arrives.** It was silently deleted by Minecraft 26.1's own upgrade (a `level.dat` player with a
-    UUID and no file of that name is dropped). It is now written like a real single player world, in `level.dat` and
-    `playerdata/<UUID>.dat` (every Java route and Better than Adventure), and carries experience points, saturation,
-    exhaustion, effects, the selected slot and the bed / respawn point as well as the inventory, ender chest, armour,
-    off hand, position, health and hunger. The conversion warns that other, unlinked players do not carry their
-    inventories.
-  - **Tamed animals**: new `--pet-owner account|first-player` and a choice in the Players tab. `account` gives them the
-    UUID of the Java account the main player is linked to; `first-player` (default for Bedrock worlds without a link)
-    tags them and writes a small data pack, `datapacks/worldbridge_owner`, that hands each one to the nearest player
-    when its chunk loads (checked on a 26.3 server; on a multiplayer server that may not be the main player). The
-    game replaces the UUID inside a player file with the account's, so a UUID made up by the converter cannot own
-    anything.
-  - **Villagers keep their jobs**: profession, level, experience (`Xp`, only the real one) and trades (`Offers`) are
-    written, with the beds, bell and job site of the Bedrock village records as `Brain` memories; zombie villagers
-    keep their profession. Before, all 16 professional villagers of Casca lost their job (and their trades) on the
-    first tick; now 15 keep it (the 16th is a cleric that shared a brewing stand with another one). Trades,
-    experience and, from Java 1.13+ worlds, the bed / job site memories also pass from Java and LCE villagers.
+    UUID and no file of that name is dropped); see the player data under *Changed*.
+  - **Villagers lost their jobs.** All 16 professional villagers of Casca lost their job (and their trades) on the first
+    tick; now 15 keep it (the 16th is a cleric that shared a brewing stand with another one).
   - **Decorated pots** are written in 26.x's map form (`back`, `left`, `right`, `front`) for chunks stamped 4997 or
     later (the game rejected the list: "Not a map", 76 pots).
   - **Block entities without a block** (a spawner on a cobweb, a chest on air: already so in the Bedrock world) are
     left out and counted in one warning instead of the game logging "Invalid block entity" for each.
-  - **Chunks Bedrock does not save**: the log says how many chunks inside the explored area are missing from the
-    Bedrock database; the target game generates them from the seed, so trees can be cut at their edges.
-- **World management: "Apply only to the converted world"**: the changes made in the NBT / quick settings
-  can be kept apart instead of saved into the world; the source stays byte for byte as it is and the next
-  conversion writes the changes into the converted world (any format) from an edited working copy, removed
-  when it ends. Opening a Bedrock world in the editor no longer touches its database either (the players
-  are read from a private copy).
-- **First-start progress window**: `run.sh` shows a "Downloading dependencies" window (package n of N, percentage,
-  MB, speed, time left, Cancel; Italian / English, light / dark) instead of installing silently; plain progress
-  lines in a terminal. New `tools/bootstrap_ui.py`; `WORLDBRIDGE_RUNTIME` moves the runtime folder.
 
 ## 0.2.2 – review against real worlds (alpha)
 

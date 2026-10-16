@@ -19,6 +19,7 @@ a converted world, not by an automated check.
 - [Later fixes (50–57)](#later-fixes-5057)
 - [0.2.1 (65–81)](#021)
 - [0.2.2 (82–173)](#022)
+- [After 0.2.2 (174 on)](#after-022)
 
 ---
 
@@ -816,6 +817,10 @@ saves the game despawned hostile mobs far from the player (Vita: 2,162 → 1,866
 173. **Two conversions at once in one process** (the GUI's preview and a conversion) could mix their
      results: `parallel.ordered_map` kept the function and state of the last caller in a global. Each
      call has its own now.
+## After 0.2.2
+
+Fixes made after the 0.2.2 release, listed in the [changelog](../CHANGELOG.md#unreleased). The Casca fixes (183–187, Bedrock → Java 26.x) were found converting a real Bedrock world and playing it in Minecraft 26.3.
+
 174. **Biomes 40 and above, and the mutated ones, became plains** whenever a world went through Amulet
      from a Java 1.12 style Anvil chunk: the numeric hub (declared 1.12.2) and real Java 1.2 - 1.12
      worlds converted to Bedrock or Java 1.13+. Two causes. Amulet's `AnvilNAInterface._decode_biomes`
@@ -835,5 +840,51 @@ saves the game despawned hostile mobs far from the player (Vita: 2,162 → 1,866
      chunks that score 2.0, although both hold complete terrain (`incomplete.py` already counts `fullchunk` as
      finished, so nothing warned). The load hook of `_AmuletJob` now sets every chunk scoring 1.5 or more to full;
      what counts as unfinished is unchanged. Test: `tests/test_fullchunk_status.py`.
+
+178. **Java 1.18+ targets met the converted chunks with a wall.** Converted overworld chunks of another generator or
+     seed (Bedrock 1.18+, a Java 1.18+ world of another seed, moved, or taken to an older version) were written as
+     finished chunks without `blending_data`, so the game assumed the edge continued; measured in the games, the mean
+     step at the border was 23 - 40 blocks. They now carry the tag in the layout of their DataVersion (`old_noise` up
+     to 3440, `min_section` / `max_section` from 3441); the unmoved same-seed copy and Better than Adventure worlds
+     are tagged too, so blending is the rule for every Java 1.18+ target. `--no-blend` is the only opt-out. Test:
+     `tests/test_blending_data.py`.
+179. **LCE console saves to neoLegacy ended in a cut.** A save from a console (Xbox 360 54 x 54 measured: mean jump
+     46.6 blocks) was taken as "the game generates the same terrain", but the consoles' generators are not neoLegacy's.
+     Only a Windows64 world that stays in place needs nothing now; every other LCE source gets the ring.
+180. **A source without a seed broke the ring.** A 26.x world with no `world_gen_settings.dat` read as seed 0, which
+     Alpha 1.2 treats as random, so the ring's terrain could not match the game's. A fixed seed derived from the level
+     name is written into the target and used for the ring (and logged); real 26.x worlds keep their own seed.
+181. **`--no-blend` was ignored for pre-1.18 Java to Java 1.18+**, because the world was copied for the game to upgrade
+     (and blend). It is now translated into the target's own format.
+182. **The border of Bedrock 1.18+ from a 1.18+ source stayed cut.** Bedrock blends only the chunks it takes for pre-1.18
+     ones, and the only marker it honours is the chunk version record below 39 (the `0x3d` flag and version 39 do not
+     work; measured in Bedrock Dedicated Server 1.18.33 on a Java 26 world: mean step 37.9 blocks). The conversion now
+     always warns, and the opt-in `--bedrock-edge-blend` (with `--bedrock-edge-width`) marks only the outer ring of
+     converted chunks as old and drops their blending records, so the game blends the border and regenerates the layer
+     below y 0 in those chunks only (mean step 2.6 at width 1). Test: `tests/test_bedrock_edge.py`.
+183. **The host player of a Bedrock world was deleted by Minecraft 26.1's upgrade.** A `level.dat` player with a UUID and
+     no file of that name is dropped. The player is now written like a real single player world, in `level.dat` and in
+     `playerdata/<UUID>.dat`, on every Java route and Better than Adventure, with experience points, saturation,
+     exhaustion, effects, the selected slot and the bed / respawn point as well; the conversion warns that other,
+     unlinked players do not carry their inventories. Test: `tests/test_host_inject.py`.
+184. **Villagers lost their jobs on the first tick.** All 16 professional villagers of the Casca world lost profession and
+     trades. Profession, level, experience (`Xp`, only the real one) and trades (`Offers`) are written, with the beds,
+     bell and job site of the Bedrock village records as `Brain` memories; zombie villagers keep their profession. Now 15
+     of 16 keep it (the 16th is a cleric that shared a brewing stand with another). Trades, experience and, from Java
+     1.13+ worlds, the memories also pass from Java and LCE villagers. Tests: `tests/test_host_villagers.py`,
+     `tests/test_villagers_other_sources.py`.
+185. **Decorated pots were rejected by Minecraft 26.x** ("Not a map", 76 pots in Casca): from chunks stamped 4997 the
+     sherds are a map (`back`, `left`, `right`, `front`), not a list; they are written in that form.
+186. **"Invalid block entity" logged for every block entity without a block** (a spawner on a cobweb, a chest on air, as
+     already in the Bedrock world). They are left out and counted in one warning.
+187. **Tamed animals did not recognise their player.** Java stores the owner as a UUID and the game gives a player the UUID
+     of the account that logs in, so a UUID made up by the converter owns nothing. `--pet-owner account` gives the
+     animals the UUID of the Java account the main player is linked to; `first-player` tags them and writes the
+     `worldbridge_owner` data pack, which hands each one to the nearest player once when its chunk loads (on a multiplayer
+     server that may not be the main player). Default: `account` when the host is linked, else `first-player`.
+188. **Riders inside an entity's own NBT stayed behind when their group moved** (composition on the Amulet route): their
+     `Pos` is now moved with the group.
+189. **Opening a Bedrock world in the editor touched its database.** The players are read from a private copy now; with
+     *Apply only to the converted world* the edits are kept apart and written only into the converted world.
 
 The tests of these fixes are listed by area in [VERIFICATION.md](VERIFICATION.md#automated-tests).
