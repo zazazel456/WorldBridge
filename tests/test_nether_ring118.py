@@ -136,6 +136,48 @@ def test_a_small_modern_ring_meets_the_converted_border():
         assert set(np.unique(b)) <= {0, 11, 87}
 
 
+def test_the_ring_never_hangs_lava_in_the_air():
+    """#192: the converted side's cave lava above the sea (or a sheet over air) must not be carried into the
+    ring: lava is only the open space under y 32, nothing is a liquid without a block (or lava) below."""
+    gen = dims16.Nether16Generator(SEED, "1.16")
+    conv = [(x, z) for x in (0, 1) for z in (0, 1)]
+    ring = ring3d.Ring3D(gen, NETHER, conv, seed=SEED, width=2, noise_only=True, modern=True)
+    for cx, cz in conv:
+        c = NumericChunk(cx, cz, 128)
+        b = np.zeros((16, 16, 128), np.uint8)                              # [x, z, y]
+        b[:, :, :40] = 87
+        b[:, :, 40:46] = 0
+        b[:, :, 46] = 11                                                   # a lava sheet over air at y 46 (and one at 70)
+        b[:, :, 47:52] = 87
+        b[:, :, 70] = 11
+        b[:, :, 100:] = 87
+        c.blocks[:] = np.transpose(b, (2, 1, 0))
+        ring.observe(NETHER, c)
+    out = [np.transpose(np.asarray(c.blocks)[:128], (2, 1, 0)) for c in ring.chunks()]
+    assert out
+    for b in out:
+        lava = b == 11
+        assert not lava[:, :, 32:].any()
+        assert not (b[:, :, :32] == 0).any()                               # the sea fills every open cell under y 32
+        assert not (lava[:, :, 1:] & (b[:, :, :-1] == 0)).any()
+
+
+def test_the_games_caves_do_not_open_against_the_converted_border():
+    """#192: a cavern of the game's carver (up to 65 blocks high) opened flush against the converted rock was a wall."""
+    gen = dims16.Nether16Generator(SEED, "1.16")
+    conv = [(x, z) for x in (0, 1) for z in (0, 1)]
+    ring = ring3d.Ring3D(gen, NETHER, conv, seed=SEED, width=4, noise_only=True, modern=True)
+    for cx, cz in conv:
+        c = NumericChunk(cx, cz, 128)
+        c.blocks[:] = np.transpose(gen.chunk(cx, cz)[0], (2, 1, 0))
+        ring.observe(NETHER, c)
+    near = ring3d._carve_gate(ring, 2, 0)                                  # next to the converted chunks
+    far = ring3d._carve_gate(ring, 5, 0)                                   # the ring's outer edge
+    assert near.shape == far.shape == (16, 16)
+    assert not near[:, :4].any()
+    assert far.all()
+
+
 def test_the_cave_carver_digs_the_games_tunnels():
     caves = nethercarver.NetherCaves(SEED)
     gen = dims16.Nether16Generator(SEED, "1.16")

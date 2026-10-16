@@ -39,6 +39,7 @@ BEND = 12.0             # blocks: how far a noise moves the point that looks for
 BEND_SCALE = 1.0 / 40.0
 WOBBLE = 0.3            # share of the ring's width the weight's contour lines move by
 CLIP = 64.0             # blocks: the farthest a change of kind is looked for
+CARVE_WEIGHT = 0.5      # the game's caves open where the converted side's weight is below this
 LAVA_Y = 32             # the Nether's lava sea: open space under this y is lava
 NETHERRACK, SOUL_SAND, GRAVEL, BEDROCK, END_STONE = 87, 88, 13, 7, 121
 
@@ -238,10 +239,9 @@ class Ring3D:
         rock_block = np.where(grock_c & (g != BEDROCK), g, conv_rock)
         if self.dim == NETHER:
             y = np.arange(H)[None, None, :]
-            gopen = np.where(np.isin(g, (10, 11)), 11, 0)
-            copen = np.where(cmat == 11, 11, 0)
-            open_block = np.where(W >= 0.5, copen, gopen)
-            open_block = np.where((open_block == 0) & (y < LAVA_Y) & ((gopen == 11) | (copen == 11)), 11, open_block)
+            # the game's rule: open space under the lava sea (y <= 31) is lava and nowhere else (the converted
+            # side's cave lava above it, or lava of a cave the blend slid, would hang in the air: #192)
+            open_block = np.where(y < LAVA_Y, 11, 0) + np.zeros_like(g)
         else:
             open_block = 0
         out = np.where(solid, rock_block, open_block)
@@ -483,6 +483,13 @@ def _decode_blocks(sections):
     return keys, ids
 
 
+def _carve_gate(r3: "Ring3D", cx: int, cz: int) -> np.ndarray:
+    """[z, x] columns where the game's caves may open: not next to the converted border, where the blend still
+    follows the converted rock and a cavern of the game (up to 65 blocks high) would end in a wall against it."""
+    _, w = r3._nearest(cx * 16, cz * 16, 16)
+    return (w < CARVE_WEIGHT).T
+
+
 def _finish_blocks(r3: "Ring3D", cx: int, cz: int, sections) -> None:
     """What the game's terrain step does after the noise, on the ring chunk's netherrack, lava and air: the
     Nether's surface (bedrock, nylium, soul sand, basalt...) and then its caves (nethercarver.py)."""
@@ -514,6 +521,7 @@ def _finish_blocks(r3: "Ring3D", cx: int, cz: int, sections) -> None:
 
             r3._caves = NetherCaves(r3.seed)
         carved = r3._caves.mask(cx, cz) & (codes != ns.BEDROCK)
+        carved &= _carve_gate(r3, cx, cz)[None]
         bedrock = np.array([k[0] == "minecraft:bedrock" for k in keys])
         carved &= ~bedrock[new]
         if carved.any():
