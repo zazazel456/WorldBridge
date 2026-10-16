@@ -35,6 +35,8 @@ The border work has its own document: [SEAMLESS_BORDERS.md](SEAMLESS_BORDERS.md)
 |---|---|
 | **LCE consoles:** tests on every platform (Xbox 360, PS3, Vita, Wii U, PS4, Xbox One, Switch), clearer title update and format handling | saves from those consoles |
 | **Minecraft PS Vita "Enhanced"** (PG Team mod): reading and writing its saves | a sample save |
+| **Bedrock → Java: Nether and End** (urgent): Bedrock saves chunks it has not finished generating; in the Nether of a
+real world (Casca) pieces of lava come out as terrain in Java. Being verified | the user's world (Casca) |
 | **Bedrock old generator: village layout** (the ground "beard" next to villages is implemented; the placement of the village pieces that feeds it is not) | reverse engineering of Bedrock's village placement |
 
 ## Borders
