@@ -35,7 +35,6 @@ The border work has its own document: [SEAMLESS_BORDERS.md](SEAMLESS_BORDERS.md)
 |---|---|
 | **LCE consoles:** tests on every platform (Xbox 360, PS3, Vita, Wii U, PS4, Xbox One, Switch), clearer title update and format handling | saves from those consoles |
 | **Minecraft PS Vita "Enhanced"** (PG Team mod): reading and writing its saves | a sample save |
-| **Java 1.13 chunks in the `finalized` state** through Amulet (the `fullchunk` state is done) | being fixed |
 | **Bedrock 1.17: residual cells** of the old generator that still differ from the game | being checked |
 
 ## Borders

@@ -31,7 +31,7 @@ def test_fullchunk_chunks_reach_the_output(tmp_path):
     coords = _source(hub, [1])
     j13 = str(tmp_path / "j13")
     convert(hub, j13, TargetSpec(family="java", java_mode="amulet", version=(1, 13, 2), ring=False), progress=Progress())
-    for status in ("fullchunk",):
+    for status in ("fullchunk", "finalized", "mobs_spawned", "lighted"):
         src = str(tmp_path / ("src_" + status))
         shutil.copytree(j13, src)
         assert _set_status(src, status) >= len(coords)

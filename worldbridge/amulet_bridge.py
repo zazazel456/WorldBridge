@@ -613,8 +613,11 @@ class _AmuletJob:
             chunk = load(cx, cz, dimension, *a, **kw)
             if keep and chunk.status.as_type(StatusFormats.Java_14) != "full":
                 chunk.status = "full"        # Amulet's save only writes finished chunks (the state is restored afterwards)
-            elif chunk.status.value >= 1.5:
-                chunk.status = "full"        # Java 1.13 "finalized" / "fullchunk" hold complete terrain but score under 2.0
+            elif chunk.status.value >= 1.1 or chunk.status.value == -0.1:
+                # lighted/light, mobs_spawned/spawn, finalized/heightmaps, fullchunk hold complete terrain (worldbridge.
+                # incomplete.COMPLETE; "initialize_light", which scores the same as "light", never gets here: it is
+                # excluded before) but score under 2.0 and Amulet writes only chunks at 2.0
+                chunk.status = "full"
             if depth is not None and dimension == "minecraft:overworld":
                 depth.apply(chunk)
             if floor and dimension == "minecraft:overworld":

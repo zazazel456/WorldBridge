@@ -840,6 +840,12 @@ Fixes made after the 0.2.2 release, listed in the [changelog](../CHANGELOG.md#un
      chunks that score 2.0, although both hold complete terrain (`incomplete.py` already counts `fullchunk` as
      finished, so nothing warned). The load hook of `_AmuletJob` now sets every chunk scoring 1.5 or more to full;
      what counts as unfinished is unchanged. Test: `tests/test_fullchunk_status.py`.
+176. **Finished Java 1.13 chunks were skipped as unfinished:** 464 of the 1089 chunks of a 1.13 world. `incomplete.py`
+     knew only `full`, `postprocessed` and `fullchunk`. On a 1.13.2 server, chunks in the states empty to `decorated`
+     changed once their neighbours generated (ores, trees, lakes), while `lighted` and later stayed the same apart
+     from fluid and plant ticks; in the game, `lighted` runs only once all 8 neighbours are decorated. `lighted`,
+     `mobs_spawned`, `finalized` and the 1.14+ `light`, `spawn` and `heightmaps` now count as finished
+     (`incomplete.is_complete`), and the Amulet load hook writes them as full. Test: `tests/test_incomplete_status.py`.
 
 178. **Java 1.18+ targets met the converted chunks with a wall.** Converted overworld chunks of another generator or
      seed (Bedrock 1.18+, a Java 1.18+ world of another seed, moved, or taken to an older version) were written as
