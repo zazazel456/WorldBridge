@@ -212,7 +212,7 @@ Notes / screenshots:
 - **Block contents:** `/data get block ~ ~-1 ~` shows the contents of a chest below you.
 - **Regenerated chunks:** search `latest.log` for `Recreating` and `Failed to read chunk`.
 
-### Ring tests (Java Alpha 1.2 – 1.17 and neoLegacy targets)
+### Ring tests (Java Alpha 1.2 – 1.17, Bedrock 1.6 – 1.17 and neoLegacy targets)
 
 For each target, convert **only part** of the world (a selection in the **Map and chunks** tab), so the
 edge is close. Then open the world and:
@@ -229,13 +229,17 @@ edge is close. Then open the world and:
    ```
 
    For each pair of neighbouring columns (converted, ring, game) it gives the height jump of the
-   ground and the spots where water leaks.
+   ground and the spots where water leaks. `tools/seam_check.py` does the same for any target that
+   reads as a world (Bedrock included), gives an OK / STEP / CUT verdict against natural game
+   terrain and can write a JSON file and a height-map PNG.
 
 | Target | Format | What to look at |
 |---|---|---|
 | Java 1.6.4 | numeric Anvil ("1.6.x") | the ring's caves and ravines (carved by WorldBridge as the game does), trees and ores (added by the game) |
 | Java 1.12.2 | numeric Anvil ("1.12.x") | as above, with the 1.7+ surfaces (giant taiga, mesa, shattered savanna) |
 | Java 1.13.2 | pre-converted (Amulet) | caves, trees and ores in the ring are made by **the game** (status "base"): they must be there |
+| Bedrock 1.16 (Dedicated Server or the game) | Bedrock database, seed from the level | the ring's terrain and biomes continue into the game's; ores, lakes and trees appear when the chunks load; no caves in the ring (known) |
+| Bedrock 1.18+ from a Java 1.18+ world, with and without **Blend the Bedrock border** | Bedrock database | without it the conversion warns and the border is a wall; with it the border blends, and the layer below y 0 of the border chunks is the game's, not the source's (the interior keeps its own) |
 | neoLegacy TU31 | LCE Windows64 | the ring meets the map edge; biomes under the sea are oceans |
 
 ### Nether and End ring test (optional, once)

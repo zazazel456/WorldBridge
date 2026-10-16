@@ -20,7 +20,22 @@ from . import nbt
 from .model import NETHER, OVERWORLD, THE_END
 
 Chunk = Tuple[int, int]
-COMPLETE = {"full", "minecraft:full", "postprocessed", "minecraft:postprocessed", "fullchunk", "minecraft:fullchunk"}
+# Statuses whose terrain is final: every neighbour that can still place features into the chunk has already
+# decorated.  Java 1.13.2: ChunkStatus "lighted" has a task radius of 1 (its neighbours are all "decorated" by then),
+# so lighted, mobs_spawned, finalized, fullchunk and postprocessed never change again but for ticks (fluids, plants);
+# empty, base, carved, liquid_carved and decorated still receive ore, tree and lake blocks from the chunks around.
+# Java 1.14+: light (radius 1, after features), spawn, heightmaps and full; "initialize_light" (1.18+) is not
+# (its neighbours may not have run features yet) and neither are structure_*, biomes, noise, surface, carvers,
+# liquid_carvers, features or the 1.18 "terrain".
+COMPLETE = {
+    "lighted", "mobs_spawned", "finalized", "fullchunk", "postprocessed",
+    "light", "spawn", "heightmaps", "full",
+}
+
+
+def is_complete(status: str) -> bool:
+    """Whether a chunk with this ``Status`` (any Java version, with or without ``minecraft:``) is finished."""
+    return status.replace("minecraft:", "", 1) in COMPLETE
 
 _JAVA_DIRS = {
     OVERWORLD: ("dimensions/minecraft/overworld/region", "region"),
@@ -84,7 +99,7 @@ def java_incomplete(path: str, only: Optional[Dict[int, Set[Chunk]]] = None) -> 
                     st = _fast_status(reg.read(lx, lz) or b"")
                 except Exception:  # noqa: BLE001
                     continue
-                if st and st not in COMPLETE:
+                if st and not is_complete(st):
                     found.add((rx * 32 + lx, rz * 32 + lz))
         except Exception:  # noqa: BLE001
             pass

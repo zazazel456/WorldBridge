@@ -11,12 +11,13 @@ import pytest
 from worldbridge import nbt
 from worldbridge.convert import TargetSpec, ensure_seed
 from worldbridge.model import NumericChunk, Progress
-from worldbridge.terrain import bedrockgen, bedrocksurface, policy
+from worldbridge.terrain import bedrockbeard, bedrockgen, bedrocksurface, policy
 from worldbridge.terrain import ring as ring_mod
 from worldbridge.terrain.bedrockgen import BedrockGenerator
 from worldbridge.terrain.bedrocknoise import Random
 
 GOLDEN = os.path.join(os.path.dirname(__file__), "data", "bedrock_old_golden.json")
+BEARD_GOLDEN = os.path.join(os.path.dirname(__file__), "data", "bedrock_beard_golden.json")
 
 
 def T(version, **kw):
@@ -287,3 +288,48 @@ def test_conversion_to_bedrock_1_16_gets_a_ring_for_both_routes(tmp_path):
     convert(base, out2, TargetSpec(family="bedrock", version=(1, 16, 0), y_offset=1), Progress())
     fin2, _bio2 = _bedrock_chunks(out2)
     assert sum(1 for s in fin2.values() if s == 2) == 4 and sum(1 for s in fin2.values() if s == 1) > 40
+
+
+# ---------------------------------------------------------------------------------------------- village beard
+def _beard_golden():
+    with open(BEARD_GOLDEN) as f:
+        return json.load(f)
+
+
+def test_beard_kernel_is_the_games_table():
+    import hashlib
+    k = bedrockbeard.kernel()
+    assert k.shape == (24, 24, 24) and k.dtype == np.float32
+    assert hashlib.sha1(k.tobytes()).hexdigest() == _beard_golden()["kernel_sha1"]      # read from BDS 1.16 and 1.17
+
+
+def test_beard_description_from_a_village_piece():
+    b = bedrockbeard.Beard.from_box((101, 62, 181, 105, 68, 187), 2)       # a house; the numbers BDS stored for it
+    assert b.bounds == (99, 62, 179, 107, 68, 189) and b.ground == 64 and (b.cx, b.cz) == (103, 184)
+    assert float(b.half) == 5.5 and float(b.above) == 1.0 and float(b.below) == 5.0
+    assert b.reaches(96, 176, 111, 191) and not b.reaches(96, 224, 111, 239)
+
+
+@pytest.mark.parametrize("entry", _beard_golden()["sets"], ids=lambda s: "%s-%s" % (s["seed"], s["version"]))
+def test_golden_village_beard_from_bedrock_dedicated_server(entry):
+    import base64
+    import zlib
+    version = tuple(int(x) for x in entry["version"].split("."))
+    gen = BedrockGenerator(entry["seed"], version)
+    for rec in entry["chunks"]:
+        want = np.unpackbits(np.frombuffer(zlib.decompress(base64.b64decode(rec["stone"])), np.uint8)).reshape(16, 16, 128)
+        field = gen.field(rec["cx"], rec["cz"])
+        flat = gen.terrain.volume(field) == bedrockgen.STONE
+        adjusted = gen.terrain.volume(field, bedrockbeard.TerrainAdjustments(
+            [bedrockbeard.Beard.from_box(*a) for a in rec["adjust"]]), rec["cx"], rec["cz"],
+            gen.params["squash_divides"]) == bedrockgen.STONE
+        assert (adjusted == want.astype(bool)).all(), (entry["seed"], rec["cx"], rec["cz"])
+        assert (flat != want.astype(bool)).any()           # the beard changes the ground: without it the chunk is wrong
+
+
+def test_empty_adjustments_change_nothing():
+    gen = BedrockGenerator(12345, (1, 17))
+    field = gen.field(0, 0)
+    plain = gen.terrain.volume(field)
+    assert (gen.terrain.volume(field, bedrockbeard.TerrainAdjustments(), 0, 0, False) == plain).all()
+    assert (gen.chunk_bedrock(0, 0, adjust=bedrockbeard.TerrainAdjustments())[0] == gen.chunk_bedrock(0, 0)[0]).all()

@@ -103,7 +103,7 @@ Choose the **Game** and the **Version**. Only the options that apply to that tar
     outer ring of converted chunks is marked as old and the game blends it, **but it regenerates the layer below
     y 0 of those chunks** (caves, ores, builds); the chunks inside keep theirs. The log tells how many chunks were
     marked and how many blocks below y 0 they hold;
-  - **Transition ring**, for games that do not blend;
+  - **Transition ring**, for games that do not blend (Java Alpha 1.2 – 1.17, Bedrock 1.6 – 1.17, neoLegacy);
   - **Underground of 1.18+ worlds** and **Tall mountains**, only for games whose world starts at
     y 0 or is 128 blocks high.
 - **Better than Adventure** sources: **Wood palette** (a palette file) and **Lower the Overworld**
@@ -113,6 +113,22 @@ Choose the **Game** and the **Version**. Only the options that apply to that tar
 - **Result:** **World name** and **Output folder**.
 
 Long explanations are behind the ⓘ buttons.
+
+**Which border option applies to which target:**
+
+| Target | Border | Options |
+|---|---|---|
+| Java 1.18 – 26.x | game blending: every converted overworld chunk carries `blending_data`, whatever the source or seed | **Game blending** / `--no-blend` |
+| Bedrock 1.18+ from a pre-1.18 world | game blending (the chunks are written in a pre-1.18 format) | **Game blending** / `--no-blend` |
+| Bedrock 1.18+ from a Java or Bedrock 1.18+ world (a Bedrock world moved with `--move-to` / `--y-offset` too) | cut, and the conversion warns, unless the edge blend is on | **Blend the Bedrock border** / `--bedrock-edge-blend`, `--bedrock-edge-width N`; the game then regenerates the layer below y 0 of the border chunks |
+| Bedrock 1.18+ from a Bedrock 1.18+ world left where it is | none needed (same terrain) | – |
+| Bedrock 1.6 – 1.17 | ring with WorldBridge's own reimplementation of Bedrock's old generator; the game adds ores, lakes and trees (no caves in the ring) | **Transition ring** / `--no-ring` |
+| Bedrock 1.6 – 1.17 from an old Bedrock world left where it is | none needed | – |
+| Bedrock before 1.6 | none: the conversion warns | – |
+| Java Alpha 1.2 – 1.17, neoLegacy (LCE Windows64) | ring | **Transition ring** / `--no-ring` |
+| LCE 54 / 64 chunks, PE 0.x | the whole map is written | **Transition ring** / `--no-ring` |
+
+The details, with the figures, are in [SEAMLESS_BORDERS.md](SEAMLESS_BORDERS.md).
 
 **Java targets** (**Version**):
 
@@ -405,7 +421,7 @@ worldbridge convert saveData.ms <output> --to java --trim        # convert only 
 | `--player-id` | LCE PC / Xbox: the XUID (file name in `players/`) for the main player |
 | `--no-blend` | Java / Bedrock 1.18+: no game blending (a pre-1.18 world is translated, not copied for the game to upgrade) |
 | `--bedrock-edge-blend`, `--bedrock-edge-width N` | Bedrock 1.18+ from a Java / Bedrock 1.18+ world (not an unmoved Bedrock world): blend the border by marking the outer ring of converted chunks (N chunks wide, default 1) as pre-1.18. The game blends them with its terrain and regenerates their layer below y 0; inner chunks are untouched. Without it the border stays cut and the conversion warns |
-| `--no-ring` | no ring (Java Alpha 1.2 – 1.17, neoLegacy, Nether and End) and no fill of finite maps (PE 0.x, LCE 54 / 64 chunks) |
+| `--no-ring` | no ring (Java Alpha 1.2 – 1.17, Bedrock 1.6 – 1.17, neoLegacy, Nether and End) and no fill of finite maps (PE 0.x, LCE 54 / 64 chunks) |
 | `--tall-terrain compress\|cut` | 128-block targets: compress tall mountains (default) or cut them at y 127 |
 | `--depth auto\|cut\|keep\|Y` | 1.18+ worlds to games that start at y 0: `auto` (default) keeps the underground of flat or low worlds (superflat 1.18+ has its surface at y -61) and cuts normal ones, `cut` below y 0, `keep` everything (the world rises by 64), or keep from a negative Y |
 | `--regen nether\|end` | do not convert that dimension: the game generates it anew (repeatable) |
@@ -413,7 +429,7 @@ worldbridge convert saveData.ms <output> --to java --trim        # convert only 
 | `--biome BIOME=[DIM:]FILE` | give a biome (name or number) to the chunks of a CSV; repeatable |
 | `--spawn X,Y,Z` | new world spawn |
 | `--move-to center\|X,Z` | move the selected chunks: their centre goes to 0, 0 (`center`) or to X, Z |
-| `--layout FILE.json` | composition: only groups of chunks of the source, each placed at its own offset (see below); checked before converting; not with `--chunks` / `--move-to` |
+| `--layout FILE.json` | composition: only groups of chunks of the source, each placed at its own offset (file format in [Map and chunks](#map-and-chunks-tab)); checked before converting; not with `--chunks` / `--move-to` |
 | `--player KEY[=NICKNAME]` | players to transfer (the first is the main one) and their nicknames; KEY as shown by `players`; repeatable |
 | `--offline` | Java: offline UUIDs (non-premium servers) |
 | `--pet-owner account\|first-player` | Java: who the tamed animals belong to: the Java account the main player is linked to (`--player host=NAME`), or the player who opens the world first (data pack). Default: the account when there is a link, else the first player (Bedrock worlds) |

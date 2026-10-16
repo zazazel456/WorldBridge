@@ -16,6 +16,13 @@ The border work has its own document: [SEAMLESS_BORDERS.md](SEAMLESS_BORDERS.md)
 | **In-place edits** | From the map: delete or keep only the selected chunks, trim, paint a biome, directly on Java, LCE and Bedrock worlds, with a backup of the changed files. |
 | **Biomes per game and version** | The list and names follow the target (conversion) or the opened world (in-place edit). |
 | **Move the selected chunks** | To the world centre or to chosen coordinates, on every target (CLI `--move-to`). |
+| **Bedrock 1.6 – 1.17 ring** | WorldBridge's own reimplementation of Bedrock's old overworld generator (terrain, biomes, surface), verified against Bedrock Dedicated Server; the ring's chunks are finished by the game. Bedrock to Bedrock without moving needs no ring. |
+| **Blending is the rule on Java 1.18+** | Every converted overworld chunk carries `blending_data`, whatever the seed or source (`--no-blend` to opt out); LCE → neoLegacy, seedless sources and `--no-blend` for pre-1.18 Java were fixed with it. |
+| **Bedrock 1.18+ edge blend** | Opt-in (`--bedrock-edge-blend`, `--bedrock-edge-width N`): the outer ring of converted chunks is marked as pre-1.18 so Bedrock blends the border; the conversion warns while it is off. |
+| **Bedrock → Java 26.x, from a real world** | The host player, villagers' jobs and trades, decorated pots, tamed animals (`--pet-owner`, with a data pack) and missing chunks. |
+| **Biomes through Amulet** | Signed byte biomes, the 1.12.2 table gap, fallbacks for a real Java 1.12 / LCE target, Bedrock's void biome. |
+| **Edits only for the converted world** | In World management, changes kept apart so the source is not touched. |
+| **First-start progress window** | Download progress, Cancel, resume. |
 | **Composition (groups of chunks)** | The new world holds only groups of chunks of the source, each placed at its own destination (to bring parts closer, e.g. to fit a finite LCE map); the border covers all the groups together. In the map tab, the **New world** view: a grid of white chunks onto which the selection is pasted, moved in groups, checked live, with undo and a layout file; CLI `--layout FILE.json`. |
 | **Speed on every core** | Conversion, ring, Amulet translation (Java → Java) and map on every CPU core; faster generators and reading; output identical to single-core (bit for bit on 16 of 18 test conversions, the other 2 identical in content). `WORLDBRIDGE_WORKERS=N` sets the number of processes. |
 | **Reorganised interface and desktop theme** | Following the KDE Human Interface Guidelines: the world is chosen once at the top, each tab shows only the options that apply, long explanations behind ⓘ buttons, messages inside the window, *Converti* at the bottom right; the map has a toolbar and a side panel. The desktop's style, colours, fonts and icons (Breeze, Kvantum, qt6ct, GNOME). No feature removed: 400 combinations of choices give the same conversion as before. |
@@ -28,12 +35,15 @@ The border work has its own document: [SEAMLESS_BORDERS.md](SEAMLESS_BORDERS.md)
 |---|---|
 | **LCE consoles:** tests on every platform (Xbox 360, PS3, Vita, Wii U, PS4, Xbox One, Switch), clearer title update and format handling | saves from those consoles |
 | **Minecraft PS Vita "Enhanced"** (PG Team mod): reading and writing its saves | a sample save |
+| **Bedrock → Java: Nether and End** (urgent): Bedrock saves chunks it has not finished generating; in the Nether of a
+real world (Casca) pieces of lava come out as terrain in Java. Being verified | the user's world (Casca) |
+| **Bedrock old generator: village layout** (the ground "beard" next to villages is implemented; the placement of the village pieces that feeds it is not) | reverse engineering of Bedrock's village placement |
 
 ## Borders
 
 Open items of the world border (the remedy for each target is described in [SEAMLESS_BORDERS.md](SEAMLESS_BORDERS.md)):
 
-- Bedrock 1.6 – 1.17: the ring is done (the game's own generator, measured on Bedrock Dedicated Server). Open: the ring's caves and ravines (Bedrock carves them at generation, so the ring has none), the biome heights of mushroom islands (taken from Java, not yet seen in the server), the surface pass of 1.17 beyond y 127 (assumed the same), and versions before 1.6.
+- Bedrock 1.6 – 1.17: the ring is done (the game's own generator, measured on Bedrock Dedicated Server). Open: the ring's caves and ravines (Bedrock carves them at generation, so the ring has none), the biome heights of mushroom islands (taken from Java, not yet seen in the server), the surface pass of 1.17 beyond y 127 (assumed the same), a few residual cells of 1.17 still being checked against the game, and versions before 1.6.
 - neoLegacy: the ring is off by 6 – 18 blocks in places.
 - LCE → Java 1.20: the ring leaves a step (the terrain is too different for the game's own blending).
 - Nether on Java 1.18+: the game's blending is overworld-only, so the Nether border stays cut.

@@ -13,6 +13,7 @@ back each part are in [VERIFICATION.md](VERIFICATION.md).
 - [What each target can load](#what-each-target-can-load)
 - [Heights](#heights)
 - [Borders](#borders)
+- [The Bedrock generator before 1.18](#the-bedrock-generator-before-118)
 - [Better than Adventure](#better-than-adventure)
 - [Tools around the conversion](#tools-around-the-conversion)
 - [Parallelism](#parallelism)
@@ -204,13 +205,71 @@ Older games do not skip what they do not know, so WorldBridge writes only what t
 
 See [SEAMLESS_BORDERS.md](SEAMLESS_BORDERS.md). In short:
 
-- Java and Bedrock 1.18+: the chunks of a pre-1.18 world are written in a pre-1.18 format (Java
-  1.17 or the classic Anvil of the DataFixer route, Bedrock 1.17.40). When the game upgrades them it
-  marks them for blending, blends heights and biomes with new terrain and generates the depth below
-  y 0.
-- Java Alpha 1.2 – 1.17 and neoLegacy: a ring of the game's own terrain, from each version's exact
+- Java 1.18+: every converted overworld chunk carries `blending_data` (in the layout of its DataVersion), whatever the
+  source or the seed, so the game blends heights and biomes with its new terrain and generates the depth below y 0;
+  `--no-blend` leaves it out.
+- Bedrock 1.18+: the chunks of a pre-1.18 world are written in a pre-1.18 format (Bedrock 1.17.40), which the game
+  blends when it upgrades them. A 1.18+ source has no such marker, so the border stays cut unless the opt-in edge
+  blend (`--bedrock-edge-blend`) marks the outer ring of chunks as old.
+- Java Alpha 1.2 – 1.17, Bedrock 1.6 – 1.17 and neoLegacy: a ring of the game's own terrain, from each version's exact
   generator, lifted to meet the converted world. The Nether and End get a 3D ring.
 - Small finite worlds (PE 0.x, LCE 54 / 64 chunks): every chunk of the map is written.
+
+## The Bedrock generator before 1.18
+
+The ring of a Bedrock 1.6 – 1.17 target needs the terrain the game itself would generate. WorldBridge reimplements the
+overworld generator of those versions (`terrain/bedrockgen.py`, `bedrockbiomes.py`, `bedrocksurface.py`,
+`bedrocknoise.py`; the game data in `bedrockdata.py`). It was written from the behaviour observed in Bedrock Dedicated
+Server, not from the game's code: no game code or asset is in the repository.
+
+**Random numbers and noise.** The game's random generator is a plain MT19937 seeded with the level seed taken as an
+unsigned 32-bit number (a larger seed is reduced modulo 2^32). The noises of the terrain are built in the order of the
+generator's constructor, which matters because they all draw from one stream: two 16-octave limit noises, an 8-octave
+main noise, a 4-octave simplex noise for the surface, a 16-octave depth noise and a 3-octave simplex noise for the
+surface material adjustments; two more noises are created only to consume their numbers. Every value is a 32-bit float
+and every expression is evaluated in the order the game evaluates it, with one rounding per operation and no fused
+multiply-add, so results match the game bit for bit.
+
+**Terrain.** A chunk is computed on a grid of 5 × 5 columns by 17 levels of density cells (8 blocks per level). For each
+column the biomes' depth and scale are blended over the 3 × 3 surrounding lattice points (a point every 4 blocks), each
+weighted by its distance and its depth and halved where the centre is deeper than the neighbour; the depth noise
+shifts the base height; the main noise chooses between the two limit noises; the top levels slide to air under a
+ceiling. The cells are expanded to 16 × 128 × 16 blocks by the same repeated additions the game uses, not by a formula
+per block. Stone is where the density is positive, water below y 63, air elsewhere. In 1.17 the volume is stored 320 high
+with air above y 127 (and a taller density buffer); the blocks are the same.
+
+**Biomes.** The biome source is a graph of operation nodes that follows the Java layer stack of 1.13 – 1.14 closely:
+the same kinds of steps (islands, climate zones, zooms, hills and mutations, rivers, shores, the ocean layers) and the
+same 64-bit linear congruential generator seeded per node from the world seed and a salt. It diverges where Bedrock
+does: the nodes are data driven (biome tags, weighted lists and small filters taken from the game's biome definitions
+rather than hard-coded), the temperature, ocean and edge nodes are Bedrock's own, one node (the hills region) never seeds
+its input as the game's initialisation does not reach it, and the biome ids are Bedrock's. The terrain reads one biome per
+4 × 4 cell and the chunk stores one per block. The biomes are the same in all versions from 1.6 to 1.17.
+
+**Surface.** After the terrain, a per-chunk random generator, seeded from the chunk coordinates alone and drawn column by
+column, lays the bedrock floor and then applies each biome's surface: the default top and filler blocks with the depth
+noise, beaches and sea floors (sand, gravel, clay), the frozen biomes' snow and ice (decided by the temperature at the
+spot), and the mesa's coloured clay bands and pillars.
+
+**What the game adds.** Caves, ravines, ores, lakes, trees and structures are not generated: the ring's chunks are marked
+"needs population" (FinalizedState 1) and the game carves and decorates them when they are loaded. The ring therefore
+has no caves or ravines at its seam, which Bedrock carves when it generates a chunk.
+
+**How the ring uses it.** The generator gives the terrain's density field; the ring (`terrain/ring.py`) lifts it to meet
+the converted border exactly as for the Java generators. The ring travels in the numeric hub for numeric sources and is
+merged into the world's LevelDB after a direct Amulet conversion (never over a converted chunk). The hub knows only the
+Java biomes 0 – 39, so the generator hands it the nearest one and the exact Bedrock biomes (warm, lukewarm and cold
+oceans, mutated biomes, bamboo) are written back after Amulet's translation. A Bedrock world converted to Bedrock without
+moving needs no ring, because the game generates the same terrain.
+
+**Versions.** 1.6 – 1.17 are one algorithm; `FIRST_VERSION` is 1.6 and `END_VERSION` 1.18, whose generator is another.
+Earlier versions are not reproduced and the conversion warns.
+
+**Verification.** Checked against Bedrock Dedicated Server 1.16.220 under a debugger: the density buffers, the
+stone / water / air volumes and the surface pass block by block, and the biome areas of 10 seeds over 40 areas of
+2048 × 2048 blocks; and against saved worlds of Bedrock 1.6, 1.10, 1.12, 1.14, 1.16 and 1.17 (seeds above 2^31 included).
+The golden values are in `tests/data/bedrock_old_golden.json`, used by `tests/test_bedrockgen.py`. See
+[VERIFICATION.md](VERIFICATION.md#terrain-generators-against-the-games) and [SEAMLESS_BORDERS.md](SEAMLESS_BORDERS.md).
 
 ## Better than Adventure
 
@@ -246,6 +305,13 @@ The full block table is in [BTA_BLOCK_MAPPING.md](BTA_BLOCK_MAPPING.md).
 - **Relocation** (`relocate.py`): the centre of the selection moves to the chosen point (the
   Nether's point is the Overworld's divided by 8), by whole chunks, with entities, block entities and
   scheduled ticks, on the hub route and on Amulet's universal chunks.
+- **Composition** (`layout.py`): a layout is a list of groups (a dimension, a set of source chunks and an offset in
+  whole chunks), read from `--layout FILE.json` or built in the map tab's **New world** view. Relocation looks up
+  the destination of every chunk instead of applying one shift, so blocks, block entities, entities and their riders,
+  scheduled ticks, the spawn, the players and the villagers' remembered positions move with their group; `--move-to`
+  is a one-group layout. The layout is checked before reading (overlaps, a chunk in two groups, chunks outside a finite
+  map), and the border (ring, blending, fill) is computed around the placed chunks, so groups closer than the ring width
+  share one ring.
 - **In-place edits** (`chunkedit.py`): remove chunks, keep only some, paint a biome, on Java (raw
   region rewrite), LCE (biome bytes patched in the payload) and Bedrock (through Amulet), after
   copying every changed file to `<world>.wb-backup-<date>/`.
@@ -313,15 +379,15 @@ worldbridge/
   items.py, entities.py, tiles.py, maps.py        content translation
   depthfit.py, heightfit.py, incomplete.py        heights and unfinished chunks
   chestfix.py      chest pairing for LCE / old Java
-  relocate.py, selection.py, chunkedit.py, trim.py, manage.py, mapview.py, biomes.py
+  relocate.py, selection.py, layout.py, pets.py, chunkedit.py, trim.py, manage.py, mapview.py, biomes.py
   parallel.py      multi-core, ordered results
   i18n.py          tr() and the language; i18n_it.py: the Italian texts
   lce/             container, compression, region, chunk, world, compat, stfs; vendor/ (LZX)
   java/            classic, finite (Indev), numeric (Alpha, McRegion, Anvil), modern, oldcontent, region
   bedrock/         extra (LevelDB records), terrain (height maps, frames), pe_old (PE 0.x)
   bta/             Better than Adventure → Java 26.3
-  terrain/         generators, ring, 3D ring, fill, border policy
+  terrain/         generators (Java, neoLegacy, Bedrock before 1.18), ring, 3D ring, fill, border policy
   gui/             app, map, players, world management, trim, theme, widgets
-tools/             matrix.py, seamcheck.py, bta_compare.py, build_wheels.py, fetch_syslibs.py, prune_qt.py
+tools/             matrix.py, seamcheck.py, seam_check.py, bootstrap_ui.py, bta_compare.py, build_wheels.py, fetch_syslibs.py, prune_qt.py
 tests/             pytest suite
 ```
