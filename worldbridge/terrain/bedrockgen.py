@@ -12,7 +12,11 @@ The pieces, each reproducing the game bit for bit in a default (non-experimental
   of stone, water (below y 63) and air;
 * ``bedrocksurface``: the bedrock floor and the biomes' surfaces.
 
-Caves, ravines, ores, lakes, structures and trees are not made here: the game adds them.
+Caves, ravines, ores, lakes, structures and trees are not made here: the game adds them.  The ground next to a
+village is the exception that needs the structures: the game raises and lowers it around the village pieces (the
+"beard", ``bedrockbeard``).  ``chunk(..., adjust=TerrainAdjustments(...))`` applies the adjustments of a chunk;
+where they come from (the village layout) is not reproduced, so a chunk within ~14 blocks of a village piece
+differs from the game's in a few ground blocks unless the caller supplies them.
 
 Versions.  The terrain and the biomes were measured identical in every version from 1.6 to 1.17 (``VERIFIED``);
 only the container changes in 1.17 (a 16 x 320 x 16 volume with air above y 127 and a 5 x 5 x 41 density buffer
@@ -28,6 +32,7 @@ import numpy as np
 
 from .bedrockbiomes import BedrockBiomes
 from .bedrockdata import BIOME_HEIGHT, HEIGHT_PROFILES
+from .bedrockbeard import TerrainAdjustments
 from .bedrocknoise import OverworldNoises
 from .bedrocksurface import SurfaceBuilder, to_java
 
@@ -42,8 +47,8 @@ END_VERSION = (1, 18, 0)
 VERIFIED = ((1, 6), (1, 10), (1, 12), (1, 14), (1, 16), (1, 17))     # (major, minor) measured against the game
 # what a release changes in how the terrain is stored, by (major, minor); the first entry not above a version counts
 VERSION_PARAMS = {
-    (1, 6): dict(volume_height=128, levels=17),
-    (1, 17): dict(volume_height=320, levels=41),
+    (1, 6): dict(volume_height=128, levels=17, squash_divides=True),
+    (1, 17): dict(volume_height=320, levels=41, squash_divides=False),
 }
 
 
@@ -182,10 +187,15 @@ class Terrain:
         return vals.transpose(0, 4, 1, 5, 2, 3).reshape(16, 16, 128)
 
     @staticmethod
-    def volume(field: np.ndarray) -> np.ndarray:
-        """Stone where the density is positive, water below the sea level, else air (uint8 AIR / STONE / WATER)."""
+    def volume(field: np.ndarray, adjust: Optional[TerrainAdjustments] = None, cx: int = 0, cz: int = 0,
+               divides: bool = False) -> np.ndarray:
+        """Stone where the density is positive, water below the sea level, else air (uint8 AIR / STONE / WATER).
+        With structure ``adjust``ments (a village's beard) the game decides stone on the squashed density plus the
+        adjustment instead (``divides``: the squash of 1.16 divides by 200, 1.17 multiplies by 0.005); the chunk
+        position ``cx``, ``cz`` places the blocks."""
         y = np.arange(field.shape[2])[None, None, :]
-        return np.where(field > 0.0, STONE, np.where(y < SEA_LEVEL, WATER, AIR)).astype(np.uint8)
+        stone = field > 0.0 if not adjust else adjust.stone(field, cx, cz, divides)
+        return np.where(stone, STONE, np.where(y < SEA_LEVEL, WATER, AIR)).astype(np.uint8)
 
 
 # The ring travels through the Java 1.12 numeric format (the hub Amulet translates from), which has only the biomes
@@ -242,15 +252,17 @@ class BedrockGenerator:
         cells = self.terrain.density(cx, cz, DEPTH[lattice], SCALE[lattice])
         return self.terrain.expand(cells)
 
-    def chunk_bedrock(self, cx: int, cz: int, lift: Optional[np.ndarray] = None):
+    def chunk_bedrock(self, cx: int, cz: int, lift: Optional[np.ndarray] = None,
+                      adjust: Optional[TerrainAdjustments] = None):
         """(palette codes [x, z, y], Bedrock biome ids [x, z]) of the chunk; 128 high unless a lift raises the
-        ground above that."""
+        ground above that.  ``adjust``: the structure terrain adjustments the game holds for the chunk (villages);
+        without them a chunk next to a village differs from the game's in a few blocks at its ground."""
         from .lift import lifted_rock
 
         grid = self.biome_grid(cx, cz)
         biomes = grid[2:18, 2:18].T.astype(np.int64)
         field = self.field(cx, cz, grid)
-        volume = self.terrain.volume(field)
+        volume = self.terrain.volume(field, adjust, cx, cz, self.params.get("squash_divides", False))
         if lift is not None and bool(np.any(lift)):
             moved = lifted_rock(field, lift, SEA_LEVEL - 1, height=256)      # 1 stone, 9 water in its result
             moved = np.where(moved == 9, WATER, moved).astype(np.uint8)
@@ -264,7 +276,7 @@ class BedrockGenerator:
         """[x, z] Bedrock biome ids of the chunk."""
         return self.biome_source.area(cx * 16, cz * 16, 16, 16).T.astype(np.uint8)
 
-    def chunk(self, cx: int, cz: int, lift: Optional[np.ndarray] = None):
-        codes, biomes = self.chunk_bedrock(cx, cz, lift)
+    def chunk(self, cx: int, cz: int, lift: Optional[np.ndarray] = None, adjust: Optional[TerrainAdjustments] = None):
+        codes, biomes = self.chunk_bedrock(cx, cz, lift, adjust)
         blocks, data = to_java(codes)
         return blocks, _HUB[biomes], data

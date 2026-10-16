@@ -847,6 +847,14 @@ Fixes made after the 0.2.2 release, listed in the [changelog](../CHANGELOG.md#un
      `mobs_spawned`, `finalized` and the 1.14+ `light`, `spawn` and `heightmaps` now count as finished
      (`incomplete.is_complete`), and the Amulet load hook writes them as full. Test: `tests/test_incomplete_status.py`.
 
+177. **Bedrock old generator: a few ground cells differed from the game next to villages** (197 cells in seed 1001,
+     3,107 in a village seed). Bedrock adds a structure "beard" kernel to the squashed density of chunks with village
+     pieces before the stone test (`v / 200` in 1.16, `v * 0.005` in 1.17). It is now implemented
+     (`terrain/bedrockbeard.py`, `BedrockGenerator.chunk(..., adjust=)`) and matches BDS 1.16.220 and 1.17.41 in six
+     worlds, about 94 million cells, with the game's own adjustments. Not reproduced yet: the village layout that
+     supplies those adjustments; the stronghold "bury" path is implemented but unverified. Test:
+     `tests/test_bedrockgen.py` with `tests/data/bedrock_beard_golden.json`.
+
 178. **Java 1.18+ targets met the converted chunks with a wall.** Converted overworld chunks of another generator or
      seed (Bedrock 1.18+, a Java 1.18+ world of another seed, moved, or taken to an older version) were written as
      finished chunks without `blending_data`, so the game assumed the edge continued; measured in the games, the mean

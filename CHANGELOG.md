@@ -101,6 +101,10 @@
 
 ### Fixed
 
+- **Bedrock old generator next to villages.** The ring's terrain now follows the game's structure "beard" (the
+  ground raised or cut around village pieces) when the adjustments are known; checked bit for bit against Bedrock
+  Dedicated Server 1.16 and 1.17. The village layout itself is not reproduced yet, so ring chunks next to a village
+  can still differ in a few ground blocks.
 - **Finished chunks of Java 1.13 – 1.17 worlds counted as unfinished.** Chunks in the 1.13 states `lighted`,
   `mobs_spawned` and `finalized` (and 1.14+ `light`, `spawn`, `heightmaps`) are now converted: their terrain no longer
   changes. Only the states that still receive ores, trees and lakes from their neighbours (empty to decorated /
