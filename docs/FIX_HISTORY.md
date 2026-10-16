@@ -900,5 +900,17 @@ Fixes made after the 0.2.2 release, listed in the [changelog](../CHANGELOG.md#un
      `Pos` is now moved with the group.
 189. **Opening a Bedrock world in the editor touched its database.** The players are read from a private copy now; with
      *Apply only to the converted world* the edits are kept apart and written only into the converted world.
+190. **Bedrock to Java: flowing water and lava never moved again** ("pieces of lava look like terrain" in the Nether of
+     Casca). Bedrock saves liquids mid-flow (`liquid_depth` 1-15, converted 1:1 to `level`) with their pending ticks
+     (chunk key tag 0x33 PendingTicks, 0x3a RandomTicks: an NBT `tickList` of `{blockState, x, y, z, time}`); the Java
+     chunks got the cells and no tick (the Java output had zero), so 2,861 lava cells in the Nether and ~52,000 water
+     cells in the Overworld stayed as static partial blocks until a neighbour changed. `worldbridge/java/fluids.py` now
+     schedules, on the finished Java world, a fluid tick for every flowing / falling cell and for every source with air
+     beside or below it (delay 5 water, 30 lava, 10 in the Nether; capped per chunk), and translates Bedrock's pending
+     ticks (relative to the chunk's `currentTick`) to block ticks when the same block is still there. Formats: 1.18+
+     `fluid_ticks` / `block_ticks` (`flowing_lava` for a flowing cell: the game ignores a tick whose fluid differs),
+     1.13 - 1.17 `Level.LiquidTicks` / `TileTicks`, 1.12 `Level.TileTicks` (block names); older formats are left alone.
+     Not done: Java to Bedrock (the Bedrock chunks get no PendingTicks), LCE / neoLegacy and Pocket Edition. Test:
+     `tests/test_fluid_ticks.py`.
 
 The tests of these fixes are listed by area in [VERIFICATION.md](VERIFICATION.md#automated-tests).

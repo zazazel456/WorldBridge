@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from . import amulet_bridge as ab
+from . import blocks as blk
 from .i18n import N_, tr
 from . import detect as det
 from .model import (y_shifts, NETHER, OVERWORLD, THE_END, UNKNOWN_BIOME, BiomeFiller, ConversionCancelled, ConversionError, NumericChunk,
@@ -1165,6 +1166,11 @@ def convert(src_path: str, out_dir: str, target: TargetSpec, progress: Optional[
                     tr("{n} Update Aquatic blocks (LCE) were replaced with 1.12 equivalents: choose a specific "
                        "(pre-converted) Java version to keep them identical.", n=n_modern)
                 )
+        if (d.kind == "bedrock" and target.family == "java" and target.java_mode == "numeric" and target.java_version_limit
+                and blk.version_rank(target.java_version_limit) >= blk.version_rank("1.8")):
+            # the numeric Anvil writer stamps no DataVersion: 1.8 - 1.12 name the blocks of their ticks like 1.12
+            _settle_liquids(d, out_dir, progress, moved=move.active or bool(depth is not None and depth.used),
+                            assume_dv=1343)
         if amulet_target:                    # what the translation to the legacy hub left out is counted in the same tally
             _warn_missing_content(progress, platform, wver)
         else:
@@ -1306,6 +1312,10 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
     else:
         ab.write_java_level_dat(out_dir, info, target.version, progress)
     direct_extras(d, out_dir, target, info, progress, wver, move if move.active else None, depth, sel.keep_unfinished)
+    if platform == "java" and d.kind == "bedrock":
+        # Amulet writes no DataVersion in its 1.12 chunks: they are read as 1.12's
+        _settle_liquids(d, out_dir, progress, moved=move.active or bool(depth is not None and depth.used),
+                        assume_dv=1343 if tuple(target.version or (99,)) < (1, 13) else 0)
     _write_pet_pack(out_dir, target, info, progress)
     _warn_missing_content(progress, platform, wver)
     if depth is not None:
@@ -1329,6 +1339,19 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
         _bedrock_edge(out_dir, target, d.kind, old_source, move.active or edge.is_moved(target, sel), progress)
     progress.done()
     return ConversionResult(out_dir, n or 0)
+
+
+def _settle_liquids(d: det.Detected, out_dir: str, progress: Progress, moved: bool = False, assume_dv: int = 0) -> None:
+    """Bedrock saves flowing water / lava mid-flow with its pending ticks: the Java chunks get the ticks (fluid ticks
+    for every flowing cell, the block ticks Bedrock had), or the cells would stay frozen as partial blocks
+    (worldbridge.java.fluids).  ``moved``: the blocks no longer stand where Bedrock's ticks say, only the liquids count."""
+    from .extra import error_text
+    from .java import fluids
+
+    try:
+        fluids.schedule_world(out_dir, progress, None if moved else d.path, assume_dv)
+    except Exception as ex:  # noqa: BLE001 - the world itself is fine without them
+        progress.warn(tr("The ticks of the liquids could not be written: {error}", error=error_text(ex)))
 
 
 def _bedrock_edge(out_dir: str, target: TargetSpec, source_kind: str, old_source: bool, moved: bool,

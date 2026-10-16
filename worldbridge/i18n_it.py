@@ -622,6 +622,14 @@ _SECTIONS = {
         'End ring {i}/{n}':
             "Raccordo dell'End {i}/{n}",
     },
+    'worldbridge/java/fluids.py': {
+        'The pending ticks of the Bedrock world could not be read: {error}':
+            "I tick in sospeso del mondo Bedrock non si sono potuti leggere: {error}",
+        'Liquids: {fluid} fluid ticks and {block} block ticks scheduled in {chunks} chunks, so that the game settles the flowing water and lava when it loads them.':
+            "Liquidi: {fluid} tick dei fluidi e {block} tick dei blocchi programmati in {chunks} chunk, così il gioco assesta acqua e lava in movimento quando li carica.",
+        'The ticks of the liquids could not be written: {error}':
+            "I tick dei liquidi non si sono potuti scrivere: {error}",
+    },
     'worldbridge/java/modern.py': {
         'Java: {tiles} block entities and {entities} entities written.':
             'Java: {tiles} blocchi-entità e {entities} entità scritti.',

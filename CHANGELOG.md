@@ -101,6 +101,15 @@
 
 ### Fixed
 
+- **Bedrock to Java: flowing water and lava stayed frozen as partial blocks** ("pieces of lava that look like terrain"
+  in the Nether). Bedrock saves liquids mid-flow together with their pending ticks, and the converted Java chunks had the
+  flowing / falling cells but no scheduled tick at all, so nothing ever updated them until a neighbour changed (Casca: 2,861
+  lava cells in the Nether, about 52,000 water cells in the Overworld). Every flowing or falling liquid cell now gets a
+  fluid tick (water 5, lava 30, 10 in the Nether), plus the source cells that have air beside or below them, at most
+  8,192 + 1,024 per chunk, so the game resolves them when it loads the chunk. The pending ticks Bedrock saved (chunk keys
+  0x33 and 0x3a) become fluid ticks and block ticks (fire, coral, gravel...) when the block is still there. Java 1.12
+  (`TileTicks`), 1.13 - 1.17 (`LiquidTicks` / `TileTicks`) and 1.18+ (`fluid_ticks` / `block_ticks`) chunks. Java to
+  Bedrock, LCE and Pocket Edition are unchanged (see docs/FIX_HISTORY.md #190). Tests: `tests/test_fluid_ticks.py`.
 - **Bedrock old generator next to villages.** The ring's terrain now follows the game's structure "beard" (the
   ground raised or cut around village pieces) when the adjustments are known; checked bit for bit against Bedrock
   Dedicated Server 1.16 and 1.17. The village layout itself is not reproduced yet, so ring chunks next to a village
