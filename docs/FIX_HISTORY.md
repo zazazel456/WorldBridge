@@ -937,5 +937,24 @@ Fixes made after the 0.2.2 release, listed in the [changelog](../CHANGELOG.md#un
      ring has no fortresses or bastions (the structure starts of ring chunks are empty), and pre-1.18 sources written in
      the 1.17 format keep the game's own blending of the Nether. The End ring was checked on generators and biomes
      only (the Casca world has no End). Tests: `tests/test_nether_ring118.py`.
+192. **Bedrock to Java 1.18+: the Nether ring hung lava sheets in the air and its caves ended in walls against the
+     converted border** (Casca, after #191: "much better, not perfect": a lava sheet at y 37 around x -43, z 95 with
+     straight edges and lavafalls, "a chunk looks cut"). Causes, both in `ring3d.py`: (1) `Ring3D.blend` took the open
+     block of every ring cell from the converted border column's lava (`cmat == 11`, at any height, copied outwards)
+     or the generator's, so cave lava of the converted side (8.5 k cells above y 31 there, legitimate in caves) became a
+     sheet over air wherever the blend slid the open space: 354 cells at y 37 and sheets at 52 / 83 / 88, 1,735 source
+     lava cells with air below and 3,359 lava cells above y 31 in the 517 ring chunks (converted chunks: 0 hanging; the
+     game then added lava springs). Now open space is lava iff y < 32 (the game's sea rule, `LAVA_Y`) and air above:
+     0 hanging cells and 0 lava above y 31 in the fresh ring; after the 26.3 server ran the ring chunks: 2 hanging cells
+     (lava springs of the game's features). (2) "The chunk looks cut": at chunk (-3, 5) / (-3, 6) the solid terrain has
+     no seam (mismatched layers per column 0.05 - 0.5 on every border there, vanilla 1.2 - 3); the cut look was the
+     lava sheet ending at chunk borders. The real wall was elsewhere: `_finish_blocks` ran the game's cave carver over
+     the whole ring, so caverns up to 65 blocks high (y 56 - 120) opened flush against the converted rock (15 border
+     pairs with 25 - 52 mismatched layers per column). The carver now only opens where the converted weight is below
+     `CARVE_WEIGHT` = 0.5 (about two chunks from the converted border; ring | game untouched, the carver is the game's
+     own there). Measured with the 26.3 harness (forceload converted + ring + 4 chunks, same Casca copy): converted |
+     ring 8.8 -> 1.1 (vanilla 3.0), ring | ring 4.0 -> 3.6 (4.1), ring | game 5.0 -> 5.0 (4.7), hanging lava cells
+     in ring chunks 0 (game chunks 32, converted 0). Test: `tests/test_nether_ring118.py`
+     (`test_the_ring_never_hangs_lava_in_the_air`, `test_the_games_caves_do_not_open_against_the_converted_border`).
 
 The tests of these fixes are listed by area in [VERIFICATION.md](VERIFICATION.md#automated-tests).

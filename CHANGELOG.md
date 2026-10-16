@@ -101,6 +101,15 @@
 
 ### Fixed
 
+- **Bedrock to Java 1.18+: lava sheets hanging in the air and walls at the edge of the converted Nether.** The Nether
+  ring copied the lava of the converted border's cave (any height) into its open space and slid it with the blend, so
+  ring chunks had lava sheets at y 37, 52, 83, 88 over air with straight edges at the chunk borders and lavafalls
+  (1,735 source lava cells over air, 3,359 lava cells above the lava sea in 517 ring chunks of the Casca world). The ring
+  now follows the game's rule: open space under y 32 is lava, nowhere else (0 hanging cells, 0 lava above y 31 before the
+  game runs). The game's caves also opened flush against the converted rock (caverns up to 65 blocks high ending in a
+  wall: converted | ring 8.8 mismatched solid layers per column pair, 3.0 in a vanilla world); they now open only where
+  the converted side's weight is below 0.5, i.e. from about two chunks away (converted | ring 1.1, ring | game unchanged
+  at 5.0 against 4.7). Converted chunks are untouched. Test: `tests/test_nether_ring118.py`.
 - **Bedrock to Java 1.18+: the converted Nether (and End) met the game's terrain with walls, cut caves and cut lava
   seas.** Java 1.18+ only blends the Overworld, and Bedrock's Nether is not Java's, so the Nether ended in a step
   (mean 37 mismatched solid layers per column pair across the border, 3 in a world the game made itself). The 3D ring
