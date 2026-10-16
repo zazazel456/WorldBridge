@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Java 1.13 worlds lost their `fullchunk` chunks.** Converting a 1.13 world through Amulet dropped every chunk the
+  game had left in the `fullchunk` state (complete terrain, about 15 % of the finished chunks); they are converted now.
+- **Biomes no longer turn into plains.** Converting a Java 1.12 style world (our numeric intermediate included, so
+  every route that uses it, ring worlds too) to Bedrock or Java 1.13+ lost every biome from 40 up (oceans other than the
+  plain one, End biomes, bamboo) and the mutated ones (sunflower plains, gravelly mountains, mesa Bryce...) read as
+  plains: they are all kept now, in the target's own numbers. Toward a real Java 1.12 or LCE target the newer biomes
+  become the nearest older one (warm ocean to ocean, bamboo jungle to jungle). Bedrock's void biome is kept too.
 - **A ring for Bedrock 1.6 – 1.17 targets.** The overworld generator of Bedrock before 1.18 is reproduced (biome graph,
   terrain density, surface pass, bedrock floor), bit for bit against Bedrock Dedicated Server 1.16.220 under a debugger and
   against saved worlds of 1.6, 1.10, 1.12, 1.14, 1.16 and 1.17 (same algorithm in all of them; seeds above 2^31 too), and

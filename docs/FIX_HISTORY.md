@@ -816,5 +816,24 @@ saves the game despawned hostile mobs far from the player (Vita: 2,162 → 1,866
 173. **Two conversions at once in one process** (the GUI's preview and a conversion) could mix their
      results: `parallel.ordered_map` kept the function and state of the last caller in a global. Each
      call has its own now.
+174. **Biomes 40 and above, and the mutated ones, became plains** whenever a world went through Amulet
+     from a Java 1.12 style Anvil chunk: the numeric hub (declared 1.12.2) and real Java 1.2 - 1.12
+     worlds converted to Bedrock or Java 1.13+. Two causes. Amulet's `AnvilNAInterface._decode_biomes`
+     (and our replacement of it) widened the signed byte array with `astype(uint32)`, so 129 stored as -127
+     became 4294967169, which no table has; the id is masked to 0..255 first. And PyMCTranslate's Java
+     1.12.2 biome table stops at the 1.12 ids, so 40 - 50 (1.13 end and ocean biomes) and 168 - 173
+     (bamboo, nether biomes) unpacked to plains: the table now also reads those ids (names taken from
+     PyMCTranslate's own 1.13 - 1.17 tables; the other direction is untouched, so a real 1.12 target still
+     gets valid ids: warm_ocean to ocean, bamboo_jungle to jungle). Bedrock's table sent the void (127) to
+     plains. A real Java 1.12 numeric target and the LCE writer now degrade 1.13+ ids the same way
+     (`biomes.java12_lut`) instead of writing ids the game does not know (44, 168). A probe that patched only
+     the class attribute had shown no change: the interface instances had already registered the old bound
+     method, which `_patch_amulet_biomes` re-binds. Java 1.15+ keeps one biome per 4 x 4 cell, so a
+     16 x 16 map with finer detail loses some ids there by design. Test: `tests/test_biome_ids.py`.
+175. **Java 1.13 chunks with status `fullchunk` were silently left out** of every Amulet route (about 15 % of the
+     finished chunks of a 1.13 world). Amulet scores `fullchunk` 1.9 and `finalized` 1.5 and its save writes only
+     chunks that score 2.0, although both hold complete terrain (`incomplete.py` already counts `fullchunk` as
+     finished, so nothing warned). The load hook of `_AmuletJob` now sets every chunk scoring 1.5 or more to full;
+     what counts as unfinished is unchanged. Test: `tests/test_fullchunk_status.py`.
 
 The tests of these fixes are listed by area in [VERIFICATION.md](VERIFICATION.md#automated-tests).
