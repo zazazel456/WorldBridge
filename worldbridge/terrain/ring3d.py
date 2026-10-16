@@ -16,6 +16,13 @@ overhangs, a lava sea) and the End a set of floating islands, so their ring blen
 
 Buildings, fortresses, glowstone, pillars and plants of the converted border are not carried into
 the ring (they are not terrain).  At the outer edge the ring is exactly the game's terrain.
+
+Java 1.18 and later: the Nether kept the noise terrain of 1.16 (netherrack where Minecraft 1.16's
+generator has it, checked against a 26.3 Nether), so dims16.py's generator makes the ring there too,
+and the chunks are written as the game leaves them after its "noise" step with the biomes of the
+game's own Nether biome source (netherbiomes.py): the game adds the bedrock, the surface of every
+biome (nylium, soul sand, basalt...), the caves and the decoration, and its terrain goes on past
+the ring without a step.
 """
 
 from __future__ import annotations
@@ -81,8 +88,9 @@ class Ring3D:
     1.17), so the ring has no bedrock of its own and only rock, lava and air."""
 
     def __init__(self, gen, dim: int, converted: Iterable[Tuple[int, int]], dy: int = 0, seed: int = 0,
-                 width: int = WIDTH, noise_only: bool = False):
+                 width: int = WIDTH, noise_only: bool = False, modern: bool = False):
         self.gen = gen
+        self.modern = modern                # Java 1.18+: chunks without "Level", biomes in sections
         self.dim = dim
         self.dy = dy
         self.seed = seed
@@ -293,12 +301,38 @@ def _blend_chunk(state, c: Tuple[int, int]) -> NumericChunk:
     return out
 
 
+def modern_target(target) -> bool:
+    """A Java 1.18 or later target written by Amulet (its Nether and End are the 1.16 noise terrain; the End's
+    island shape was checked against a 26.3 End: 98 - 99 % of the end stone of the chunks is the same, the
+    rest being the decoration)."""
+    from .. import amulet_bridge as ab
+
+    if getattr(target, "family", "") != "java" or getattr(target, "java_mode", "auto") not in ("auto", "amulet"):
+        return False
+    return tuple(getattr(target, "version", None) or ab.latest("java")) >= (1, 18, 0)
+
+
+def dimensions(target) -> Tuple[int, ...]:
+    """The dimensions that get a 3D ring in a Java 1.18+ target."""
+    return (NETHER, THE_END) if modern_target(target) else ()
+
+
 def generator(target, seed: int, dim: int):
     """The target's Nether or End generator and whether the game finishes the chunks from their
     noise step; None when WorldBridge has none (or the target has no such dimension)."""
     from . import ring as ring_mod
 
     lim = ring_mod._limit(target)
+    if not lim and modern_target(target):
+        if dim == NETHER:
+            from .dims16 import Nether16Generator
+
+            return Nether16Generator(seed, "1.16"), True
+        if dim == THE_END:
+            from .dims16 import End16Generator
+
+            return End16Generator(seed, "1.16"), True
+        return None
     if not lim:
         return None
     if dim == NETHER:
@@ -340,3 +374,207 @@ def generator(target, seed: int, dim: int):
             return End16Generator(seed, lim), True
     return None
 
+
+
+# ---------------------------------------------------------------------------------------------- Java 1.18+
+MODERN_STATUS = "minecraft:terrain"     # 1.18+ (26.x): noise, surface and caves in one step; the game adds the features
+BIOME_BITS = {1: 0, 2: 1, 3: 2, 4: 2, 5: 3, 6: 3, 7: 3, 8: 3}
+_AIR = ("minecraft:air", "minecraft:cave_air", "minecraft:void_air")
+
+
+def modern_biomes(r3: "Ring3D", cx: int, cz: int) -> np.ndarray:
+    """[4, 4] biome names (object array, index [qx, qz]) of the chunk's cells for the ring chunk."""
+    if r3.dim == NETHER:
+        from .netherbiomes import NAMES, NetherBiomes
+
+        if getattr(r3, "_nbiomes", None) is None:
+            r3._nbiomes = NetherBiomes(r3.seed)
+        return np.array(NAMES, object)[r3._nbiomes.chunk(cx, cz)]
+    return np.full((4, 4), r3.gen.biome_name(cx, cz), object)
+
+
+def _pack(idx: np.ndarray, bits: int) -> "np.ndarray":
+    """Palette indices packed into longs, ``64 // bits`` to a long, none split between two."""
+    per = 64 // bits
+    n = -(-len(idx) // per)
+    pad = np.zeros(n * per, np.uint64)
+    pad[:len(idx)] = idx
+    sh = (np.arange(per, dtype=np.uint64) * np.uint64(bits))[None, :]
+    return (pad.reshape(n, per) << sh).sum(axis=1, dtype=np.uint64).view(np.int64)
+
+
+def _unpack(longs, bits: int, n: int) -> np.ndarray:
+    per = 64 // bits
+    arr = np.array([int(v) & (2 ** 64 - 1) for v in longs], np.uint64)
+    i = np.arange(n)
+    return ((arr[i // per] >> ((i % per) * bits).astype(np.uint64)) & np.uint64((1 << bits) - 1)).astype(np.int64)
+
+
+def _biome_container(grid: np.ndarray, layers: int = 4):
+    """The ``biomes`` compound of a section (4 layers of the [qx, qz] grid of names)."""
+    from .. import nbt as wnbt
+
+    names = sorted({str(v) for v in grid.ravel()})
+    out = wnbt.CompoundTag({"palette": wnbt.ListTag([wnbt.StringTag(n) for n in names])})
+    if len(names) == 1:
+        return out
+    look = {n: i for i, n in enumerate(names)}
+    idx = np.array([[[look[str(grid[x, z])] for x in range(4)] for z in range(4)] for _ in range(layers)]).ravel()
+    out["data"] = wnbt.LongArrayTag(_pack(idx, BIOME_BITS[len(names)]))
+    return out
+
+
+def _entry_key(entry):
+    """(name, properties) of a block palette entry: a bare string (the default state) or a compound."""
+    if hasattr(entry, "py_str"):
+        return entry.py_str, ()
+    name = entry.get("id", entry.get("Name", entry.get("")))
+    props = entry.get("properties", entry.get("Properties"))
+    return str(name.py_str), (tuple(sorted((k, str(v.py_str)) for k, v in props.items())) if props else ())
+
+
+def _palette(keys):
+    """The ``palette`` list of block states: strings while every state is its block's default one; else
+    compounds ({"": name} for a default state, {id, properties} for the others), as the game writes it."""
+    from .. import nbt as wnbt
+
+    if not any(p for _, p in keys):
+        return wnbt.ListTag([wnbt.StringTag(n) for n, _ in keys])
+    out = []
+    for n, p in keys:
+        if p:
+            out.append(wnbt.CompoundTag({"id": wnbt.StringTag(n), "properties": wnbt.CompoundTag(
+                {k: wnbt.StringTag(v) for k, v in p})}))
+        else:
+            out.append(wnbt.CompoundTag({"": wnbt.StringTag(n)}))
+    return wnbt.ListTag(out)
+
+
+def _decode_blocks(sections):
+    """(keys, ids [128, 16, 16] (y, z, x)): the chunk's block states as indices into ``keys``."""
+    keys, look = [], {}
+    ids = np.zeros((128, 16, 16), np.int32)
+    air = None
+    for sec in sections:
+        y0 = int(sec["Y"]) * 16
+        bs = sec.get("block_states")
+        if y0 < 0 or y0 >= 128:
+            continue
+        if bs is None:
+            if air is None:
+                air = look.setdefault(("minecraft:air", ()), len(keys))
+                if air == len(keys):
+                    keys.append(("minecraft:air", ()))
+            ids[y0:y0 + 16] = air
+            continue
+        pal = []
+        for e in bs["palette"]:
+            k = _entry_key(e)
+            if k not in look:
+                look[k] = len(keys)
+                keys.append(k)
+            pal.append(look[k])
+        pal = np.array(pal, np.int32)
+        if len(pal) == 1 or "data" not in bs:
+            ids[y0:y0 + 16] = pal[0]
+        else:
+            bits = max(4, (len(pal) - 1).bit_length())
+            ids[y0:y0 + 16] = pal[_unpack(bs["data"], bits, 4096)].reshape(16, 16, 16)
+    return keys, ids
+
+
+def _finish_blocks(r3: "Ring3D", cx: int, cz: int, sections) -> None:
+    """What the game's terrain step does after the noise, on the ring chunk's netherrack, lava and air: the
+    Nether's surface (bedrock, nylium, soul sand, basalt...) and then its caves (nethercarver.py)."""
+    from . import nethersurface as ns
+    from .netherbiomes import NetherBiomes
+
+    if getattr(r3, "_surface", None) is None:
+        r3._surface = ns.NetherSurface(r3.seed)
+        r3._nbiomes = getattr(r3, "_nbiomes", None) or NetherBiomes(r3.seed)
+    keys, ids = _decode_blocks(sections)
+    cat = np.array([0 if k[0] in _AIR else 1 if k[0] == "minecraft:lava" else 2 if k[0] == "minecraft:netherrack" else 3
+                    for k in keys], np.int8)
+    codes = r3._surface.apply(cx, cz, cat[ids], r3._nbiomes.chunk(cx, cz))
+
+    def index(name: str) -> int:
+        k = (name, ())
+        if k not in keys:
+            keys.append(k)
+        return keys.index(k)
+
+    new = ids.copy()
+    for code in np.unique(codes[codes > 0]):
+        new[codes == code] = index(ns.BLOCKS[int(code)])
+    if getattr(r3, "carve", True):
+        from .nethercarver import LAVA_Y
+
+        if getattr(r3, "_caves", None) is None:
+            from .nethercarver import NetherCaves
+
+            r3._caves = NetherCaves(r3.seed)
+        carved = r3._caves.mask(cx, cz) & (codes != ns.BEDROCK)
+        bedrock = np.array([k[0] == "minecraft:bedrock" for k in keys])
+        carved &= ~bedrock[new]
+        if carved.any():
+            y = np.arange(128)[:, None, None]
+            new = np.where(carved, np.where(y < LAVA_Y, index("minecraft:lava"), index("minecraft:air")), new)
+    from .. import nbt as wnbt
+
+    for sec in sections:
+        y0 = int(sec["Y"]) * 16
+        if y0 < 0 or y0 >= 128 or (new[y0:y0 + 16] == ids[y0:y0 + 16]).all():
+            continue
+        block = new[y0:y0 + 16]
+        used = np.unique(block)
+        st = wnbt.CompoundTag({"palette": _palette([keys[i] for i in used])})
+        if len(used) > 1:
+            st["data"] = wnbt.LongArrayTag(_pack(np.searchsorted(used, block).ravel(), max(4, (len(used) - 1).bit_length())))
+        sec["block_states"] = st
+
+
+def mark_modern(world_dir: str, r3: "Ring3D", sub: str, status: str = "") -> int:
+    """The ring's chunks of a Java 1.18+ world (written by Amulet as finished chunks) get the Nether's
+    surface and caves (the game makes them in its terrain step), the biomes of the game's own biome source and
+    the status the game carries on from, "terrain": it only adds the features (lakes, ores, trees, glowstone...)
+    and the light.  Returns the chunks changed."""
+    import os
+
+    from .. import nbt as wnbt
+    from ..java.region import JavaRegion, RegionWriter
+
+    status = status or MODERN_STATUS
+    by_region: Dict[Tuple[int, int], Set[Tuple[int, int]]] = {}
+    for cx, cz in r3.written:
+        by_region.setdefault((cx >> 5, cz >> 5), set()).add((cx & 31, cz & 31))
+    done = 0
+    for (rx, rz), locs in by_region.items():
+        path = os.path.join(world_dir, sub, f"r.{rx}.{rz}.mca")
+        if not os.path.isfile(path):
+            continue
+        reg = JavaRegion(path)
+        out = RegionWriter(external=True)
+        for lx, lz in reg.chunks():
+            raw = reg.read(lx, lz)
+            if raw is None:
+                continue
+            if (lx, lz) in locs:
+                root = wnbt.load(raw, compressed=False).tag
+                if "Level" not in root:
+                    cx, cz = rx * 32 + lx, rz * 32 + lz
+                    sections = list(root.get("sections", []))
+                    if r3.dim == NETHER:
+                        _finish_blocks(r3, cx, cz, sections)
+                    grid = modern_biomes(r3, cx, cz)
+                    for sec in sections:
+                        sec["biomes"] = _biome_container(grid)
+                        for k in ("BlockLight", "SkyLight"):
+                            sec.pop(k, None)
+                    root["Status"] = wnbt.StringTag(status)
+                    root["isLightOn"] = wnbt.ByteTag(0)
+                    root["Heightmaps"] = wnbt.CompoundTag()
+                    raw = wnbt.dump(root, "")
+                    done += 1
+            out.put(lx, lz, raw)
+        out.write(path)
+    return done

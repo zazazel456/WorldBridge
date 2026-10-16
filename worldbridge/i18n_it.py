@@ -311,6 +311,8 @@ _SECTIONS = {
             'isole di end stone',
         'surfaces and biomes, caves and decoration are added by the game':
             'superfici e biomi, grotte e decorazioni li aggiunge il gioco',
+        'the bedrock and the surface of every biome are written by WorldBridge, the decoration (lava lakes, glowstone, ores, trees...) is added by the game':
+            'la bedrock e la superficie di ogni bioma le scrive WorldBridge, le decorazioni (laghi di lava, pietra luminosa, minerali, alberi...) le aggiunge il gioco',
         'glowstone, fire, lava springs and fortresses are added by the game':
             'pietra luminosa, fuoco, sorgenti di lava e fortezze li aggiunge il gioco',
         'the decoration (chorus plants, End cities) is added by the game':

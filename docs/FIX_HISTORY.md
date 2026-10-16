@@ -912,5 +912,30 @@ Fixes made after the 0.2.2 release, listed in the [changelog](../CHANGELOG.md#un
      1.13 - 1.17 `Level.LiquidTicks` / `TileTicks`, 1.12 `Level.TileTicks` (block names); older formats are left alone.
      Not done: Java to Bedrock (the Bedrock chunks get no PendingTicks), LCE / neoLegacy and Pocket Edition. Test:
      `tests/test_fluid_ticks.py`.
+191. **Bedrock to Java 1.18+: the converted Nether met the game's terrain with walls, cut caves and cut lava seas**
+     (Casca, Bedrock 1.26 to Java 26.3). Measured in a 26.3 server on the converted Nether: 37.1 mismatched solid
+     layers per column pair across the converted | generated border (3.0 in a vanilla world), 14.2 with `blending_data` on
+     the Nether chunks (the game blends the Nether partly and with artifacts: 26.3 even has a fixer that removes
+     it). Java kept the 1.16 Nether noise (the 1.16 generator of `dims16.py` reproduces 100 % of the netherrack of a 26.3
+     Nether), so the 3D ring (`ring3d.py`) that Java 1.13 - 1.17 targets already had now goes around the Nether and End
+     of every Java 1.18+ target (`ring3d.modern_target`, `dimensions`, `generator`; `convert._rings3d_after_amulet`).
+     26.x has no `noise` / `surface` / `carvers` statuses (its statuses are empty, structure_starts,
+     structure_references, biomes, terrain, features, initialize_light, light, spawn, full): a chunk stored at `biomes`
+     is generated again over the ring's blocks (converted | ring border 24.6), and `terrain` already holds surface and
+     caves. The ring chunks are therefore written at `terrain` with what that step makes, all found in the jar and
+     checked against a 26.3 Nether / End: `netherbiomes.py` (the Nether still has the 1.16 random source: temperature
+     noise seeded with the world seed, vegetation with seed + 1, old Perlin initialisation, 5 points: 22,495 of
+     22,496 cells equal), `nethersurface.py` (the Nether's material rules with their noises from the legacy
+     positional random: bedrock floor and roof identical to the game's, nylium / soul sand / basalt / gravel
+     patches 72 - 100 % where the game's decoration does not interfere), `nethercarver.py` (the `nether_cave` carver,
+     ellipsoid by ellipsoid, in single precision with the game's sine table: open cells 14,422 of 14,772 expected, the
+     difference being lava lakes and decoration) and the End biome by island height (`dims16.End16Generator.biome_name`).
+     Measured with the harness (forceload of converted Nether + ring + 4 chunks): converted | ring 8.7, ring | game 4.9
+     (vanilla 4.7), inside the ring 4.0 (vanilla 4.1); without the carver 1.0 and 10.5 (the game's tunnels end in a
+     wall at the ring's edge), i.e. the caves have to end somewhere and the edge of the converted world is the least bad
+     place. Blending flags on the ring make the ring | game border worse (7.2), so the Nether keeps none. Not done: the
+     ring has no fortresses or bastions (the structure starts of ring chunks are empty), and pre-1.18 sources written in
+     the 1.17 format keep the game's own blending of the Nether. The End ring was checked on generators and biomes
+     only (the Casca world has no End). Tests: `tests/test_nether_ring118.py`.
 
 The tests of these fixes are listed by area in [VERIFICATION.md](VERIFICATION.md#automated-tests).

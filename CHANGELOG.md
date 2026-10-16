@@ -101,6 +101,26 @@
 
 ### Fixed
 
+- **Bedrock to Java 1.18+: the converted Nether (and End) met the game's terrain with walls, cut caves and cut lava
+  seas.** Java 1.18+ only blends the Overworld, and Bedrock's Nether is not Java's, so the Nether ended in a step
+  (mean 37 mismatched solid layers per column pair across the border, 3 in a world the game made itself). The 3D ring
+  of the Java 1.13 - 1.17 targets now goes around the Nether and the End of every Java 1.18+ target too: the Nether kept
+  the noise terrain of 1.16 (netherrack where 1.16's generator has it, checked against a 26.3 Nether), so the 1.16
+  generator is the ring's outer edge and the game's terrain continues past it without a step. Because 26.x makes noise,
+  surface and caves in one "terrain" step (there is no "noise" or "surface" status any more: the game cannot be left
+  to add them), the ring chunks are written as finished terrain (status `terrain`) with everything that step does:
+  the biomes of the game's Nether biome source (it keeps the 1.16 random source, temperature seed = world seed,
+  vegetation seed + 1; 22,495 of 22,496 cells equal the 26.3 Nether's), the surface of every biome (bedrock,
+  crimson / warped nylium and wart blocks, soul sand and soil, basalt and blackstone, gravel and soul sand patches,
+  lava in holes; bedrock layer by layer identical to the game's) and the caves (the "nether_cave" carver ported
+  from the jar: its tunnels equal the game's to within the decoration), so the game only adds the features (lava
+  lakes, glowstone, ores, trees...) and light. The End's ring uses the 1.16 End island (98 - 99 % of the end stone of
+  26.3's chunks) with End biomes (1,504 of 1,504 chunks). Measured on the Casca world in a 26.3 server (mean
+  mismatched solid layers per column pair, y 0..127; vanilla 3.0): converted | ring border 8.7 (without a remedy
+  37.1, with `blending_data` on the Nether chunks 14.2), ring | game 4.9 (vanilla 4.7), ring inside 4.0 (vanilla
+  4.1). `blending_data` stays off the Nether when the ring is used (with it the ring | game border is 7.2). Not
+  covered: pre-1.18 sources written in the 1.17 format that the game upgrades (their Nether is still blended by
+  the game alone), structures (fortresses, bastions) inside the ring. Tests: `tests/test_nether_ring118.py`.
 - **Bedrock to Java: flowing water and lava stayed frozen as partial blocks** ("pieces of lava that look like terrain"
   in the Nether). Bedrock saves liquids mid-flow together with their pending ticks, and the converted Java chunks had the
   flowing / falling cells but no scheduled tick at all, so nothing ever updated them until a neighbour changed (Casca: 2,861

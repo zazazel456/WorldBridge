@@ -70,7 +70,8 @@ del gioco* / `--no-blend` and *Anello di raccordo* / `--no-ring`.
 | Java 1.7 – 1.12 (Anvil) | C | ✅ 1.7+ biomes, 256-high terrain, biome surfaces (mountains, giant taiga, shattered savanna, swamp, mesa), caves and ravines; Default, Large Biomes and Amplified worlds (Customized worlds warn) |
 | Java 1.13 – 1.17 (Amulet) | C | ✅ the 1.14–1.17 noise generator (1.13: the 1.12 density with 1.13 biomes) and every biome's surface builder. **Caves, ravines, lakes, ores and trees are the game's**: ring chunks are written with status `surface` (`base` in 1.13) and the game carves and decorates them. Also works after direct Amulet conversions (Java 1.13+ and Bedrock → Java 1.13–1.17), by reading the border of the converted world |
 | Nether and End, Java Alpha 1.2 – 1.17 | C (3D ring) | ✅ generators checked bit for bit against the games' code, 3D ring around the converted part; or *Regenerate* leaves the dimension to the game |
-| Nether and End, Java and Bedrock 1.18+ | – | ⚠️ the game's blending applies to the Overworld only: a Nether or End converted from another generator or seed has a step at the edge. From the same Java with the same seed the terrain continues. *Regenerate* is available |
+| Nether and End, Java 1.18+ (Amulet route: Bedrock, Java and others to 26.x) | C (3D ring) | ✅ the game's blending applies to the Overworld only, so the Nether and End get the 3D ring too: the 1.16 noise terrain (kept by Java 1.18+, checked on a 26.3 Nether), written at status `terrain` with the surface of every biome, the caves and the biomes of the game's own sources (Nether 22,495 / 22,496 cells, End 1,504 / 1,504 chunks); the game adds the features. Casca (Bedrock → 26.3), mean mismatched solid layers per column pair: converted \| ring 8.7 (37.1 without a remedy, 14.2 with `blending_data`), ring \| game 4.9, vanilla 3.0 – 4.7. Pre-1.18 sources that the game upgrades (written in the 1.17 format) keep the game's own blending of the Nether, and the End ring has been checked on generators and biomes only |
+| Nether and End, Bedrock 1.18+ | – | ⚠️ the game's blending applies to the Overworld only: a Nether or End converted from another generator or seed has a step at the edge. From the same Bedrock with the same seed the terrain continues. *Regenerate* is available |
 
 Every target without a remedy (Bedrock before 1.6, Customized worlds, large console maps) warns at
 the end of the conversion (`terrain/policy.py`).
@@ -112,7 +113,11 @@ longer, so land stays next to the border and the game's sea shore comes after it
 
 **Chunk status.** Ring chunks are written as "not populated" (older targets) or with status
 `surface` / `base` / `noise` (1.13+), exactly like chunks the game has just generated, so the game
-adds its own decoration.
+adds its own decoration. Minecraft 26.x has no `noise`, `surface` or `carvers` status (its statuses are
+empty, structure_starts, structure_references, biomes, terrain, features, initialize_light, light, spawn,
+full): a ring chunk saved at `biomes` is generated again by the game (over the ring), and `terrain` already
+includes surface and caves. The Nether's and End's ring of a Java 1.18+ target is written at `terrain`
+with the surface and the caves made by WorldBridge (below), and the game adds the features.
 
 ## The Nether and the End
 
@@ -135,6 +140,28 @@ the game's generator with the same seed:
 - **Nether and End 1.14 – 1.17** (`terrain/dims16.py`): the NoiseChunkGenerator with the "nether"
   and "end" settings. Here the ring is written at the "noise" stage: biomes (soul sand valleys,
   basalt deltas, forests), surfaces, caves and decoration come from the game.
+- **Nether and End 1.18+** (Java 26.3 read from its jar and compared with a 26.3 Nether and End from a
+  server): the Nether keeps the noise terrain and the random source of 1.16 (its noise settings say
+  so), so `dims16.py`'s generator is the ring's outer edge here too (100 % of the netherrack of the game's
+  Nether where it has any). Because 26.x makes noise, surface and caves in one `terrain` step, the ring
+  needs all of it:
+  - **Biomes** (`terrain/netherbiomes.py`). The five points (nether wastes, soul sand valley, crimson
+    and warped forest, basalt deltas) of the multi-noise "nether" preset, the temperature noise seeded
+    with the world seed and the vegetation noise with seed + 1 (octaves -7 and -6, old Perlin
+    initialisation: the Overworld's Xoroshiro noises do not apply here), read at the cell's own
+    x / z: 22,495 of 22,496 cells of the game's chunks. The End's biome (`dims16.End16Generator.biome_name`)
+    follows the island height at the chunk's centre (highlands above 40, midlands from 0, barrens from -20,
+    small islands below; the main island within 64 chunks): 1,504 of 1,504 chunks.
+  - **Surface** (`terrain/nethersurface.py`). The rules of the Nether (bedrock floor and roof, netherrack
+    from y 122, nylium and wart blocks of the forests, soul sand / soil, basalt / blackstone, gravel and
+    soul sand patches) with their noises and the surface depth, from the game's legacy positional
+    random. Bedrock is identical to the game's; the rest agrees 72 – 100 % with the game's chunks, the
+    difference being what the decoration adds (basalt columns, lava lakes, glowstone).
+  - **Caves** (`terrain/nethercarver.py`). The "nether_cave" carver: sources within 8 chunks, up to 112-block
+    tunnels with the game's sine table and single-precision walk, rooms, splits; 97.6 % of the cells the
+    game's chunks have open in the netherrack and 96 % of ours are open there (lava lakes and
+    decoration being the rest).
+  - **Structures.** The ring's structure starts are empty: no fortress or bastion inside the ring.
 
 **3D ring** (`terrain/ring3d.py`). The Nether is a world of caverns and the End of floating islands,
 so there is no height field to lift. Instead, each ring column blends two rock / void sequences:

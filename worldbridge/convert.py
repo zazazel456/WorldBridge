@@ -1331,7 +1331,8 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
         ring_after = _ring_after_amulet if platform == "java" else _ring_after_amulet_bedrock
         if wtype != "flat" and ring_after(out_dir, target, info, wver, tmp, progress, wtype) is None:
             progress.warn(tr(CUSTOMIZED))
-    if platform == "java" and target.ring and tuple(target.version or (99,)) < CAVES_CLIFFS:
+    if platform == "java" and target.ring and (tuple(target.version or (99,)) < CAVES_CLIFFS
+                                               or (tuple(wver) >= CAVES_CLIFFS and _ring3d_modern(target))):
         _rings3d_after_amulet(out_dir, target, info, wver, tmp, progress)
     if marked and plan.kind == "game":
         progress.log(tr("Blending data written to {n} chunks of the overworld.", n=blending.mark_world(out_dir)))
@@ -1495,28 +1496,36 @@ def _ring_name(dim: int) -> str:
 _DIM_REGION = {NETHER: os.path.join("DIM-1", "region"), THE_END: os.path.join("DIM1", "region")}
 
 
-def _make_rings3d(target: TargetSpec, seed: int, coords, plan) -> dict:
+def _make_rings3d(target: TargetSpec, seed: int, coords, plan, modern_ok: bool = False) -> dict:
     """The rings of the converted Nether and End (terrain/ring3d.py), when the target has their
-    generator: dimension -> Ring3D."""
+    generator: dimension -> Ring3D.  ``modern_ok``: the chunks are written in the 1.18+ format (the Amulet
+    route); a Java 1.18+ target written in the 1.17 format for the game to upgrade gets no ring."""
     from .terrain import ring3d
 
     out = {}
-    if target.family != "java" or not getattr(target, "ring", True) or plan.kind == "off":
+    modern = ring3d.modern_target(target)
+    if modern and not modern_ok:
         return out
-    for dim in (NETHER, THE_END):
+    # Java 1.18+: the "off" plan is the game's blending turned off; the Nether's ring is a ring, it follows --no-ring
+    if target.family != "java" or not getattr(target, "ring", True) or (plan.kind == "off" and not modern):
+        return out
+    for dim in (ring3d.dimensions(target) if modern else (NETHER, THE_END)):
         if not coords.get(dim):
             continue
         g = ring3d.generator(target, seed, dim)
         if g is None:
             continue
         gen, noise_only = g
-        out[dim] = ring3d.Ring3D(gen, dim, coords[dim], dy=target.dy(dim), seed=seed, noise_only=noise_only)
+        out[dim] = ring3d.Ring3D(gen, dim, coords[dim], dy=target.dy(dim), seed=seed, noise_only=noise_only,
+                                 modern=modern)
     return out
 
 
 def _ring3d_text(dim: int, n: int, r3) -> str:
     what = tr("rock, lava and caverns") if dim == NETHER else tr("end stone islands")
-    if r3.noise_only:
+    if getattr(r3, "modern", False):
+        rest = tr("the bedrock and the surface of every biome are written by WorldBridge, the decoration (lava lakes, glowstone, ores, trees...) is added by the game")
+    elif r3.noise_only:
         rest = tr("surfaces and biomes, caves and decoration are added by the game")
     elif dim == NETHER:
         rest = tr("glowstone, fire, lava springs and fortresses are added by the game")
@@ -1534,7 +1543,11 @@ def _mark_ring3d(world_dir: str, r3) -> None:
 
     if not r3.written:
         return
-    if r3.noise_only:
+    if getattr(r3, "modern", False):
+        from .terrain import ring3d
+
+        ring3d.mark_modern(world_dir, r3, _DIM_REGION[r3.dim])
+    elif r3.noise_only:
         ring_mod.mark_proto_chunks(world_dir, r3.written, "noise", _DIM_REGION[r3.dim], biomes="drop")
     else:
         biomes = r3.gen.biome if r3.dim == THE_END and hasattr(r3.gen, "biome") else None
@@ -1586,6 +1599,13 @@ def _region_coords(world_dir: str, sub: str) -> set:
     return coords
 
 
+def _ring3d_modern(target: TargetSpec) -> bool:
+    """A Java 1.18+ target gets a 3D ring around its converted Nether (terrain/ring3d.py)."""
+    from .terrain import ring3d
+
+    return bool(ring3d.dimensions(target))
+
+
 def _rings3d_after_amulet(out_dir: str, target: TargetSpec, info, wver, tmp: str, progress: Progress) -> None:
     """The Nether's and End's rings of a world Amulet converted straight to Java 1.13 - 1.17."""
     from .java.numeric import JavaNumericWorld, JavaNumericWriter, JavaWriteOptions
@@ -1593,7 +1613,7 @@ def _rings3d_after_amulet(out_dir: str, target: TargetSpec, info, wver, tmp: str
 
     seed = world_seed(info.level)
     coords = {dim: _region_coords(out_dir, _DIM_REGION[dim]) for dim in (NETHER, THE_END)}
-    rings = _make_rings3d(target, seed, coords, policy.Plan("ring", ""))
+    rings = _make_rings3d(target, seed, coords, policy.Plan("ring", ""), modern_ok=tuple(wver) >= CAVES_CLIFFS)
     for dim, r3 in rings.items():
         progress.stage(tr("Converted Nether edge (reading)") if dim == NETHER else tr("Converted End edge (reading)"), 0.9, 0.92)
         hub = os.path.join(tmp, f"ring3d_edges_{dim}")

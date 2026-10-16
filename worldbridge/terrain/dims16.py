@@ -176,6 +176,19 @@ class End16Generator:
                     h = max(h, v)
         return float(h)
 
+    def biome_name(self, cx: int, cz: int) -> str:
+        """The End biome of the chunk in Minecraft 1.18 and later (checked against a 26.3 End, chunk by chunk):
+        the main island is within 64 chunks of the origin; farther out the biome follows the island height
+        read at the chunk's centre: highlands above 40, midlands from 0, barrens from -20, small islands below."""
+        if cx * cx + cz * cz <= 4096:
+            return "minecraft:the_end"
+        d = (self.height_value(2 * cx + 1, 2 * cz + 1) - 8.0) / 128.0
+        if d > 0.25:
+            return "minecraft:end_highlands"
+        if d >= -0.0625:
+            return "minecraft:end_midlands"
+        return "minecraft:end_barrens" if d >= -0.21875 else "minecraft:small_end_islands"
+
     def columns(self, cx: int, cz: int) -> np.ndarray:
         """[3, 3, 33] densities of the chunk's noise columns."""
         return self.grid(cx * 2 + np.arange(3), cz * 2 + np.arange(3))
