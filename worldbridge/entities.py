@@ -1097,9 +1097,13 @@ def to_java_modern(c: dict, data_version: int) -> Optional[nbt.CompoundTag]:
     if c.get("pet_tag"):                   # worldbridge.pets: handed to the first player by a data pack
         e["Tags"] = nbt.ListTag([nbt.StringTag("worldbridge_host_pet")], 8)
     if c.get("item") is not None:
-        e["Item"] = items.to_java_modern(c["item"], data_version)
-        if "Slot" in e["Item"]:
-            del e["Item"]["Slot"]
+        stack = items.to_java_modern(c["item"], data_version)
+        if stack is None:
+            if name == "item":
+                return None
+        else:
+            e["Item"] = stack
+            e["Item"].pop("Slot", None)
     if name in ("painting", "item_frame", "glow_item_frame"):
         tx, ty, tz = c.get("tile", (0, 0, 0))
         if data_version >= 3807:  # 1.20.5+ (BlockPosFormatAndRenamesFix)
@@ -1123,7 +1127,8 @@ def to_java_modern(c: dict, data_version: int) -> Optional[nbt.CompoundTag]:
     if name == "experience_orb":
         e["Value"] = nbt.ShortTag(c.get("xp", 1))
     if c.get("items"):
-        e["Items"] = nbt.ListTag([items.to_java_modern(it, data_version) for it in c["items"]], 10)
+        stacks = [items.to_java_modern(it, data_version) for it in c["items"]]
+        e["Items"] = nbt.ListTag([stack for stack in stacks if stack is not None], 10)
     _write_java_chest(e, c, lambda it: items.to_java_modern(it, data_version), data_version)
     _write_java_equipment(e, c, lambda it: items.to_java_modern(it, data_version), data_version)
     return e

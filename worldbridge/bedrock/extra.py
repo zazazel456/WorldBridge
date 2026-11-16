@@ -344,27 +344,32 @@ def legacy_player_to_bedrock(p: nbt.CompoundTag, version, uid: int, world_game_t
     return out
 
 
-def read_bedrock_players(path: str) -> Dict[str, nbt.CompoundTag]:
+def read_bedrock_players(path: str, progress=None) -> Dict[str, nbt.CompoundTag]:
     db = _db(path)
     try:
-        out = {}
-        raw = _get(db, b"~local_player")
-        if raw:
-            out["host"] = bedrock_player_to_java(nbt.load(raw, little_endian=True, compressed=False).tag)
-        for key, raw in db.iterate(b"player_server_", b"player_server_\xff"):
-            if not key.startswith(b"player_server_") or len(out) >= 64:
-                continue
-            try:
-                out[key.decode("utf-8", "replace")] = bedrock_player_to_java(
-                    nbt.load(raw, little_endian=True, compressed=False).tag)
-            except Exception:  # noqa: BLE001
-                pass
-        return out
+        with newcontent.counting(
+            newcontent.tally_of(progress) if progress is not None else None
+        ):
+            out = {}
+            raw = _get(db, b"~local_player")
+            if raw:
+                out["host"] = bedrock_player_to_java(
+                    nbt.load(raw, little_endian=True, compressed=False).tag
+                )
+            for key, raw in db.iterate(b"player_server_", b"player_server_\xff"):
+                if not key.startswith(b"player_server_") or len(out) >= 64:
+                    continue
+                try:
+                    out[key.decode("utf-8", "replace")] = bedrock_player_to_java(
+                        nbt.load(raw, little_endian=True, compressed=False).tag
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            return out
     except Exception:  # noqa: BLE001
         return {}
     finally:
         db.close()
-
 
 # ------------------------------------------------------------------ villages
 

@@ -1264,7 +1264,7 @@ def _direct_amulet(d: det.Detected, out_dir: str, target: TargetSpec, progress: 
 
     platform = "bedrock" if target.family == "bedrock" else "java"
     sel = sel or Selection()
-    info = read_amulet_info(d)
+    info = read_amulet_info(d, progress)
     apply_to_info(info, sel, target.family, progress)
     _regen_players(info, target.regen, progress)
     _warn_single_player(info, target, sel, progress)

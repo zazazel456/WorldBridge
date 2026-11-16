@@ -559,7 +559,9 @@ def to_java_modern(c: dict, data_version: int, target_dv: Optional[int] = None) 
             t["Patterns"] = nbt.ListTag([nbt.CompoundTag({"Pattern": nbt.StringTag(p), "Color": nbt.IntTag(col)})
                                          for p, col in c.get("patterns", [])], 10)
     elif kind == "jukebox" and c.get("record"):
-        t["RecordItem"] = items.to_java_modern(c["record"], data_version)
+        record = items.to_java_modern(c["record"], data_version)
+        if record is not None:
+            t["RecordItem"] = record
     elif kind == "command_block":
         _command_to_java(c, t, data_version)
     elif kind == "beacon":

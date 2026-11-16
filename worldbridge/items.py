@@ -418,7 +418,9 @@ def _flatten_json(j) -> str:
 # ------------------------------------------------------------------ canonical form
 class Item(dict):
     """keys: name (flat, no namespace), count, damage (durability or variant), slot,
-    ench [(name, lvl)], stored [(name, lvl)], custom_name, lore, color, potion, pages, author, title, extra_tag"""
+    ench [(name, lvl)], stored [(name, lvl)], custom_name, lore, color, potion,
+    pages, author, title, extra_tag, container [(Item, slot)],
+    bundle_contents [Item], bundle_weight"""
 
 
 def _ench_list(lst, table) -> list:
@@ -616,6 +618,28 @@ def _read_components(it: Item, c: nbt.CompoundTag):
     mid = g("map_id")
     if mid is not None:
         it["map"] = int(mid.py_data)
+    container = g("container")
+    if container is not None:
+        contents = []
+        for entry in container:
+            item_tag = nbt.get_tag(entry, "item")
+            if item_tag is None:
+                continue
+            child = from_java_modern(item_tag)
+            if child is not None:
+                child["slot"] = int(nbt.get(entry, "slot", 0) or 0)
+                contents.append(child)
+        it["container"] = contents
+
+    bundle = g("bundle_contents")
+    if bundle is not None:
+        contents = []
+        for entry in bundle:
+            child = from_java_modern(entry)
+            if child is not None:
+                child.pop("slot", None)
+                contents.append(child)
+        it["bundle_contents"] = contents
 
 
 def _component_text(tag) -> str:
@@ -679,7 +703,7 @@ def java_item_name(name: str, data_version: int) -> str:
 TEXT_NBT_DV = 4324
 
 
-def to_java_modern(it: Item, data_version: int) -> nbt.CompoundTag:
+def to_java_modern(it: Item, data_version: int) -> Optional[nbt.CompoundTag]:
     name = java_item_name(it["name"], data_version)
     out = nbt.CompoundTag({"id": nbt.StringTag("minecraft:" + name)})
     if it.get("slot") is not None:
@@ -718,6 +742,26 @@ def to_java_modern(it: Item, data_version: int) -> nbt.CompoundTag:
             comps["minecraft:potion_contents"] = nbt.CompoundTag({"potion": nbt.StringTag("minecraft:" + it["potion"])})
         if it.get("map") is not None and name == "filled_map":
             comps["minecraft:map_id"] = nbt.IntTag(int(it["map"]))
+        if "container" in it:
+            entries = []
+            for child in it["container"]:
+                stack = to_java_modern(child, data_version)
+                if stack is not None:
+                    stack.pop("Slot", None)
+                    entries.append(nbt.CompoundTag({
+                        "slot": nbt.IntTag(int(child.get("slot", 0))),
+                        "item": stack,
+                    }))
+            comps["minecraft:container"] = nbt.ListTag(entries, 10)
+
+        if "bundle_contents" in it:
+            entries = []
+            for child in it["bundle_contents"]:
+                stack = to_java_modern(child, data_version)
+                if stack is not None:
+                    stack.pop("Slot", None)
+                    entries.append(stack)
+            comps["minecraft:bundle_contents"] = nbt.ListTag(entries, 10)
         if len(comps):
             out["components"] = comps
         return out
@@ -752,8 +796,35 @@ def to_java_modern(it: Item, data_version: int) -> nbt.CompoundTag:
         if written:
             tag["author"] = nbt.StringTag(it.get("author") or "")
             tag["title"] = nbt.StringTag(it.get("title") or "")
+
+    # Java 1.17 - 1.20.4 stores bundle contents in tag.Items.
+    # Player data is initially written at 1.15.2 so Minecraft can upgrade it;
+    # keep the old item-stack format here and let its DataFixer upgrade it.
+    if "bundle_contents" in it:
+        entries = []
+        for child in it["bundle_contents"]:
+            stack = to_java_modern(child, data_version)
+            if stack is not None:
+                stack.pop("Slot", None)
+                entries.append(stack)
+        tag["Items"] = nbt.ListTag(entries, 10)
+
+    # Java 1.15.2 stores shulker contents in BlockEntityTag.Items.
+    if "container" in it and (name == "shulker_box" or name.endswith("_shulker_box")):
+        block_entity = nbt.CompoundTag()
+        entries = []
+
+        for child in it["container"]:
+            stack = to_java_modern(child, data_version)
+            if stack is not None:
+                entries.append(stack)
+
+        block_entity["Items"] = nbt.ListTag(entries, 10)
+        tag["BlockEntityTag"] = block_entity
+
     if len(tag):
         out["tag"] = tag
+
     return out
 
 
@@ -870,8 +941,41 @@ def to_bedrock(it: Item, version: Tuple[int, ...]) -> Optional[nbt.CompoundTag]:
         if name == "written_book":
             tag["author"] = nbt.StringTag(it.get("author") or "")
             tag["title"] = nbt.StringTag(it.get("title") or "")
+    if "bundle_contents" in it:
+        entries = []
+        for child in it["bundle_contents"]:
+            stack = to_bedrock(child, version)
+            if stack is not None:
+                stack.pop("Slot", None)
+                entries.append(stack)
+
+        if len(entries) > 64:
+            print(f"Warning: corrupted bundle contains {len(entries)} entries")
+        while len(entries) < 64:
+            entries.append(nbt.CompoundTag({
+                "Count": nbt.ByteTag(0),
+                "Damage": nbt.ShortTag(0),
+                "Name": nbt.StringTag(""),
+                "WasPickedUp": nbt.ByteTag(0),
+            }))
+
+        tag["storage_item_component_content"] = nbt.ListTag(entries, 10)
+
+
+    if "bundle_weight" in it:
+        tag["bundle_weight"] = nbt.IntTag(int(it["bundle_weight"]))
+
+    if "container" in it:
+        entries = []
+        for child in it["container"]:
+            stack = to_bedrock(child, version)
+            if stack is not None:
+                entries.append(stack)
+        tag["Items"] = nbt.ListTag(entries, 10)
+
     if len(tag):
         out["tag"] = tag
+
     return out
 
 
@@ -1035,6 +1139,29 @@ def from_bedrock(t: nbt.CompoundTag) -> Optional[Item]:
             it["title"] = nbt.get(tag, "title")
         if it["name"] == "filled_map" and nbt.get(tag, "map_uuid") is not None:
             it["map"] = java_map_id(int(nbt.get(tag, "map_uuid")))
+        if it["name"].endswith("_shulker_box") or it["name"] == "shulker_box":
+            items = nbt.get_tag(tag, "Items")
+            if items is not None:
+                it["container"] = [
+                    child for entry in items
+                    if (child := from_bedrock(entry)) is not None
+                ]
+
+        if it["name"] == "bundle":
+            items = nbt.get_tag(tag, "storage_item_component_content")
+            if items is not None:
+                contents = []
+                for entry in items:
+                    if int(nbt.get(entry, "Count", 0) or 0) <= 0:
+                        continue
+                    if not nbt.get(entry, "Name"):
+                        continue
+                    child = from_bedrock(entry)
+                    if child is not None:
+                        child.pop("slot", None)
+                        contents.append(child)
+                it["bundle_contents"] = contents
+                it["bundle_weight"] = int(nbt.get(tag, "bundle_weight", 0) or 0)
     return it
 
 

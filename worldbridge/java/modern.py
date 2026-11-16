@@ -627,7 +627,8 @@ def inject_canon(out_dir: str, canon, progress: Progress, target_dv: Optional[in
                         for t in (nbt.get_tag(holder, key) or [])}
             # an id nothing here knows stays as Amulet copied it when it did; else it is lost (and counted below)
             tl = [c for c in tl if not (c["kind"] == tiles.UNKNOWN and tuple(c["pos"]) in existing)]
-            new_tiles = tiles.write_list(tl, "java", tally, data_version=dv, target_dv=target_dv)
+            with newcontent.counting(tally):
+                new_tiles = tiles.write_list(tl, "java", tally, data_version=dv, target_dv=target_dv)
             for c in tl:  # a block entity the target version does not have: Amulet's copy of the other game's one goes too
                 if c["kind"] != tiles.UNKNOWN and (tiles.KINDS[c["kind"]][1] is None or not tiles.exists_in_java(c["kind"], dv, target_dv)):
                     existing.pop(tuple(c["pos"]), None)
@@ -641,7 +642,8 @@ def inject_canon(out_dir: str, canon, progress: Progress, target_dv: Optional[in
             n_orphans += orphans
             holder[key] = nbt.compound_list(kept_tiles)
             if el:
-                ents = [e for e in (ent.to_java_modern(c, dv if dv < ENTITY_SPLIT_DV else 2730) for c in el) if e is not None]
+                with newcontent.counting(tally):
+                    ents = [e for e in (ent.to_java_modern(c, dv if dv < ENTITY_SPLIT_DV else 2730) for c in el) if e is not None]
                 n_e += len(ents)
                 if dv < ENTITY_SPLIT_DV and lvl is not None:
                     lvl["Entities"] = nbt.compound_list(ents)  # they replace the copies Amulet made

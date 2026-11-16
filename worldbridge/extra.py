@@ -69,7 +69,7 @@ def classic_java_level(info: WorldInfo, world: str) -> None:
         add("GameRules", classic_java_rules(rules))
 
 
-def read_amulet_info(d) -> WorldInfo:
+def read_amulet_info(d, progress: Optional[Progress] = None) -> WorldInfo:
     info = WorldInfo()
     if d.kind == "bedrock":
         try:
@@ -80,7 +80,7 @@ def read_amulet_info(d) -> WorldInfo:
         try:
             from .bedrock.extra import read_bedrock_players
 
-            info.players.update(read_bedrock_players(d.path))
+            info.players.update(read_bedrock_players(d.path, progress))
         except Exception:  # noqa: BLE001
             pass
         try:
@@ -154,7 +154,7 @@ def read_amulet_info(d) -> WorldInfo:
 def attach_source_extras(world, d, progress: Progress, depth=None) -> None:
     """Called after an Amulet-native world was converted into the numeric hub.  ``depth``: the
     depthfit.DepthFit that moved the Overworld's blocks into 0 - 255 (None: they did not move)."""
-    info = read_amulet_info(d)
+    info = read_amulet_info(d, progress)
     world.info = info
     try:
         if d.kind == "bedrock":
